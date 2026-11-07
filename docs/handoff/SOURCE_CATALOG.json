@@ -1,0 +1,113 @@
+{
+  "schema_version": "1.0",
+  "date": "2026-11-08",
+  "sources": [
+    {
+      "source_id": "SRC-V17",
+      "private_slot": "v1.7",
+      "files": 3,
+      "bytes": 347125,
+      "slot_manifest_sha256": "25dde92c7729f39ceccac2b3d145c017259de49767d4899b0742ecbcce2ecf2b",
+      "access": "PRIVATE_INPUT_ROOT",
+      "status": "LOCAL_HASH_CHECKED_CLOUD_NOT_PROVISIONED"
+    },
+    {
+      "source_id": "SRC-PLAN",
+      "private_slot": "current-plan",
+      "files": 4,
+      "bytes": 117162,
+      "slot_manifest_sha256": "6d77d33849c3fb7e6c8499cc79c54f04c254c2051712643410e279ecde4875e9",
+      "access": "PRIVATE_INPUT_ROOT",
+      "status": "LOCAL_HASH_CHECKED_CLOUD_NOT_PROVISIONED"
+    },
+    {
+      "source_id": "SRC-AI",
+      "private_slot": "ai-assurance",
+      "files": 11,
+      "bytes": 586173,
+      "slot_manifest_sha256": "c26d458d19248c57d4acfd08af290329acc997cf44088d30b95c5b7ac6fff942",
+      "access": "PRIVATE_INPUT_ROOT",
+      "status": "LOCAL_HASH_CHECKED_CLOUD_NOT_PROVISIONED"
+    },
+    {
+      "source_id": "SRC-MKS2",
+      "private_slot": "mk-s2",
+      "files": 24,
+      "bytes": 376619,
+      "slot_manifest_sha256": "c938969acfaf90d0d0b00b024b1d5c6b282990b4019d465859fd5cf046790b8b",
+      "access": "PRIVATE_INPUT_ROOT",
+      "status": "LOCAL_HASH_CHECKED_CLOUD_NOT_PROVISIONED"
+    },
+    {
+      "source_id": "SRC-DATA17",
+      "private_slot": "v1.7-data",
+      "files": 31,
+      "bytes": 2328806,
+      "slot_manifest_sha256": "01378e5fc643d174e3abfe59f80bf076a5fb1bcca00ffb4754878ca3d99110e9",
+      "access": "PRIVATE_INPUT_ROOT",
+      "status": "LOCAL_HASH_CHECKED_CLOUD_NOT_PROVISIONED"
+    },
+    {
+      "source_id": "SRC-CQ11",
+      "private_slot": "cq-v1.1",
+      "files": 18,
+      "bytes": 1837908,
+      "slot_manifest_sha256": "f9b7bdfd00e87271b4b5167422e464892ad19854004f6bd8add9d7159e6399d1",
+      "access": "PRIVATE_INPUT_ROOT",
+      "status": "LOCAL_HASH_CHECKED_CLOUD_NOT_PROVISIONED"
+    },
+    {
+      "source_id": "SRC-CQ12",
+      "private_slot": "cq-v1.2",
+      "files": 18,
+      "bytes": 1205860,
+      "slot_manifest_sha256": "1262339c5aadf7417a83f8c605448a597f64e58919dd9800739a0992ae127613",
+      "access": "PRIVATE_INPUT_ROOT",
+      "status": "LOCAL_HASH_CHECKED_CLOUD_NOT_PROVISIONED"
+    },
+    {
+      "source_id": "SRC-V13",
+      "private_slot": "full-delivery-v1.3",
+      "files": 38,
+      "bytes": 100342926,
+      "slot_manifest_sha256": "004d4a6934a21e60a64d300013d64ac01437231eb3f36853c9497c044421b665",
+      "access": "PRIVATE_INPUT_ROOT",
+      "status": "LOCAL_HASH_CHECKED_CLOUD_NOT_PROVISIONED"
+    },
+    {
+      "source_id": "SRC-GOV",
+      "private_slot": "governance",
+      "files": 8,
+      "bytes": 172828,
+      "slot_manifest_sha256": "7805a08a46b4e6f0d087ec67e3aa474f64afece374f4bc37bbf830ee3ba00639",
+      "access": "PRIVATE_INPUT_ROOT",
+      "status": "LOCAL_HASH_CHECKED_CLOUD_NOT_PROVISIONED"
+    },
+    {
+      "source_id": "SRC-V17-01",
+      "private_slot": "v1.7",
+      "relative_path": "01_COMMON_REQUIREMENTS.md",
+      "sha256": "5cde811a88805ff7367c6de402caa9e333fb420f05e5c29a2b709b18a095e6ac",
+      "access": "PRIVATE_INPUT_ROOT",
+      "status": "BYTE_EQUAL_TO_USER_ZIP"
+    },
+    {
+      "source_id": "SRC-V17-02",
+      "private_slot": "v1.7",
+      "relative_path": "02_SCREEN_DESIGN.md",
+      "sha256": "2cb07b1508acd93d93ea9cd27559e9e393c271576a16c7c820c4ed370d670c87",
+      "access": "PRIVATE_INPUT_ROOT",
+      "status": "BYTE_EQUAL_TO_USER_ZIP"
+    },
+    {
+      "source_id": "SRC-V17-03",
+      "private_slot": "v1.7",
+      "relative_path": "03_DEVELOPMENT_DESIGN.md",
+      "sha256": "f5b9d90e6f47bf736b672c78d6a797fe472d911117e513bb25b5c045eb440a77",
+      "access": "PRIVATE_INPUT_ROOT",
+      "status": "BYTE_EQUAL_TO_USER_ZIP"
+    }
+  ],
+  "private_manifest_relative": "SOURCE_MANIFEST.json",
+  "publication": "Hashes and logical slots only. Source originals are not public repository content."
+}

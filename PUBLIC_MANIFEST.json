@@ -1,0 +1,114 @@
+{
+  "schema_version": "1.0",
+  "repository": "Ontologics-2Zo/ontologics-chat",
+  "visibility": "public",
+  "purpose": "Documentation handoff and private input delivery instructions; no original references or service implementation",
+  "excludes_self": true,
+  "files": [
+    {
+      "path": ".dockerignore",
+      "bytes": 268,
+      "sha256": "ddb9d3f9f618e8f58dbd465595e63c1581c777161b5c3a1fe3b2e440349abd89"
+    },
+    {
+      "path": ".gitignore",
+      "bytes": 460,
+      "sha256": "1eac3e462e3803b64521d72b87c75703101a4897ade0519f6f80e27b248202c7"
+    },
+    {
+      "path": "AGENTS.md",
+      "bytes": 5438,
+      "sha256": "eb878c087f319610f00b1527ec2cb43a86da0872ef17f62fb19a5a6e7b361760"
+    },
+    {
+      "path": "README.md",
+      "bytes": 1790,
+      "sha256": "e0215065742f54f7c2bb3fc6d0016a1c07aa054a118293c2ee912e6e294eb6ba"
+    },
+    {
+      "path": "docs/handoff/ACCEPTANCE_GATES.md",
+      "bytes": 15799,
+      "sha256": "da827fa3a1ecb26f454a92909a30ecc5fc99358943c6fe5c998399cff04c3fdc"
+    },
+    {
+      "path": "docs/handoff/ARCHITECTURE_BASELINE.md",
+      "bytes": 5625,
+      "sha256": "db10f06b6ef4edb07af7128441bcd9616e5b8c3c418dd551364f5c99f1ac9780"
+    },
+    {
+      "path": "docs/handoff/CLOUD_SETUP.md",
+      "bytes": 5590,
+      "sha256": "ed63c2505cf8b055ba9810d75cdacc6f06ebc7643cc519ca9ee3f0c310a870c7"
+    },
+    {
+      "path": "docs/handoff/DATA_IMPORT_CONTRACT.md",
+      "bytes": 17663,
+      "sha256": "f834d5dab4ec469ec348bd262790971996cfab725fcdc2808e9d6c7876fda1cc"
+    },
+    {
+      "path": "docs/handoff/DECISIONS_AND_BLOCKERS.md",
+      "bytes": 9647,
+      "sha256": "871b74cb1aa0a6ff0cd6b7b3df05f1682e615e9e8363d0f95c33525036e91421"
+    },
+    {
+      "path": "docs/handoff/FIRST_CLOUD_TASK.md",
+      "bytes": 3223,
+      "sha256": "637bb8e1692e8460fe37c4ea282db8e0bd7f3db177457539d3eab8d64b8d52af"
+    },
+    {
+      "path": "docs/handoff/HANDOFF_STATUS.md",
+      "bytes": 2193,
+      "sha256": "b1895ae08b3a8b4ef9d6644565ac89550734b796054e6d9eab58a5e84f06c125"
+    },
+    {
+      "path": "docs/handoff/IMPLEMENTATION_TASKS.md",
+      "bytes": 45639,
+      "sha256": "d6fc232763e6521da40bf22078c355cc57249cd332e5dc869fbe26f7f675b38d"
+    },
+    {
+      "path": "docs/handoff/PREPARATION_ONLY_REQUEST.md",
+      "bytes": 1918,
+      "sha256": "ddb90ba5cfedfba3cb32564667042f6d34ff7551cfdbc6bb86074706ac84b5a4"
+    },
+    {
+      "path": "docs/handoff/PRIVATE_INPUT_DELIVERY.md",
+      "bytes": 6589,
+      "sha256": "c34a647deda8ce4d6d2ca9896fa331c94e74b896315b5afe3f0fa1a73f4f7238"
+    },
+    {
+      "path": "docs/handoff/PUBLIC_PRIVATE_BOUNDARY.md",
+      "bytes": 2274,
+      "sha256": "6843f25121ba1ebbafd3979baaf4955381cd6ba5696c6c023211377a7a0323d5"
+    },
+    {
+      "path": "docs/handoff/REQUIREMENT_ID_INVENTORY.json",
+      "bytes": 101127,
+      "sha256": "762b145b16977e79640b9f355b7fad525cb475e8fc4717ca9f62c4778568e501"
+    },
+    {
+      "path": "docs/handoff/SCREEN_ACCEPTANCE_MAP.md",
+      "bytes": 16647,
+      "sha256": "660244f78b57afd6665885bc4248b5ee67b36c2f736e58398056cfb482b0f652"
+    },
+    {
+      "path": "docs/handoff/SOURCE_CATALOG.json",
+      "bytes": 3944,
+      "sha256": "eace3e995097015b26d0e381f9f39d8f3f7ce5cbf9f00f95218eca5dc031f811"
+    },
+    {
+      "path": "docs/handoff/SOURCE_INDEX.md",
+      "bytes": 4473,
+      "sha256": "70c83bcdae12fc02f2338182bb5003e4bee6c0b6ef747b6940275ac5594bca9b"
+    },
+    {
+      "path": "docs/handoff/START_HERE.md",
+      "bytes": 4250,
+      "sha256": "15b2c191f5b53ad37e1af2ced4ede8659516cc311cf45967812f59ee2eee7a57"
+    },
+    {
+      "path": "docs/handoff/TASKS.json",
+      "bytes": 63450,
+      "sha256": "dd405a4e2b2aa05883abfdd5e019e934babc07b970184bd9f1335e108dec47d8"
+    }
+  ]
+}

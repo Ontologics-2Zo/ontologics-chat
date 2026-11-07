@@ -1,0 +1,1506 @@
+{
+  "schema_version": "1.0",
+  "created_on": "2026-11-08",
+  "repository": "Ontologics-2Zo/ontologics-chat",
+  "artifact_kind": "development_handoff_plan_not_runtime",
+  "status": "PLAN_ONLY",
+  "source_precedence": [
+    "latest_explicit_user_decisions",
+    "official_v1.7_business_and_architecture",
+    "MK-S2_UX_and_approved_scope",
+    "v1.3_synthetic_fixture_with_provenance",
+    "existing_code_reference_only"
+  ],
+  "first_execution_batch": [
+    "T00",
+    "T01"
+  ],
+  "next_batch": [
+    "T02",
+    "T03"
+  ],
+  "official_first_batch": [
+    "T00",
+    "T01",
+    "T02"
+  ],
+  "first_batch_note": "공식 첫 묶음을 더 작게 나눈 인계 제안이다. 서버 개발 신원 T02를 삭제하거나 승인/업무 쓰기 전에 생략하지 않는다. 이번 자료 준비는 실행 허가나 코드 구현이 아니다.",
+  "dependency_rule": "prerequisites는 공식 전체 Task 의존성이다. 1차 slice는 아래 phase1_slices에 지정한 동등 범위의 선행 수용을 충족해야 착수한다. slice 완료는 부모 전체 완료가 아니며 후속 요구를 그대로 유지한다.",
+  "evidence_rule": "실제 저장소에서 확인한 명령·경로·환경·실행결과만 채운다. NOT_STARTED/NOT_RUN/BLOCKED와 Fake/실모델/운영 결과를 구분한다.",
+  "all_requirements_preserved": true,
+  "coverage_limit": "공식 Task 표의 요구 family와 36화면/24패널 대응을 초기 연결한 인계표다. 개별 요구 ID·서술 예외의 전수 구현 coverage는 T00에서 완성하고 T23에서 증거로 인수한다.",
+  "phases": {
+    "FOUNDATION": "1차 공통 기반",
+    "PHASE1_SLICE_AND_RETAINED_FULL": "MK-S2 자재 확보에 필요한 slice 우선, 부모 전체 잔여 보존",
+    "FOLLOWUP_DELIVERY": "생산·전체68대 고객 도착",
+    "FOLLOWUP_TRACE": "LOT·보드·시점/기간 추적 전체",
+    "FOLLOWUP_V17": "클레임·시험 등 전체 업무",
+    "FOLLOWUP_EVALUATION": "라우팅/provider 독립 비교",
+    "FOLLOWUP_SCALE": "10만 규모·부하",
+    "CROSS_CUTTING_WITH_FULL_GATE": "첫 단계부터 적용, 전체 게이트는 공식 선행 완료 후",
+    "FULL_ACCEPTANCE": "전체 서비스 인수"
+  },
+  "phase1_slices": [
+    {
+      "id": "T09.1",
+      "parent": "T09",
+      "scope": "L1 74행 접수·검수·승인·반영",
+      "requires": [
+        "T03",
+        "T08"
+      ],
+      "retained": "T09.2 전체 4모델·5스냅샷 일반화"
+    },
+    {
+      "id": "T10.1",
+      "parent": "T10",
+      "scope": "BOM·품목·LOT·구매·검사·승인 관계 및 실제 제약/투영",
+      "requires": [
+        "T09.1"
+      ],
+      "retained": "전체 시간/품질/추적 관계와 수용"
+    },
+    {
+      "id": "T11.1",
+      "parent": "T11",
+      "scope": "1차 업무의 권한·버전 기반 Hybrid 근거 검색",
+      "requires": [
+        "T10.1"
+      ],
+      "retained": "전체 corpus/CQ와 선택 검색 전략 평가"
+    },
+    {
+      "id": "T12.1",
+      "parent": "T12",
+      "scope": "L1 Product/추출/매핑 기능",
+      "requires": [
+        "T06",
+        "T09.1",
+        "T11.1"
+      ],
+      "retained": "전체 모델·형식·후속 사용례"
+    },
+    {
+      "id": "T13.1",
+      "parent": "T13",
+      "scope": "전체 적용 소요·40/43·20/23·기존 대체 후보 검토",
+      "requires": [
+        "T03",
+        "T06",
+        "T09.1",
+        "T11.1"
+      ],
+      "retained": "이동/반납/폐기·범용 대체/다업무 원장"
+    },
+    {
+      "id": "T14.1",
+      "parent": "T14",
+      "scope": "견적→PR/PO→입하·수입검사→가용",
+      "requires": [
+        "T13.1"
+      ],
+      "retained": "다품목/다업무 일반화 및 전체 예외"
+    },
+    {
+      "id": "T19.1",
+      "parent": "T19",
+      "scope": "1차 공통 AI·실시간 상태·동일 근거·재개 통합",
+      "requires": [
+        "T07",
+        "T12.1",
+        "T14.1"
+      ],
+      "retained": "생산/납품/클레임을 포함한 전체 통합 게이트"
+    },
+    {
+      "id": "T22.1",
+      "parent": "T22",
+      "scope": "첫 Task부터 검증 계약·계측; 기능별 Fake 서버 통합·CQ 회귀; 허용된 live 평가",
+      "requires": [],
+      "prerequisite_note": "각 검증은 해당 구현 Task의 실행 가능한 경로가 존재한 뒤 수행한다. 빈 선행은 전체 비교 실험 완료 가능이라는 뜻이 아니다.",
+      "retained": "T07/T19/T20/T21 이후 전체 비교·규모·live 검증"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "T00",
+      "title": "기준 정합화·기존 실행 재현",
+      "prerequisites": [],
+      "requirements_original_text": "전체 요구 목록, DEV-ID, AG16, LG17, OBS17",
+      "source_line": 1145,
+      "status": "NOT_STARTED",
+      "phase": "FOUNDATION",
+      "sources": [
+        {
+          "source_id": "SRC-V17-03",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "12.1 / 12.4 T00",
+          "line": 1145
+        },
+        {
+          "source_id": "SRC-PLAN",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "PHASE_1_SCOPE §1~8"
+        }
+      ],
+      "screen": "MK-S2 전체 화면·공통 선택 맥락",
+      "screen_ids": [
+        "SD-001",
+        "SD-030",
+        "SD-035",
+        "SD-036"
+      ],
+      "user_action": "목업의 화면·행동·식별자·상태와 공식 기능을 대조한다.",
+      "deliverables": [
+        "원본/목업/합성 자료/현 구현/제안/미검증 구분표",
+        "요구 ID별 화면·API·Task·검증 추적표와 소스 해시",
+        "현재 실행 명령 및 환경 제약 목록"
+      ],
+      "acceptance_positive": [
+        "공식 세 문서와 최신 사용자 결정의 우선순위를 기록하고 모든 요구를 개별 ID와 서술 요구까지 추적한다.",
+        "MK-S2 UX를 기준으로 기존 UI v2.6 지시를 활성 개발 지침에 적용하지 않는다.",
+        "ORD-26041 계약과 ORD-26041-01 회차, 회사·실행 범위별 LOT/문서 ID를 구분하고 충돌은 별도 매핑으로 해결한다."
+      ],
+      "acceptance_negative": [
+        "기존 서비스 코드가 없거나 실행되지 않는 경우 이를 완료로 쓰지 않는다.",
+        "실제 BOM·개인 gold·평가 결과의 공개 저장소 자동 포함, 과거 출하/도착 의미의 조용한 변경을 차단한다."
+      ],
+      "evidence_required": [
+        "자료별 hash·출처·권한 분류",
+        "전수 요구 추적표와 미결·차이 목록",
+        "실제 실행한 명령과 출력/실패 사유"
+      ],
+      "scope_and_completion": "현재 인계 문서의 추적 골격을 저장소 실물에 대조한다. 지금 문서 작성만으로 T00을 완료 처리하지 않는다.",
+      "verification_commands": [],
+      "execution_evidence": [],
+      "actual_implementation_paths": [],
+      "actual_api_or_tool_contract": null,
+      "blockers": [],
+      "goal_summary": "원본/목업/합성 자료/현 구현/제안/미검증 구분표; 요구 ID별 화면·API·Task·검증 추적표와 소스 해시; 현재 실행 명령 및 환경 제약 목록"
+    },
+    {
+      "id": "T01",
+      "title": "백엔드·업무 DB·개발 실행 골격",
+      "prerequisites": [
+        "T00"
+      ],
+      "requirements_original_text": "CM04, CM05, CM06",
+      "source_line": 1146,
+      "status": "NOT_STARTED",
+      "phase": "FOUNDATION",
+      "sources": [
+        {
+          "source_id": "SRC-V17-03",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "12.1 / 12.4 T01",
+          "line": 1146
+        },
+        {
+          "source_id": "SRC-PLAN",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "PHASE_1_SCOPE §1~8"
+        }
+      ],
+      "screen": "기존 MK-S2 화면·연결 상태",
+      "screen_ids": [
+        "SD-035"
+      ],
+      "user_action": "서비스 접속·연결 상태 조회",
+      "deliverables": [
+        "FastAPI/Host·오류 계약·PostgreSQL migration",
+        "개발 실행 설정·health·DB roundtrip",
+        "MK-S2 UX 보존 기준 및 연결 상태 표시"
+      ],
+      "acceptance_positive": [
+        "실제 API health와 DB 쓰기/읽기·재시작 후 조회가 동작한다.",
+        "화면 디자인·메뉴·핵심 동선을 유지하면서 서버 연결 상태를 구분한다."
+      ],
+      "acceptance_negative": [
+        "DB 미연결·migration 실패를 메모리 저장소나 고정 성공 응답으로 감추지 않는다.",
+        "설치·Runner가 불가능한 환경은 NOT_RUN/BLOCKED로 기록한다."
+      ],
+      "evidence_required": [
+        "lock와 실제 실행 환경",
+        "health·DB 재시작 roundtrip 로그",
+        "원본/구현 화면 비교"
+      ],
+      "scope_and_completion": "첫 개발 묶음에서 T00 다음에 구현한다. 서비스 코드 생성은 후속 개발 요청에서 수행한다.",
+      "verification_commands": [],
+      "execution_evidence": [],
+      "actual_implementation_paths": [],
+      "actual_api_or_tool_contract": null,
+      "blockers": [],
+      "goal_summary": "FastAPI/Host·오류 계약·PostgreSQL migration; 개발 실행 설정·health·DB roundtrip; MK-S2 UX 보존 기준 및 연결 상태 표시"
+    },
+    {
+      "id": "T02",
+      "title": "서버 개발 계정·회사 범위",
+      "prerequisites": [
+        "T01"
+      ],
+      "requirements_original_text": "DEV-ID-01~10, RV01, CM02",
+      "source_line": 1147,
+      "status": "NOT_STARTED",
+      "phase": "FOUNDATION",
+      "sources": [
+        {
+          "source_id": "SRC-V17-03",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "12.1 / 12.4 T02",
+          "line": 1147
+        },
+        {
+          "source_id": "SRC-PLAN",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "PHASE_1_SCOPE §1~8"
+        }
+      ],
+      "screen": "개발 계정·공통 문서와 회사 범위",
+      "screen_ids": [
+        "SD-025",
+        "SD-033",
+        "SD-035"
+      ],
+      "user_action": "개발 계정 선택·전환, 권한 있는 업무 조회",
+      "deliverables": [
+        "서버 DevIdentity allowlist·세션·회사 scope",
+        "CSRF·현재 권한·계정 전환 맥락 처리"
+      ],
+      "acceptance_positive": [
+        "서버가 인증된 actor와 회사·행위 권한을 결정한다.",
+        "계정 전환 시 이전 요청·답변·구독의 맥락을 무효화한다."
+      ],
+      "acceptance_negative": [
+        "actor/role 위조, 비활성 계정, 타 회사 조회·쓰기, CSRF, 권한 회수 이후 재개를 차단한다.",
+        "공개 운영 환경의 dev_switch를 차단한다."
+      ],
+      "evidence_required": [
+        "DEV-ID-01~10 API/세션 시험",
+        "늦은 응답·권한 회수·회사 격리 결과"
+      ],
+      "scope_and_completion": "OIDC 후속과 구분하며 개발 단계의 서버 권한을 생략하지 않는다.",
+      "verification_commands": [],
+      "execution_evidence": [],
+      "actual_implementation_paths": [],
+      "actual_api_or_tool_contract": null,
+      "blockers": [],
+      "goal_summary": "서버 DevIdentity allowlist·세션·회사 scope; CSRF·현재 권한·계정 전환 맥락 처리"
+    },
+    {
+      "id": "T03",
+      "title": "정확 버전 승인·반영 수직 흐름",
+      "prerequisites": [
+        "T02"
+      ],
+      "requirements_original_text": "RV01~03, H01~H08, CM04",
+      "source_line": 1148,
+      "status": "NOT_STARTED",
+      "phase": "FOUNDATION",
+      "sources": [
+        {
+          "source_id": "SRC-V17-03",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "12.1 / 12.4 T03",
+          "line": 1148
+        },
+        {
+          "source_id": "SRC-PLAN",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "PHASE_1_SCOPE §1~8"
+        }
+      ],
+      "screen": "BOM·PR·PO 드로어, 검토·반영 및 원장 사건",
+      "screen_ids": [
+        "SD-025",
+        "SD-026",
+        "SD-027",
+        "SD-033",
+        "PNL-19"
+      ],
+      "user_action": "초안 작성 → 검토 → 다른 계정 승인 → 반영 → 결과 재조회",
+      "deliverables": [
+        "정확 버전/hash 승인 계약",
+        "transaction·idempotency·audit·outbox",
+        "반영 상태·응답 유실 대사"
+      ],
+      "acceptance_positive": [
+        "초안/검토/승인/반영을 별도 상태로 저장한다.",
+        "한 업무 변경과 audit/outbox가 원자적으로 반영되고 같은 명령 재전송은 같은 결과를 반환한다."
+      ],
+      "acceptance_negative": [
+        "자기승인, 구버전 승인, 동일 키 다른 payload, 동시 수량 초과, 부분 반영을 차단한다.",
+        "응답 유실 후 신규 명령으로 중복 반영하지 않고 기존 operation을 조회한다."
+      ],
+      "evidence_required": [
+        "실제 UI/API/DB 승인 흐름",
+        "동시 요청·중복·응답 유실·rollback 결과"
+      ],
+      "scope_and_completion": "작은 근거 있는 문서로 공통 경계를 먼저 입증한다. 모든 도구를 무조건 2인 승인으로 바꾸지 않는다.",
+      "verification_commands": [],
+      "execution_evidence": [],
+      "actual_implementation_paths": [],
+      "actual_api_or_tool_contract": null,
+      "blockers": [],
+      "goal_summary": "정확 버전/hash 승인 계약; transaction·idempotency·audit·outbox; 반영 상태·응답 유실 대사"
+    },
+    {
+      "id": "T04",
+      "title": "공통 Agent SDK·Gateway·Fake 계약",
+      "prerequisites": [
+        "T03"
+      ],
+      "requirements_original_text": "AI01~03, AG16-01~03, CM03, CM05",
+      "source_line": 1149,
+      "status": "NOT_STARTED",
+      "phase": "FOUNDATION",
+      "sources": [
+        {
+          "source_id": "SRC-V17-03",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "12.1 / 12.4 T04",
+          "line": 1149
+        },
+        {
+          "source_id": "SRC-PLAN",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "PHASE_1_SCOPE §1~8"
+        }
+      ],
+      "screen": "공통 AI 패널·직접 업무 버튼",
+      "screen_ids": [
+        "SD-036"
+      ],
+      "user_action": "직접 선택 또는 질문을 공통 기능 계약으로 실행",
+      "deliverables": [
+        "Agent SDK typed request/result·evidence/version",
+        "Tool/LLM/Evidence/Budget ports·capability registry",
+        "Gateway·공통 Fake·두 모듈 독립 시험"
+      ],
+      "acceptance_positive": [
+        "Agent와 직접 UI가 같은 권한·도구 계약을 사용한다.",
+        "두 기능이 공통 계약으로 독립 실행되고 모듈 간 내부 import와 provider/ORM 직접 접근이 없다."
+      ],
+      "acceptance_negative": [
+        "허용되지 않은 도구·인자·대상·예산 초과·권한 없는 실행을 실제 호출 전에 차단한다.",
+        "completed 분석 응답을 승인·원장 반영 성공으로 승격하지 않는다."
+      ],
+      "evidence_required": [
+        "공통 DTO/schema·consumer 계약 결과",
+        "도구 거부 및 Fake 두 모듈 실행 로그"
+      ],
+      "scope_and_completion": "1차 서비스 필수 기반. 개발 skills와 runtime 권한은 분리한다.",
+      "verification_commands": [],
+      "execution_evidence": [],
+      "actual_implementation_paths": [],
+      "actual_api_or_tool_contract": null,
+      "blockers": [],
+      "goal_summary": "Agent SDK typed request/result·evidence/version; Tool/LLM/Evidence/Budget ports·capability registry; Gateway·공통 Fake·두 모듈 독립 시험"
+    },
+    {
+      "id": "T05",
+      "title": "ModelGateway·Langfuse 로컬 관측",
+      "prerequisites": [
+        "T04"
+      ],
+      "requirements_original_text": "OBS17-01~05, AG16-04, CM03",
+      "source_line": 1150,
+      "status": "NOT_STARTED",
+      "phase": "FOUNDATION",
+      "sources": [
+        {
+          "source_id": "SRC-V17-03",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "12.1 / 12.4 T05",
+          "line": 1150
+        },
+        {
+          "source_id": "SRC-PLAN",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "PHASE_1_SCOPE §1~8"
+        }
+      ],
+      "screen": "개인 관측·공통 연결 상태; 업무 화면에는 요약 상태만",
+      "screen_ids": [
+        "SD-032",
+        "SD-035"
+      ],
+      "user_action": "실행의 실제 도구·검색·검증·재시도 흐름 확인",
+      "deliverables": [
+        "ModelGateway·provider 어댑터 경계",
+        "canonical attempt usage·local sink·redaction",
+        "local Langfuse 실제 수집·Tree/Timeline"
+      ],
+      "acceptance_positive": [
+        "Fake provider 호출도 실제 Langfuse 수집 경로를 거쳐 parent-child trace로 조회된다.",
+        "모델·도구·검색·검증·재시도의 run/span/attempt와 버전을 연결한다."
+      ],
+      "acceptance_negative": [
+        "usage 미확인을 가짜 토큰/비용으로 채우지 않고 중복 계측하지 않는다.",
+        "관측 exporter 장애가 원장 성공을 거짓 실패로 뒤집거나 비밀·개인 원문을 공개 trace로 내보내지 않는다."
+      ],
+      "evidence_required": [
+        "local Langfuse 실제 수집·조회 증거",
+        "마스킹·중복 비용·exporter 장애 결과"
+      ],
+      "scope_and_completion": "Fake 호출의 관측 연동 검증은 실제 LLM 품질 평가와 다르다. 유료 호출은 별도 허용 범위에서만 수행한다.",
+      "verification_commands": [],
+      "execution_evidence": [],
+      "actual_implementation_paths": [],
+      "actual_api_or_tool_contract": null,
+      "blockers": [],
+      "goal_summary": "ModelGateway·provider 어댑터 경계; canonical attempt usage·local sink·redaction; local Langfuse 실제 수집·Tree/Timeline"
+    },
+    {
+      "id": "T06",
+      "title": "LangGraph 상위 그래프·subgraph·진행 이벤트",
+      "prerequisites": [
+        "T04",
+        "T05"
+      ],
+      "requirements_original_text": "LG17-01, AI01~03, AI-01~07",
+      "source_line": 1151,
+      "status": "NOT_STARTED",
+      "phase": "FOUNDATION",
+      "sources": [
+        {
+          "source_id": "SRC-V17-03",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "12.1 / 12.4 T06",
+          "line": 1151
+        },
+        {
+          "source_id": "SRC-PLAN",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "PHASE_1_SCOPE §1~8"
+        }
+      ],
+      "screen": "AI 패널 실행 상태·원장 사건과 구분된 진행 표시",
+      "screen_ids": [
+        "SD-001",
+        "SD-035"
+      ],
+      "user_action": "질문 전송 → 기능 선택 → 도구 실행 → 결과/검토 필요",
+      "deliverables": [
+        "LangGraph 상위 workflow와 typed subgraphs",
+        "Supervisor·Product·전문 capability 연결",
+        "진행 SSE·공유 Context·조건부 분기"
+      ],
+      "acceptance_positive": [
+        "명시적 UI/API capability는 불필요한 Supervisor LLM 호출 없이 실행한다.",
+        "자연어 질문은 허용 기능만 선택하고 두 전문 기능의 정상/검토 필요/실패가 같은 실행 ID로 관측된다."
+      ],
+      "acceptance_negative": [
+        "모든 요청에 모든 Agent 호출, 자유 Swarm 위임, 권한 밖 route를 허용하지 않는다.",
+        "진행 이벤트를 업무 원장 반영 사실로 해석하지 않는다."
+      ],
+      "evidence_required": [
+        "실제 LangGraph branch/subgraph 실행 기록",
+        "UI 진행·Langfuse trace 대응"
+      ],
+      "scope_and_completion": "필수 도구/Workflow/계층/협업/Harness를 적용한다. 선택적 Reflection/Adaptive는 비교 대상으로 유지한다.",
+      "verification_commands": [],
+      "execution_evidence": [],
+      "actual_implementation_paths": [],
+      "actual_api_or_tool_contract": null,
+      "blockers": [],
+      "goal_summary": "LangGraph 상위 workflow와 typed subgraphs; Supervisor·Product·전문 capability 연결; 진행 SSE·공유 Context·조건부 분기"
+    },
+    {
+      "id": "T07",
+      "title": "영속 Checkpointer·HITL·복구",
+      "prerequisites": [
+        "T06"
+      ],
+      "requirements_original_text": "LG17-02, CM04, RV02~03, AG16-05",
+      "source_line": 1152,
+      "status": "NOT_STARTED",
+      "phase": "FOUNDATION",
+      "sources": [
+        {
+          "source_id": "SRC-V17-03",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "12.1 / 12.4 T07",
+          "line": 1152
+        },
+        {
+          "source_id": "SRC-PLAN",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "PHASE_1_SCOPE §1~8"
+        }
+      ],
+      "screen": "승인 대기·실행 결과·AI 이어서 실행",
+      "screen_ids": [
+        "SD-025",
+        "PNL-19"
+      ],
+      "user_action": "대기 후 재개·실패 결과 확인",
+      "deliverables": [
+        "영속 Checkpointer·interrupt/resume",
+        "재개 시 신원·권한·버전·예산 검사",
+        "원장 상태 대사와 취소/복구 처리"
+      ],
+      "acceptance_positive": [
+        "독립 프로세스 종료·재시작 후 저장 경계부터 재개한다.",
+        "승인 대기와 재개가 동일 run/segment 계보 및 누적 예산을 유지한다."
+      ],
+      "acceptance_negative": [
+        "권한 회수·구버전·응답 유실·재시도에서 중복 원장 효과가 발생하지 않는다.",
+        "메모리 체크포인트 시험을 영속 복구 완료로 보고하지 않는다."
+      ],
+      "evidence_required": [
+        "강제 종료·재시작·HITL 재개 기록",
+        "원장 명령 중복 0 및 비용/시간 복구 측정"
+      ],
+      "scope_and_completion": "Checkpointer는 원장 transaction·멱등성의 대체물이 아니다.",
+      "verification_commands": [],
+      "execution_evidence": [],
+      "actual_implementation_paths": [],
+      "actual_api_or_tool_contract": null,
+      "blockers": [],
+      "goal_summary": "영속 Checkpointer·interrupt/resume; 재개 시 신원·권한·버전·예산 검사; 원장 상태 대사와 취소/복구 처리"
+    },
+    {
+      "id": "T08",
+      "title": "제한 파서 Sandbox·Broker",
+      "prerequisites": [
+        "T02",
+        "T04"
+      ],
+      "requirements_original_text": "CM01~03",
+      "source_line": 1153,
+      "status": "NOT_STARTED",
+      "phase": "FOUNDATION",
+      "sources": [
+        {
+          "source_id": "SRC-V17-03",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "12.1 / 12.4 T08",
+          "line": 1153
+        },
+        {
+          "source_id": "SRC-PLAN",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "PHASE_1_SCOPE §1~8"
+        }
+      ],
+      "screen": "BOM 업로드·추출 상태/오류",
+      "screen_ids": [
+        "SD-004",
+        "PNL-02"
+      ],
+      "user_action": "지원 형식 원본을 접수해 제한 파서 실행",
+      "deliverables": [
+        "제한 파서 Broker/Runner·고정 이미지",
+        "opaque artifact·읽기 전용 입력·network off",
+        "비밀·경로·출력·시간·자원 제한"
+      ],
+      "acceptance_positive": [
+        "지원 CSV/ODS/텍스트 PDF를 제한 job으로 처리하고 원문 근거를 돌려준다.",
+        "취소·timeout 후 하위 프로세스·임시 산출물을 정리한다."
+      ],
+      "acceptance_negative": [
+        "경로 탈출·symlink·압축폭탄·malformed·과대 출력·외부 네트워크·호스트 비밀 접근을 실제 Runner에서 차단한다.",
+        "Runner 부재를 호스트 무제한 파서로 우회하지 않는다."
+      ],
+      "evidence_required": [
+        "실제 Runner 격리·자원/시간 제한 검사",
+        "정상/손상 파일·취소 cleanup 결과"
+      ],
+      "scope_and_completion": "T09 실제 파일 처리의 필수 선행이다. Codex Cloud 작업환경의 격리 자체는 서비스 Runner 검증을 대신하지 않는다.",
+      "verification_commands": [],
+      "execution_evidence": [],
+      "actual_implementation_paths": [],
+      "actual_api_or_tool_contract": null,
+      "blockers": [],
+      "goal_summary": "제한 파서 Broker/Runner·고정 이미지; opaque artifact·읽기 전용 입력·network off; 비밀·경로·출력·시간·자원 제한"
+    },
+    {
+      "id": "T09",
+      "title": "실제 BOM 접수·검수·등록",
+      "prerequisites": [
+        "T03",
+        "T08"
+      ],
+      "requirements_original_text": "REG-01~04, CM01, AT01",
+      "source_line": 1154,
+      "status": "NOT_STARTED",
+      "phase": "PHASE1_SLICE_AND_RETAINED_FULL",
+      "sources": [
+        {
+          "source_id": "SRC-V17-03",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "12.1 / 12.4 T09",
+          "line": 1154
+        },
+        {
+          "source_id": "SRC-PLAN",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "PHASE_1_SCOPE §1~8"
+        }
+      ],
+      "screen": "BOM 등록 드로어·전체 행·검토·비교",
+      "screen_ids": [
+        "SD-002",
+        "SD-003",
+        "SD-004",
+        "SD-005",
+        "PNL-02",
+        "PNL-03"
+      ],
+      "user_action": "BOM 미등록 보류 → 원본 등록·검수 → 정확 버전 승인·반영",
+      "deliverables": [
+        "원본 hash·보관·행 locator·구성/개정/매핑",
+        "원문 전체행·적용/비실장/설정/미확인 상태",
+        "검토·승인·반영 후 재조회"
+      ],
+      "acceptance_positive": [
+        "1차 L1 전체 74행과 출처를 보존하고 v1.3의 62적용/1설정/11비실장을 명시적 시연 가정으로 구분한다.",
+        "원문 수량과 사내품목·단위·실장 판단의 검수 상태를 분리하고 다른 세션·재시작 후 같은 근거를 조회한다.",
+        "전체 T09 완료에는 4모델·5스냅샷·356원문행의 등록/검수 범위와 예외 검증이 필요하다."
+      ],
+      "acceptance_negative": [
+        "5행 계산을 전체 BOM 충족으로 표시하지 않는다.",
+        "중복 접수·다른 개정·시트명 충돌·NA/NS/Opened·고정 sourceHash 오판을 처리하며 미확인을 임의 보완하지 않는다."
+      ],
+      "evidence_required": [
+        "L1 원문 대조·검수·승인·반영·재시작 결과",
+        "4모델5스냅샷 후속 coverage 별도 기록"
+      ],
+      "scope_and_completion": "T09.1은 L1 수직 흐름, T09.2는 나머지 모델/스냅샷 일반화다. T09.1만 통과하면 부모 T09는 전체 완료가 아니다.",
+      "verification_commands": [],
+      "execution_evidence": [],
+      "actual_implementation_paths": [],
+      "actual_api_or_tool_contract": null,
+      "blockers": [],
+      "goal_summary": "원본 hash·보관·행 locator·구성/개정/매핑; 원문 전체행·적용/비실장/설정/미확인 상태; 검토·승인·반영 후 재조회"
+    },
+    {
+      "id": "T10",
+      "title": "온톨로지·제약·투영·관계 조회",
+      "prerequisites": [
+        "T09"
+      ],
+      "requirements_original_text": "CM05, G-01~09, AT08",
+      "source_line": 1155,
+      "status": "NOT_STARTED",
+      "phase": "PHASE1_SLICE_AND_RETAINED_FULL",
+      "sources": [
+        {
+          "source_id": "SRC-V17-03",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "12.1 / 12.4 T10",
+          "line": 1155
+        },
+        {
+          "source_id": "SRC-PLAN",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "PHASE_1_SCOPE §1~8"
+        }
+      ],
+      "screen": "온톨로지 그래프·객체/관계 상세·버전·표",
+      "screen_ids": [
+        "SD-028",
+        "SD-029",
+        "SD-030"
+      ],
+      "user_action": "CQ 관련 객체·관계·근거 경로를 선택하고 조회",
+      "deliverables": [
+        "TBox/ABox·Triple·SHACL·SPARQL 계약",
+        "PostgreSQL→RDF/Neo4j versioned outbox 투영",
+        "ready publication fence·Graph port·관계 필터"
+      ],
+      "acceptance_positive": [
+        "주어 클래스–술어–목적어 클래스와 근거·시점·버전·실제/합성 상태를 조회한다.",
+        "실제 SHACL 엔진 및 SPARQL 질의와 원장/Neo4j 구조화 결과를 같은 snapshot에서 대조한다.",
+        "원장 변경 이후 검증·준비된 투영만 공개하고 수량/그래프 준비 상태를 별도 표시한다."
+      ],
+      "acceptance_negative": [
+        "잘못된 관계 방향/타입·필수 근거 누락·미검사 가용·미해결 객체·혼합/부분/지연 버전을 탐지한다.",
+        "출하/BOM 관계만으로 LOT 장착 사건을 생성하지 않는다."
+      ],
+      "evidence_required": [
+        "정상/위반 SHACL·실제 SPARQL 결과",
+        "PostgreSQL/RDF/Neo4j 결과·버전·근거 대조",
+        "투영 지연/실패/재처리 증거"
+      ],
+      "scope_and_completion": "1차 구매·BOM·LOT·승인 관계부터 구현하되 보드·제거·Coverage·품질 TBox/계약을 삭제하지 않는다.",
+      "verification_commands": [],
+      "execution_evidence": [],
+      "actual_implementation_paths": [],
+      "actual_api_or_tool_contract": null,
+      "blockers": [],
+      "goal_summary": "TBox/ABox·Triple·SHACL·SPARQL 계약; PostgreSQL→RDF/Neo4j versioned outbox 투영; ready publication fence·Graph port·관계 필터"
+    },
+    {
+      "id": "T11",
+      "title": "근거 검색·Hybrid RAG",
+      "prerequisites": [
+        "T10"
+      ],
+      "requirements_original_text": "EV01~02, AG16, AI03",
+      "source_line": 1156,
+      "status": "NOT_STARTED",
+      "phase": "PHASE1_SLICE_AND_RETAINED_FULL",
+      "sources": [
+        {
+          "source_id": "SRC-V17-03",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "12.1 / 12.4 T11",
+          "line": 1156
+        },
+        {
+          "source_id": "SRC-PLAN",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "PHASE_1_SCOPE §1~8"
+        }
+      ],
+      "screen": "AI 근거·문서 상세·그래프 경로",
+      "screen_ids": [
+        "PNL-16",
+        "SD-029"
+      ],
+      "user_action": "질문의 근거 조회·원문 열기",
+      "deliverables": [
+        "권한·동일버전 exact/lexical/vector 검색",
+        "융합과 선택적 rerank/graph/rewrite profile",
+        "원문 locator·evidence refs·ContextBuilder"
+      ],
+      "acceptance_positive": [
+        "권한 있는 같은 버전의 원문·행·hash를 검색하고 계산 도구 결과와 근거를 함께 연결한다.",
+        "R0~R5 프로필·검색 corpus/index/version과 bounded 재검색을 기록한다."
+      ],
+      "acceptance_negative": [
+        "검색 없음·색인 미완료·장애를 구분하고 다른 회사·미래 사건·gold·평가 trace 유출을 차단한다.",
+        "검색 유사도를 동일품 승인이나 확정 수량 근거로 사용하지 않는다."
+      ],
+      "evidence_required": [
+        "권한/버전별 retrieval 고정 사례",
+        "실제 원문 링크·검색 없음/오류 분기",
+        "Context Precision/Recall 측정 입력 계약"
+      ],
+      "scope_and_completion": "선택적 검색 전략은 측정 후 채택하되 기본 Hybrid RAG 연결을 생략하지 않는다.",
+      "verification_commands": [],
+      "execution_evidence": [],
+      "actual_implementation_paths": [],
+      "actual_api_or_tool_contract": null,
+      "blockers": [],
+      "goal_summary": "권한·동일버전 exact/lexical/vector 검색; 융합과 선택적 rerank/graph/rewrite profile; 원문 locator·evidence refs·ContextBuilder"
+    },
+    {
+      "id": "T12",
+      "title": "Product·추출·매핑 Agent",
+      "prerequisites": [
+        "T06",
+        "T09",
+        "T11"
+      ],
+      "requirements_original_text": "REG-01~04, AG16-02, AI01~03",
+      "source_line": 1157,
+      "status": "NOT_STARTED",
+      "phase": "PHASE1_SLICE_AND_RETAINED_FULL",
+      "sources": [
+        {
+          "source_id": "SRC-V17-03",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "12.1 / 12.4 T12",
+          "line": 1157
+        },
+        {
+          "source_id": "SRC-PLAN",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "PHASE_1_SCOPE §1~8"
+        }
+      ],
+      "screen": "BOM 원문/추출/매핑 패널·AI 설명",
+      "screen_ids": [
+        "SD-004",
+        "PNL-02",
+        "PNL-03"
+      ],
+      "user_action": "추출값·품목 후보와 근거 확인 후 검토",
+      "deliverables": [
+        "Product pipeline·Extraction/Mapping typed capability",
+        "파서 결과 재사용·원문 근거·모호성/미확인 처리"
+      ],
+      "acceptance_positive": [
+        "구조화 원본의 결정적 파서를 재사용하고 후보·근거·검수 상태를 보존한다.",
+        "Fake 서버 통합과 허용된 live 모델의 실제 추출/설명을 별도 기록한다."
+      ],
+      "acceptance_negative": [
+        "이름/사진/임베딩 유사도만으로 품목을 병합·승인하거나 누락 값을 사실로 생성하지 않는다.",
+        "LLM 미호출 상태를 실제 AI 연결 완료로 표시하지 않는다."
+      ],
+      "evidence_required": [
+        "원문→추출→후보→검토의 provenance",
+        "Fake/live 구분 결과와 매핑 오류 사례"
+      ],
+      "scope_and_completion": "L1 먼저 연결하고 전체 모델/형식 일반화는 부모 Task 잔여로 보존한다.",
+      "verification_commands": [],
+      "execution_evidence": [],
+      "actual_implementation_paths": [],
+      "actual_api_or_tool_contract": null,
+      "blockers": [],
+      "goal_summary": "Product pipeline·Extraction/Mapping typed capability; 파서 결과 재사용·원문 근거·모호성/미확인 처리"
+    },
+    {
+      "id": "T13",
+      "title": "자재 원장·수급·대체 검토",
+      "prerequisites": [
+        "T03",
+        "T06",
+        "T09",
+        "T11"
+      ],
+      "requirements_original_text": "PLN-01~03, R12-INV, AG16-02, AT04",
+      "source_line": 1158,
+      "status": "NOT_STARTED",
+      "phase": "PHASE1_SLICE_AND_RETAINED_FULL",
+      "sources": [
+        {
+          "source_id": "SRC-V17-03",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "12.1 / 12.4 T13",
+          "line": 1158
+        },
+        {
+          "source_id": "SRC-PLAN",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "PHASE_1_SCOPE §1~8"
+        }
+      ],
+      "screen": "회차·자재표·기본/예측 비교·대체 후보·LOT 상세",
+      "screen_ids": [
+        "SD-009",
+        "SD-011",
+        "SD-013",
+        "SD-014",
+        "PNL-08",
+        "PNL-10",
+        "SD-015",
+        "PNL-01",
+        "PNL-04"
+      ],
+      "user_action": "같은 질문 재실행 → 전체 적용 BOM 소요·가용·부족·대체 비교",
+      "deliverables": [
+        "수요/재고/LOT/예약/소비 등 원장·공통 계산",
+        "Material/Substitute 기능·UI 비교",
+        "동일 snapshot 입력·가정·근거와 What-if 분리"
+      ],
+      "acceptance_positive": [
+        "초기 약속100−도착32=68, 추가 양품 목표40, 계획수율94%에서 ceil(40/0.94)=43을 서로 다른 의미로 반환한다.",
+        "같은 재고·예약·보드당 소요 조건에서 40/43 및 부족20/23을 비교하고 적용 BOM 전체 항목의 소요·누락을 드러낸다.",
+        "사용자가 선택한 대안만 후속 문서 초안에 연결하며 실제 원장은 별도 승인·반영한다."
+      ],
+      "acceptance_negative": [
+        "BOM 미반영·단위/매핑 미확인 시 부족0으로 계산하거나 68대를 신규 생산량으로 해석하지 않는다.",
+        "43투입을 양품40 보장으로 표현하거나 검사대기를 가용 처리하지 않는다.",
+        "자기예약 이중 차감·동시 초과·승인 범위 밖 대체품·가정 변경의 실제 원장 자동 반영을 차단한다."
+      ],
+      "evidence_required": [
+        "동일 snapshot 독립 계산과 UI/AI 대조",
+        "소요·예약·소비 경계 및 오류/보류 사례",
+        "추천·What-if 입력/출력/한계"
+      ],
+      "scope_and_completion": "1차는 MK 자재 확보에 필요한 계산/예약 경계와 기존 후보 표시. 이동·반납·폐기·범용 대체 승인 전체는 후속으로 보존한다.",
+      "verification_commands": [],
+      "execution_evidence": [],
+      "actual_implementation_paths": [],
+      "actual_api_or_tool_contract": null,
+      "blockers": [],
+      "goal_summary": "수요/재고/LOT/예약/소비 등 원장·공통 계산; Material/Substitute 기능·UI 비교; 동일 snapshot 입력·가정·근거와 What-if 분리"
+    },
+    {
+      "id": "T14",
+      "title": "구매·견적·발주·입고 일반화",
+      "prerequisites": [
+        "T13"
+      ],
+      "requirements_original_text": "PLN-04~06, R12-PUR, AG16-02",
+      "source_line": 1159,
+      "status": "NOT_STARTED",
+      "phase": "PHASE1_SLICE_AND_RETAINED_FULL",
+      "sources": [
+        {
+          "source_id": "SRC-V17-03",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "12.1 / 12.4 T14",
+          "line": 1159
+        },
+        {
+          "source_id": "SRC-PLAN",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "PHASE_1_SCOPE §1~8"
+        }
+      ],
+      "screen": "견적카드·PR/PO 드로어·입하·수입검사·확보 진행",
+      "screen_ids": [
+        "SD-006",
+        "SD-007",
+        "SD-008",
+        "SD-010",
+        "PNL-05",
+        "PNL-06",
+        "PNL-07",
+        "PNL-09"
+      ],
+      "user_action": "견적 비교 → 구매 요청 → 내부 발주 → 입하 → 검사 → 가용 반영",
+      "deliverables": [
+        "Procurement 기능·MOQ/배수/비용/유효기간 계산",
+        "PR/PO·공급확인·입하·검사 사건과 상태",
+        "부분수량·품질·가용 전환 및 실시간 상태"
+      ],
+      "acceptance_positive": [
+        "예측안 선택으로 23개 PR 초안을 만들고 승인·발주·입하·검사를 별도로 수행한다.",
+        "입하23에서 검사대기23·가용20, 합격23 반영 후 가용43을 같은 기준으로 조회한다.",
+        "입하=합격+불합격+대기를 보존하고 합격분만 가용/할당에 반영한다."
+      ],
+      "acceptance_negative": [
+        "견적 선택만으로 발주·재고 증가, MOQ/포장배수 위반, 미확인 운임0, 만료 견적 반영을 허용하지 않는다.",
+        "내부 PO·모의 전송을 실제 공급 확약으로 표현하거나 입하/검사 중복 기록을 허용하지 않는다."
+      ],
+      "evidence_required": [
+        "UI→승인→DB→사건→표/그래프/AI 일치",
+        "부분 입하·부분 검사·중복·권한·버전 시험"
+      ],
+      "scope_and_completion": "1차 대표 업무의 끝은 자재 확보. 고객 도착이 없으면 잔여 약속68을 유지한다. 다품목/다업무 일반화 잔여는 부모 Task에 남긴다.",
+      "verification_commands": [],
+      "execution_evidence": [],
+      "actual_implementation_paths": [],
+      "actual_api_or_tool_contract": null,
+      "blockers": [],
+      "goal_summary": "Procurement 기능·MOQ/배수/비용/유효기간 계산; PR/PO·공급확인·입하·검사 사건과 상태; 부분수량·품질·가용 전환 및 실시간 상태"
+    },
+    {
+      "id": "T15",
+      "title": "생산작업·일정·부분실적",
+      "prerequisites": [
+        "T13"
+      ],
+      "requirements_original_text": "PLN-07, FUL-02, D02, D04",
+      "source_line": 1160,
+      "status": "NOT_STARTED",
+      "phase": "FOLLOWUP_DELIVERY",
+      "sources": [
+        {
+          "source_id": "SRC-V17-03",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "12.1 / 12.4 T15",
+          "line": 1160
+        },
+        {
+          "source_id": "SRC-PLAN",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "PHASE_1_SCOPE §1~8"
+        }
+      ],
+      "screen": "생산 표·작업·일정·부분실적·완성품 입고 상세",
+      "screen_ids": [
+        "SD-012",
+        "SD-010",
+        "PNL-11",
+        "PNL-12",
+        "PNL-20"
+      ],
+      "user_action": "자재 예약·소비 → 개별 보드 생산 완료 → 완성품 입고",
+      "deliverables": [
+        "안정 production_job ID·수요·자원/달력/계획",
+        "부분실적·불량·완성품 입고 원장",
+        "합성 일정/수율 설정과 실제 사실 분리"
+      ],
+      "acceptance_positive": [
+        "같은 실행에서 중간 3대 생산과 이후 나머지 생산을 별개 시점으로 기록한다.",
+        "생산완료와 완성품입고를 독립 사건으로 기록하고 양품을 중복 합산하지 않는다.",
+        "추가 양품40 목표, 계획투입43, 합성 시나리오의 기록된 실제 투입/양품 수량을 구분한다."
+      ],
+      "acceptance_negative": [
+        "현재 자료 없는 능력·운송·검사시간을 실제 관측값으로 확정하지 않는다.",
+        "휴무·점유·자재조건·구버전 계획 위반, 초기실적에 미래3대 합산, 생산=즉시창고입고를 차단한다."
+      ],
+      "evidence_required": [
+        "수량·시점 원장 재현 및 일정 계산 입력",
+        "부분실적/불량/정정/재시작 검사"
+      ],
+      "scope_and_completion": "기존 MK 생산 현황 조회는 1차에도 보존한다. 신규 사실 등록·전체 생산 실행은 후속 필수 범위다.",
+      "verification_commands": [],
+      "execution_evidence": [],
+      "actual_implementation_paths": [],
+      "actual_api_or_tool_contract": null,
+      "blockers": [],
+      "goal_summary": "안정 production_job ID·수요·자원/달력/계획; 부분실적·불량·완성품 입고 원장; 합성 일정/수율 설정과 실제 사실 분리"
+    },
+    {
+      "id": "T16",
+      "title": "계약·회차·분할출하·부분도착",
+      "prerequisites": [
+        "T15"
+      ],
+      "requirements_original_text": "FUL-01~07, D03, D05, AT05",
+      "source_line": 1161,
+      "status": "NOT_STARTED",
+      "phase": "FOLLOWUP_DELIVERY",
+      "sources": [
+        {
+          "source_id": "SRC-V17-03",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "12.1 / 12.4 T16",
+          "line": 1161
+        },
+        {
+          "source_id": "SRC-PLAN",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "PHASE_1_SCOPE §1~8"
+        }
+      ],
+      "screen": "회차·배분·출하·도착 표·상세·잔여 약속",
+      "screen_ids": [
+        "SD-016",
+        "SD-017",
+        "SD-018",
+        "PNL-13",
+        "PNL-14",
+        "PNL-15"
+      ],
+      "user_action": "회차 배분 → 출하2 → 부분도착1 → 전체 잔여 이행",
+      "deliverables": [
+        "계약/회차·원천 배분·출하/도착 명세",
+        "조건부 전망·기한 종류/근거",
+        "전체68대 이행·지연/자료누락 비교"
+      ],
+      "acceptance_positive": [
+        "초기 잔여68, 중간 출하2 후68·도착1 후67, 최종 도착100 후0을 각 시점에서 확인한다.",
+        "전체 약속을 고객 도착 기준으로 판정하고 기한·시점·근거를 표시한다."
+      ],
+      "acceptance_negative": [
+        "도착>출하, 중복 배정, 미래 실적, 출발 이전 도착, 출하만으로 도착 완료를 차단한다.",
+        "일정 근거 부족을 납기 확정으로 표현하지 않고 조건부/판단 보류로 반환한다."
+      ],
+      "evidence_required": [
+        "중간3→2→1과 최종68대 연결 E2E",
+        "정상/지연/자료누락 별도 run의 수량/기한 검사"
+      ],
+      "scope_and_completion": "전체68대 고객 도착은 유지되는 최종 목표다. 1차 자재 확보나 중간3→2→1만으로 이 Task를 완료 처리하지 않는다.",
+      "verification_commands": [],
+      "execution_evidence": [],
+      "actual_implementation_paths": [],
+      "actual_api_or_tool_contract": null,
+      "blockers": [],
+      "goal_summary": "계약/회차·원천 배분·출하/도착 명세; 조건부 전망·기한 종류/근거; 전체68대 이행·지연/자료누락 비교"
+    },
+    {
+      "id": "T17",
+      "title": "보드·로트·장착 사건·시간 조사",
+      "prerequisites": [
+        "T10",
+        "T15",
+        "T16"
+      ],
+      "requirements_original_text": "TRC-01~04, AT02, D02, D03",
+      "source_line": 1162,
+      "status": "NOT_STARTED",
+      "phase": "FOLLOWUP_TRACE",
+      "sources": [
+        {
+          "source_id": "SRC-V17-03",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "12.1 / 12.4 T17",
+          "line": 1162
+        },
+        {
+          "source_id": "SRC-PLAN",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "PHASE_1_SCOPE §1~8"
+        }
+      ],
+      "screen": "온톨로지 조사·LOT/보드 상세·장착/제거/이력 보완",
+      "screen_ids": [
+        "SD-019",
+        "SD-020",
+        "SD-021",
+        "PNL-21",
+        "PNL-22",
+        "PNL-17"
+      ],
+      "user_action": "LOT 질문 → 사용처·추적되지 않은 범위·출하/도착과 관계 경로 확인",
+      "deliverables": [
+        "보드/LOT/작업/회차·장착/제거 사건",
+        "유효시점/기록시점·시점A/기간B·Coverage",
+        "확인/제외/미확인 조사 결과"
+      ],
+      "acceptance_positive": [
+        "동일 LOT의 실제로 기록된 장착 사건만 확인된 사용처로 표시한다.",
+        "합성3대 장착과 출하2/도착1을 근거 경로로 연결하고 추적되지 않은 범위를 함께 보여준다.",
+        "공식 U104 A제외/B포함, U106 미확인을 같은 조건에서 검증한다."
+      ],
+      "acceptance_negative": [
+        "BOM/출하 관계만으로 미기록 LOT 장착을 추론하거나 집계 출하를 가짜 serial 목록으로 변환하지 않는다.",
+        "이름 같은 다른 LOT 병합·제거 미기록의 확정·혼합버전·기간 경계 오류를 탐지한다."
+      ],
+      "evidence_required": [
+        "정상/음성 조사 gold와 관계 경로",
+        "장착/제거/범위/시간 경계·미확인 시험"
+      ],
+      "scope_and_completion": "CQ-03과 기존 시점/기간 CQ를 모두 유지한다. 새 관계가 많다는 이유만으로 정합성을 판정하지 않는다.",
+      "verification_commands": [],
+      "execution_evidence": [],
+      "actual_implementation_paths": [],
+      "actual_api_or_tool_contract": null,
+      "blockers": [],
+      "goal_summary": "보드/LOT/작업/회차·장착/제거 사건; 유효시점/기록시점·시점A/기간B·Coverage; 확인/제외/미확인 조사 결과"
+    },
+    {
+      "id": "T18",
+      "title": "클레임·시험·대응·재생산",
+      "prerequisites": [
+        "T17"
+      ],
+      "requirements_original_text": "CLM-01~06, D06, AT06",
+      "source_line": 1163,
+      "status": "NOT_STARTED",
+      "phase": "FOLLOWUP_V17",
+      "sources": [
+        {
+          "source_id": "SRC-V17-03",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "12.1 / 12.4 T18",
+          "line": 1163
+        },
+        {
+          "source_id": "SRC-PLAN",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "PHASE_1_SCOPE §1~8"
+        }
+      ],
+      "screen": "품질·클레임·시험·구성별 대응 상세",
+      "screen_ids": [
+        "SD-022",
+        "SD-023",
+        "SD-024",
+        "PNL-23",
+        "PNL-24",
+        "PNL-18"
+      ],
+      "user_action": "신고 접수 → 영향 조사 → 시험 → 대응·재생산 검토",
+      "deliverables": [
+        "신고 원문·식별 후보·영향 조사",
+        "중단 요청 문서·시험 의뢰/결과·정정",
+        "구성별 재생산 수요·인계"
+      ],
+      "acceptance_positive": [
+        "신고와 확인 사실, 요청과 현장 실행, 시험 결과와 검토를 구분한다.",
+        "대상·구성·시험/근거 충돌을 보존하고 사용자 확인 후 수요 인계한다."
+      ],
+      "acceptance_negative": [
+        "미검사를 정상, 신고를 결함 확정, 중단요청을 현장중단으로 처리하지 않는다.",
+        "구성 간 무근거 재고 상계·대상 중복집계를 차단한다."
+      ],
+      "evidence_required": [
+        "공식 AT06 및 관련 CQ 정상/오류 결과",
+        "시험·정정·구성별 인계 원장"
+      ],
+      "scope_and_completion": "1차 선행조건은 아니지만 v1.7 필수 기능으로 보존한다.",
+      "verification_commands": [],
+      "execution_evidence": [],
+      "actual_implementation_paths": [],
+      "actual_api_or_tool_contract": null,
+      "blockers": [],
+      "goal_summary": "신고 원문·식별 후보·영향 조사; 중단 요청 문서·시험 의뢰/결과·정정; 구성별 재생산 수요·인계"
+    },
+    {
+      "id": "T19",
+      "title": "전체 AI 업무 통합·공유 맥락",
+      "prerequisites": [
+        "T07",
+        "T12",
+        "T14",
+        "T16",
+        "T18"
+      ],
+      "requirements_original_text": "AI01~03, AI-01~07, AT07, UX01~03",
+      "source_line": 1164,
+      "status": "NOT_STARTED",
+      "phase": "CROSS_CUTTING_WITH_FULL_GATE",
+      "sources": [
+        {
+          "source_id": "SRC-V17-03",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "12.1 / 12.4 T19",
+          "line": 1164
+        },
+        {
+          "source_id": "SRC-PLAN",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "PHASE_1_SCOPE §1~8"
+        }
+      ],
+      "screen": "공통 AI 패널·대시보드·관계 질의·업무 드로어",
+      "screen_ids": [
+        "SD-001",
+        "SD-029"
+      ],
+      "user_action": "같은 질문 재실행·근거 열기·초안 제안·관련 변경 확인",
+      "deliverables": [
+        "Supervisor/Product/Knowledge/Quality·전문 기능 통합",
+        "공유 선택/권한/시점/원장·투영 버전",
+        "원장 중심 갱신·관련 채팅 상태·최신 근거 조회"
+      ],
+      "acceptance_positive": [
+        "각 단계에서 UI와 AI가 같은 공통 도구·계산·근거·버전을 사용한다.",
+        "사건 피드·수량·그래프는 모델 호출 없이 갱신하고 현재 대화에 영향을 주는 변경만 조용히 표시한다.",
+        "새 질문은 최신 허용 snapshot을 조회하며 이전 답변의 기준은 보존한다."
+      ],
+      "acceptance_negative": [
+        "무관 사건으로 채팅을 채우거나 사건마다 LLM을 호출하지 않는다.",
+        "늦은 응답·계정/대상 전환·권한 거부·도구 실패를 성공으로 표시하지 않는다.",
+        "생성 중 변경이 오면 오래된 답을 최신으로 보이게 수치만 덮어쓰지 않는다."
+      ],
+      "evidence_required": [
+        "직접UI/AI 동등 구조화 결과·동일 근거 검사",
+        "관련/무관 변경·재연결·중복/순서역전·LLM 호출수 검사",
+        "Fake/실모델·Langfuse·영속 재개 증거"
+      ],
+      "scope_and_completion": "T19.1 자재 확보 AI를 T12~T14와 함께 구현한다. 부모의 전체 업무 통합 게이트는 T07/T12/T14/T16/T18 완료 후에만 통과한다.",
+      "verification_commands": [],
+      "execution_evidence": [],
+      "actual_implementation_paths": [],
+      "actual_api_or_tool_contract": null,
+      "blockers": [],
+      "goal_summary": "Supervisor/Product/Knowledge/Quality·전문 기능 통합; 공유 선택/권한/시점/원장·투영 버전; 원장 중심 갱신·관련 채팅 상태·최신 근거 조회"
+    },
+    {
+      "id": "T20",
+      "title": "모델 라우팅·Provider 어댑터",
+      "prerequisites": [
+        "T05",
+        "T19"
+      ],
+      "requirements_original_text": "AG16-05~08",
+      "source_line": 1165,
+      "status": "NOT_STARTED",
+      "phase": "FOLLOWUP_EVALUATION",
+      "sources": [
+        {
+          "source_id": "SRC-V17-03",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "12.1 / 12.4 T20",
+          "line": 1165
+        },
+        {
+          "source_id": "SRC-PLAN",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "PHASE_1_SCOPE §1~8"
+        }
+      ],
+      "screen": "개인 모델 설정·평가; 업무 화면에는 실행 상태",
+      "screen_ids": [
+        "SD-032",
+        "SD-035"
+      ],
+      "user_action": "동일 과제의 고정 모델/라우터/provider 비교",
+      "deliverables": [
+        "fixed/규칙 router·검증 후 escalation",
+        "direct/OpenRouter adapters·privacy/tool/budget 제약",
+        "실제 model/provider/fallback·비용 기록"
+      ],
+      "acceptance_positive": [
+        "router off는 고정 모델로 실행하고 같은 사례·자료·예산에서 비교한다.",
+        "후보 모델의 도구 지원·전송 허용·비용 한도를 적용한다."
+      ],
+      "acceptance_negative": [
+        "조용한 모델/provider fallback이나 자기확신만의 escalation·정책 변경을 허용하지 않는다.",
+        "모델키·전송 허용·지출 한도 없이는 live 실행을 하지 않는다."
+      ],
+      "evidence_required": [
+        "EX-ROUTE/EX-PROVIDER 조건·paired 결과",
+        "오프라인 계약과 실제 호출 결과 구분"
+      ],
+      "scope_and_completion": "T05에 공통 모델 경계를 먼저 두고 독립 비교는 후속으로 수행한다. B0~B5로 대체하지 않는다.",
+      "verification_commands": [],
+      "execution_evidence": [],
+      "actual_implementation_paths": [],
+      "actual_api_or_tool_contract": null,
+      "blockers": [],
+      "goal_summary": "fixed/규칙 router·검증 후 escalation; direct/OpenRouter adapters·privacy/tool/budget 제약; 실제 model/provider/fallback·비용 기록"
+    },
+    {
+      "id": "T21",
+      "title": "운영 합성 생성·10만 집계·부하",
+      "prerequisites": [
+        "T10",
+        "T14",
+        "T16",
+        "T18"
+      ],
+      "requirements_original_text": "SCALE-01~08, CM01, CM05, G-01~09",
+      "source_line": 1166,
+      "status": "NOT_STARTED",
+      "phase": "FOLLOWUP_SCALE",
+      "sources": [
+        {
+          "source_id": "SRC-V17-03",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "12.1 / 12.4 T21",
+          "line": 1166
+        },
+        {
+          "source_id": "SRC-PLAN",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "PHASE_1_SCOPE §1~8"
+        }
+      ],
+      "screen": "전체 객체 탐색·집계·다운로드·군집 그래프·연결 상태",
+      "screen_ids": [
+        "SD-029",
+        "SD-030",
+        "SD-031",
+        "SD-034",
+        "SD-035"
+      ],
+      "user_action": "10만 업무 객체의 집계·제한 탐색 및 부하 상태 확인",
+      "deliverables": [
+        "seed/fixture/version 기반 합성 생성·초기화",
+        "10만 core 업무 객체 적재·outbox·집계",
+        "권한별 페이지/내보내기·군집·부하 계측"
+      ],
+      "acceptance_positive": [
+        "고유 업무 객체와 관계/근거/로그/복제 수를 분리해 규모를 보고한다.",
+        "같은 조건의 정확 집계와 조회·투영·재연결·동시 변경 부하를 측정한다."
+      ],
+      "acceptance_negative": [
+        "작은 v1.3 통과를 10만 규모 인수로 대체하지 않는다.",
+        "부분 렌더/페이지 한도를 전체 조사 완료로 표시하거나 시험 없이 수용인원·지연시간을 확정하지 않는다."
+      ],
+      "evidence_required": [
+        "SCALE-01~08·LOAD-01~06 및 장비/캐시/동시성 보고",
+        "seed/hash·참조·수량·시점·p50/p95·메모리"
+      ],
+      "scope_and_completion": "기능별 데이터 정확성 이후 전체 규모 검증을 수행한다. 실제 BOM은 원본 사실, 합성 운영은 별도 출처다.",
+      "verification_commands": [],
+      "execution_evidence": [],
+      "actual_implementation_paths": [],
+      "actual_api_or_tool_contract": null,
+      "blockers": [],
+      "goal_summary": "seed/fixture/version 기반 합성 생성·초기화; 10만 core 업무 객체 적재·outbox·집계; 권한별 페이지/내보내기·군집·부하 계측"
+    },
+    {
+      "id": "T22",
+      "title": "작업별 정량·정성 평가 및 비교",
+      "prerequisites": [
+        "T07",
+        "T19",
+        "T20",
+        "T21"
+      ],
+      "requirements_original_text": "AG16-04~08, OBS17, AT07, CM02~04",
+      "source_line": 1167,
+      "status": "NOT_STARTED",
+      "phase": "CROSS_CUTTING_WITH_FULL_GATE",
+      "sources": [
+        {
+          "source_id": "SRC-V17-03",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "12.1 / 12.4 T22",
+          "line": 1167
+        },
+        {
+          "source_id": "SRC-PLAN",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "PHASE_1_SCOPE §1~8"
+        }
+      ],
+      "screen": "개인 AI 평가·업무 결과 요약; 원시 결과는 별도 보관",
+      "screen_ids": [
+        "SD-032"
+      ],
+      "user_action": "CQ별 정상·오답·근거 부족·권한·버전 사례와 기술 효과 평가",
+      "deliverables": [
+        "CQ 전체 기대결과·오류·보류·검출 규칙",
+        "결정적 검증·원답/제공답 분리·지표 계약",
+        "B0~B5와 EX-CP/ROUTE/LOOP/CONTEXT/RAG/PROVIDER/SEC/ONTOLOGY 비교"
+      ],
+      "acceptance_positive": [
+        "첫 구현부터 수량/시간/권한/상태/관계는 결정적 검사, 의미 평가는 보조 judge로 수행한다.",
+        "동일 CQ·gold·가능한 같은 모델/예산·원장버전으로 비교하고 실패/회귀/차이불명확을 함께 보고한다.",
+        "정답·holdout·원답·개인 결과는 Git/Docker/CI/검색 corpus 밖, 운영 audit은 서비스에 보존한다."
+      ],
+      "acceptance_negative": [
+        "Fake 파이프라인 검증을 실제 AI 정확도, 합성 시연을 사람 업무효과 측정으로 표현하지 않는다.",
+        "B0~B5에서 공통 권한/승인/멱등성을 제거하지 않고 보안 해제 연구는 격리된 가상 도구에서만 수행한다.",
+        "미측정 지표·불완전 gold·미확인 usage를 임의 수치로 채우지 않는다."
+      ],
+      "evidence_required": [
+        "dataset/ontology/rule/model/prompt/tool/seed/run 버전",
+        "normal/error/unknown/permission/version 사례 결과",
+        "AnswerCorrectness/Faithfulness/ContextP-R/MappingP-R-F1/Completion/ToolAccuracy/PolicyViolation/Recovery/Latency/Cost 및 업무효과의 측정/미측정 구분"
+      ],
+      "scope_and_completion": "T22.1은 각 구현 Task와 함께 계약·Fake 서버 통합·작은 회귀를 수행한다. 부모 최종 비교 게이트는 T07/T19/T20/T21 이후, live 허용과 등록된 기준에 따라 수행한다.",
+      "verification_commands": [],
+      "execution_evidence": [],
+      "actual_implementation_paths": [],
+      "actual_api_or_tool_contract": null,
+      "blockers": [],
+      "goal_summary": "CQ 전체 기대결과·오류·보류·검출 규칙; 결정적 검증·원답/제공답 분리·지표 계약; B0~B5와 EX-CP/ROUTE/LOOP/CONTEXT/RAG/PROVIDER/SEC/ONTOLOGY 비교"
+    },
+    {
+      "id": "T23",
+      "title": "전체 수용·잔여 요구 판정·재현 인계",
+      "prerequisites": [
+        "T19",
+        "T20",
+        "T21",
+        "T22"
+      ],
+      "requirements_original_text": "AT01~08, T12, T13, X01~12, SCALE, DEV-ID, LG17, OBS17, UX, 전체 필수 요구",
+      "source_line": 1168,
+      "status": "NOT_STARTED",
+      "phase": "FULL_ACCEPTANCE",
+      "sources": [
+        {
+          "source_id": "SRC-V17-03",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "12.1 / 12.4 T23",
+          "line": 1168
+        },
+        {
+          "source_id": "SRC-PLAN",
+          "source_index": "docs/handoff/SOURCE_INDEX.md",
+          "section": "PHASE_1_SCOPE §1~8"
+        }
+      ],
+      "screen": "MK-S2 전체 업무·개인 검증·운영 연결 상태",
+      "screen_ids": [
+        "SD-001",
+        "SD-031",
+        "SD-032",
+        "SD-035",
+        "SD-036"
+      ],
+      "user_action": "1차 서비스·전체 서비스·운영 배포의 완료 범위를 확인",
+      "deliverables": [
+        "전수 요구→구현→검증→실행 증거 추적",
+        "G1~G5·잔여 요구·운영 게이트 판정",
+        "재현 인계·변경 내역·미결/한계"
+      ],
+      "acceptance_positive": [
+        "1차 자재 확보, 전체68대 도착, v1.7 전체, 실제 운영 검수를 별도 상태로 보고한다.",
+        "공식 AT01~08/T12/T13/X/SCALE/LOAD와 기존 CQ를 누락 없이 유지한다.",
+        "실제 코드·UI/API·DB·RDF/Neo4j·Agent·복구·관측·규모의 실행 증거로만 완료를 판정한다."
+      ],
+      "acceptance_negative": [
+        "미허용/미구현/미검증을 완료로 처리하거나 요구를 삭제해 green을 만들지 않는다.",
+        "실제 사람 과업 기록 없이 시간 절감·만족도·성능 개선을 주장하지 않는다."
+      ],
+      "evidence_required": [
+        "G1 기능/G2 데이터·온톨로지/G3 live Agent·관측/G4 안전/G5 평가·인계",
+        "로컬 기능·AI live·규모·운영 배포의 별도 상태와 근거"
+      ],
+      "scope_and_completion": "1차 인수 검토를 미리 수행할 수 있지만 부모 T23 전체 완료는 공식 전체 선행과 게이트 충족 후다.",
+      "verification_commands": [],
+      "execution_evidence": [],
+      "actual_implementation_paths": [],
+      "actual_api_or_tool_contract": null,
+      "blockers": [],
+      "goal_summary": "전수 요구→구현→검증→실행 증거 추적; G1~G5·잔여 요구·운영 게이트 판정; 재현 인계·변경 내역·미결/한계"
+    }
+  ],
+  "source_access_rule": "공개 저장소에는 요약 인계와 참조 ID만 둔다. 실제 원본은 Git 밖 private_inputs에 별도 보관한다. 원본 접근이 없는 Cloud는 T00 원문·해시 전수 대조를 완료할 수 없으며 T09 원본 처리는 BLOCKED다. 허용된 공개 계약 기반 T01 준비 부분은 독립 진행하되 T00 완료나 T01 전체 수용으로 기록하지 않는다."
+}

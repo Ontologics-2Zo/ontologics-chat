@@ -1,0 +1,31 @@
+# Private reference inputs and personal evaluation material
+/private_inputs/
+/private-inputs/
+/ontologics-private/
+/private-eval/
+/data/raw/
+/data/private/
+/artifacts/private/
+/reports/private/
+/runs/private/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.sqlite
+*.sqlite3
+*.db
+*.log
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+dist/
+build/
+coverage/
+playwright-report/
+test-results/
+# Supply private materials outside Git. Do not commit source archives.
+*.zip
