@@ -28,7 +28,7 @@ function notify(text) {
   clearTimeout(noticeTimer); noticeTimer = setTimeout(() => { $('notice').hidden = true; }, 4500);
 }
 function cancelPendingReplay() { replayGeneration++; graph?.cancelReplay(); }
-async function api(path, body, method) {
+async function api(path, body, method, { binary = false } = {}) {
   const headers = { 'X-Requested-With': 'MK-S2' };
   if (identity?.identity_revision != null) headers['X-Identity-Revision'] = String(identity.identity_revision);
   if (body !== undefined) {
@@ -38,7 +38,7 @@ async function api(path, body, method) {
   const response = await fetch(path, { method: method || (body === undefined ? 'GET' : 'POST'), headers,
     body: body === undefined ? undefined : JSON.stringify(body), credentials: 'same-origin',
     cache: 'no-store', signal: requests.signal });
-  const data = await response.json();
+  const data = response.ok && binary ? await response.blob() : await response.json();
   if (!response.ok) {
     const error = new Error(data.error?.code || data.code || 'SERVICE_UNAVAILABLE');
     error.status = response.status;
@@ -105,7 +105,7 @@ function createPanel(name) {
     input.value = ''; runQuery(name, question);
   });
   root.append(heading, context, messages, suggestions, form,
-    element('div', 'disclosure', '합성 초기 이관 원장 · 결정적 업무 조회. 실제 모델 호출·구매·승인 실행은 구분합니다.'));
+    element('div', 'disclosure', `${snapshot.material_requirements?.bom_id ? '실제 BOM 원문 · 합성 초기 재고' : '합성 초기 이관 원장'} · 결정적 업무 조회. 실제 모델 호출·구매·승인 실행은 구분합니다.`));
   panels[name] = { root, context, messages, suggestions, input, submit };
 }
 async function runQuery(name, question) {
@@ -201,7 +201,8 @@ async function loadSnapshot({ preserveMessages = false } = {}) {
   refreshButton.hidden = false; refreshButton.disabled = false; refreshButton.textContent = '최신 원장 조회'; latestVersion = data.meta.ledger_version;
   dashboard?.destroy();
   dashboard = mountDashboard($('dashboard-stage'), { snapshot, onSelect: setContext,
-    onAsk: text => fillQuestion(text, 'dashboard'), onGraph: focusEvidence });
+    onAsk: text => fillQuestion(text, 'dashboard'), onGraph: focusEvidence, api, getIdentity: () => identity,
+    onPosted: () => { refreshButton.textContent = 'BOM 반영 · 최신 원장 조회'; notify('BOM 등록이 반영됐습니다. 그래프 준비 후 최신 원장을 조회해 주세요.'); }, onRefresh: refreshSnapshot });
   mountCurrentGraph();
   const initialNode = data.graph.data.nodes.find(node => node.entity_ref?.entity_type === 'delivery_round' || node.type === 'DeliveryRound');
   const initialContext = initialNode?.node_id || initialNode?.id;

@@ -2,7 +2,7 @@
 
 공식 원문과 데이터는 공개 저장소에 포함하지 않는다. 실행 환경에서 `PRIVATE_INPUT_ROOT`를 Git 밖 비공개 입력 폴더로 설정하고, 아래 슬롯을 찾아 읽는다. 이 변수는 프로젝트 설정이며 자동 자료 전송 기능이 아니다.
 
-[자료 카탈로그](SOURCE_CATALOG.json)는 논리 위치와 hash를 제공한다. 비공개 폴더의 `SOURCE_MANIFEST.json`에는 개별 파일별 SHA-256·크기가 있다. 이번 준비에서 복사본과 원본 hash, 공식 3문서와 사용자 ZIP의 바이트 일치를 확인했다. Cloud 접근과 서비스 실행은 아직 검증하지 않았다.
+[자료 카탈로그](SOURCE_CATALOG.json)는 논리 위치와 hash를 제공한다. 비공개 폴더의 `SOURCE_MANIFEST.json`에는 개별 파일별 SHA-256·크기가 있다. 최초 준비에서 복사본과 원본 hash, 공식 3문서와 사용자 ZIP의 바이트 일치를 확인했다. 이후 Cloud의 155개 원본 무결성과 INITIAL 서비스 조회는 [실행 기록](SERVICE-INITIAL-20261108.md)의 범위에서 검증했다. 실제 BOM의 제한 파싱·등록 검증은 [BOM 실행 기록](SERVICE-BOM-20261108.md)에 별도로 남긴다.
 
 ## SRC-V17-01
 
