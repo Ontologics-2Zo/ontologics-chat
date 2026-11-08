@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from pathlib import Path
+import re
 from urllib.parse import quote, urlsplit
 from uuid import uuid4
 
@@ -24,6 +25,10 @@ from service.ledger import LedgerReader
 from service.ontology import OntologyCatalog
 from service.projections import ProjectionError
 from service.views import answer_query, ontology_view, snapshot_view
+
+
+MAX_REQUEST_BYTES = 128 * 1024
+MAX_BOM_REVISION_BYTES = 2 * 1024 * 1024
 
 
 class SelectIdentity(Contract):
@@ -62,13 +67,22 @@ def create_app(db, *, private_root: str, origin="http://127.0.0.1:8870", dev_mod
     async def local_boundary(request,call_next):
         host=request.headers.getlist("host")
         origins=request.headers.getlist("origin")
+        # Row review submits all source-row decisions together. Its bounded
+        # allowance must not increase unrelated write endpoints' limits.
+        body_limit = (MAX_BOM_REVISION_BYTES
+                      if request.method == "POST" and re.fullmatch(
+                          r"/api/mks2/bom/documents/[^/]+/revise", request.url.path)
+                      else MAX_REQUEST_BYTES)
+        lengths = request.headers.getlist("content-length")
+        declared_size = (int(lengths[0]) if len(lengths) == 1
+                         and re.fullmatch(r"[0-9]{1,10}", lengths[0]) else None)
         if host != [parsed.netloc] or len(origins)>1 or (origins and origins[0]!=origin) or request.headers.get("sec-fetch-site") in {"cross-site","same-site"}:
             response=error_response("LOCAL_ORIGIN_REQUIRED",403)
         elif request.method not in {"GET","POST","PATCH","DELETE"}:
             response=error_response("METHOD_NOT_ALLOWED",405)
         elif request.method != "GET" and (origins != [origin] or request.headers.get("x-requested-with")!="MK-S2" or request.headers.get("content-type","").split(";")[0]!="application/json"):
             response=error_response("SAME_ORIGIN_JSON_REQUIRED",403)
-        elif request.method != "GET" and (not request.headers.get("content-length","").isdigit() or int(request.headers["content-length"])>131072):
+        elif request.method != "GET" and (declared_size is None or declared_size > body_limit):
             response=error_response("REQUEST_SIZE_REJECTED",413)
         else:
             try:
@@ -76,13 +90,15 @@ def create_app(db, *, private_root: str, origin="http://127.0.0.1:8870", dev_mod
                     chunks=[];size=0
                     async for chunk in request.stream():
                         size+=len(chunk)
-                        if size>131072:
-                            return error_response("REQUEST_SIZE_REJECTED",413)
+                        if size > body_limit:
+                            raise ServiceError("REQUEST_SIZE_REJECTED",413)
                         chunks.append(chunk)
-                    if size!=int(request.headers["content-length"]):
-                        return error_response("REQUEST_SIZE_REJECTED",413)
+                    if size != declared_size:
+                        raise ServiceError("REQUEST_SIZE_REJECTED",413)
                     request._body=b"".join(chunks)
                 response=await call_next(request)
+            except ServiceError as error:
+                response=error_response(error.code,error.status_code)
             except psycopg.Error:
                 response=error_response("DATABASE_UNAVAILABLE",503)
             except Exception:

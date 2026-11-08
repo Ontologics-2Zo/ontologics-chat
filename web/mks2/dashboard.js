@@ -2,7 +2,20 @@
 // Explicit BOM commands are delegated to the authenticated server through the BOM drawer.
 import { createBomDrawer } from './bom.js';
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
-const num = value => value == null ? '미확인' : Number.isFinite(Number(value)) ? Number(value).toLocaleString('ko-KR') : '미확인';
+export function formatQuantity(value) {
+  if (typeof value === 'number') return Number.isFinite(value)
+    ? value.toLocaleString('ko-KR', { maximumSignificantDigits: 21 }) : '미확인';
+  if (typeof value !== 'string') return '미확인';
+  // Material quantities arrive as exact decimal strings. Group their digits
+  // without floating-point conversion or rounding a positive shortage to zero.
+  const match = /^(-?)(\d+)(?:\.(\d+))?$/.exec(value);
+  if (!match) return '미확인';
+  const integer = match[2].replace(/^0+(?=\d)/, '');
+  const fraction = (match[3] || '').replace(/0+$/, '');
+  const sign = match[1] && (integer !== '0' || fraction) ? '-' : '';
+  return `${sign}${integer.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}${fraction ? `.${fraction}` : ''}`;
+}
+const num = formatQuantity;
 const pct = (value, total) => total > 0 ? Math.max(0, Math.min(100, Number(value || 0) / total * 100)) : 0;
 const shortDate = value => value ? String(value).slice(5, 10) : '미확인';
 const tone = value => ['ok','warn','bad','info','mute'].includes(value) ? value : 'mute';
@@ -81,8 +94,8 @@ export function mountDashboard(container, { snapshot, onSelect = () => {}, onAsk
     const qtyKey = planned ? 'planned_required_qty' : 'required_qty', shortageKey = planned ? 'planned_shortage_qty' : 'shortage_qty';
     const label = planned ? `계획 투입 ${num(basisData.planned_input_qty)}대 · 수율 ${esc(basisData.plan_yield)} 가정` : `추가 양품 목표 ${num(basisData.production_remaining_qty)}대 기준`;
     const issueLabel = value => ({ UNRESOLVED: '적용 미확인', MAPPING_UNKNOWN: '품목 매핑 미확인', INVENTORY_UNKNOWN: '재고 미확인', APPLICATION_UNREVIEWED: '적용 미검수', ITEM_MAPPING_UNCONFIRMED: '품목 매핑 미확인', QUANTITY_UNCONFIRMED: '수량 미확인', UNIT_UNCONFIRMED: '단위 미확인', INVENTORY_UNIT_UNCONFIRMED: '재고 단위 미확인', INVENTORY_COVERAGE_AMBIGUOUS: '재고 범위 대조 필요', CALCULATED: '계산됨', APPLICABLE: '적용 가정', UNIT_UNKNOWN: '단위 미확인', NOT_MOUNTED: '비실장', SETTING: '설정', UNREVIEWED: '미검수', DEMO_ASSUMPTION: '시연 가정' }[value] || value);
-    return `<p class="mk-small-note"><b>${num(requirementItems.length)}개 품목 기준 시연</b> · ${label}. 가정 수량·합성 재고 적용 · 원장 v${num(version)} / BOM 문서 v${num(requirements.bom_version)}.</p>
-      <p class="mk-small-note">전체 원본은 아래 상세에 보존하며 이 계산을 전체 BOM 기술 검수·제조 가능 확정으로 보지 않습니다. ${planned ? '계획 수율은 실적이나 양품 수량 보장이 아닙니다.' : ''}</p>
+    return `<p class="mk-small-note"><b>전체 BOM 중 일부 품목 기준 · ${num(requirementItems.length)}개 품목</b> · ${label}. 적용 수량·품목 연결은 시연 가정, 재고는 합성 초기 원장 기준입니다. 원장 v${num(version)} / BOM 문서 v${num(requirements.bom_version)}.</p>
+      <p class="mk-small-note">실제 BOM 원문 전체 ${num(requirementRows.length)}행은 아래 상세에 보존하며 이 계산을 전체 BOM 기술 검수·제조 가능 확정으로 보지 않습니다. ${planned ? '계획 수율은 실적이나 양품 수량 보장이 아닙니다.' : ''}</p>
       <div class="mk-table-scroll"><table class="mk-round-table" data-register="material-items"><thead><tr><th>품목 / 단위</th><th>합산 소요</th><th>가용</th><th>부족</th><th>판정 / 근거</th></tr></thead><tbody>${requirementItems.map(item => `<tr><td>${esc(item.item_id)}<small>${esc(item.unit || '단위 미확인')}</small></td><td>${num(item[qtyKey])}</td><td>${num(item.available_qty)}</td><td>${num(item[shortageKey])}</td><td>${esc(item.conditional ? '가정에 따른 계산' : issueLabel(item.state))}<small>${esc((item.issues || []).map(issueLabel).join(' · '))}</small><small>원문 ${num(item.row_ids?.length)}행 합산 · ${esc(item.inventory_scope || '재고 범위 미확인')}</small></td></tr>`).join('') || '<tr><td colspan="5">계산 대상 품목이 아직 연결되지 않았습니다. 원문 상세에서 검수 근거를 확인할 수 있습니다.</td></tr>'}</tbody></table></div>
       <details class="mk-material-details"><summary>원문 전체 ${num(requirementRows.length)}행 · 적용 검토와 계산 제외 근거 보기</summary>      <div class="mk-bom-stats"><div><b>${num(requirements.row_count)}</b><span>원문 전체 행</span></div><div><b>${num(requirements.applicable_count)}</b><span>적용 판단 행</span></div><div><b>${num(requirements.unresolved_count)}</b><span>적용 미확인 행</span></div><div><b>${num(requirements.unknown_shortage_count)}</b><span>부족량 미확인</span></div></div><div class="mk-table-scroll"><table class="mk-round-table" data-register="material-rows"><thead><tr><th>원문 근거</th><th>부품 위치</th><th>상태</th><th>대당 수량</th><th>검토 기준 소요</th><th>원문 × ${num(basisData.production_remaining_qty)}</th><th>원문 × ${num(basisData.planned_input_qty)}</th><th>미확인 / 가정</th></tr></thead><tbody>${requirementRows.map(row => `<tr><td><button type="button" class="mk-link" data-bom-evidence="${esc(row.row_id)}">${esc(row.locator || row.row_id)}</button></td><td>${esc((row.designators || []).join(', '))}</td><td>${esc(issueLabel(row.decision?.application_status || row.calculation_state))}</td><td>${num(row.decision?.quantity_per_unit)}</td><td>${num(row[qtyKey])}</td><td>${num(row.source_quantity_times_target)}</td><td>${num(row.source_quantity_times_plan)}</td><td>${esc(issueLabel(row.decision?.review_basis || 'UNREVIEWED'))}<small>${esc((row.issues || []).map(issueLabel).join(' · '))}</small></td></tr>`).join('')}</tbody></table></div></details>
       <p class="mk-small-note">원문 수량 단순 환산 · 단위/실장 검수 전. 원문의 수량 × 목표/계획 투입 수량이며 적용 소요·부족량과 구분합니다.</p>
