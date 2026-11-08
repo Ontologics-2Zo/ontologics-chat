@@ -83,6 +83,14 @@ export function renderQueryAnswer(message, answer, {
 
   const meta = answer.meta || {};
   const basis = node('div', 'query-basis');
+  if (answer.agent_execution) {
+    const execution = answer.agent_execution;
+    const mode = execution.live_calls > 0 ? `실제 모델 기능 선택 ${execution.live_calls}회`
+      : execution.fake_calls > 0 ? `Fake 모델 기능 선택 ${execution.fake_calls}회`
+      : '직접 기능 선택 · 모델 호출 없음';
+    basis.append(node('p', '', `${mode} · 수량·부족 답변은 서버 원장 계산 · 원장 변경 없음`));
+    basis.append(node('p', 'query-snapshot', `실행 · ${text(execution.execution_id)}`));
+  }
   basis.append(node('p', '', `기준 시점 · ${text(meta.as_of) || text(meta.effective_at) || '미확인'}`));
   if (text(meta.known_as_of)) basis.append(node('p', '', `확인 시점 · ${meta.known_as_of}`));
   const snapshot = text(meta.snapshot_id) || text(meta.read_snapshot_id);
@@ -109,7 +117,8 @@ export function renderQueryAnswer(message, answer, {
   message.append(evidence);
 
   const footer = node('div', 'answer-footer');
-  footer.append(node('span', '', `원장 v${meta.ledger_version ?? '미확인'} · 그래프 v${meta.projection_version ?? '미확인'} · 모델 호출 ${answer.model_calls ?? 0}회`));
+  const liveCalls = answer.agent_execution?.live_calls ?? answer.model_calls ?? 0;
+  footer.append(node('span', '', `원장 v${meta.ledger_version ?? '미확인'} · 그래프 v${meta.projection_version ?? '미확인'} · 모델 호출 ${liveCalls}회`));
   const replayStatus = node('span', 'query-replay-status');
   replayStatus.setAttribute('aria-live', 'polite');
   const cancel = action('재생 중단', () => { onCancel(); setReplayState('cancelled'); });

@@ -164,11 +164,20 @@ class ToolGateway:
             raise ValueError("MUTATION_IDEMPOTENCY_REQUIRED")
         self._tools[spec.name] = spec
 
-    def bind(self, *, principal: Principal, context: ToolContext, budget: ExecutionBudget) -> ToolPort:
+    def bind(self, *, principal: Principal, context: ToolContext, budget: ExecutionBudget,
+             allowed_tools: set[str] | frozenset[str] | None = None) -> ToolPort:
         # Only the restricted callable is given to a consumer; no handler registry,
         # provider credential or service/database object is part of the port API.
-        return _BoundToolPort(lambda name, args: self.execute(
-            name, args, principal=principal, context=context, budget=budget))
+        allowed = frozenset(allowed_tools) if allowed_tools is not None else None
+        if allowed is not None and not allowed.issubset(self._tools):
+            raise ValueError("UNKNOWN_TOOL_CAPABILITY")
+
+        def invoke(name, args):
+            if allowed is not None and name not in allowed:
+                raise ServiceError("TOOL_NOT_ALLOWED", 403)
+            return self.execute(name, args, principal=principal, context=context, budget=budget)
+
+        return _BoundToolPort(invoke)
 
     def execute(self, name: str, arguments: dict[str, Any], *, principal: Principal,
                 context: ToolContext, budget: ExecutionBudget) -> ToolResult:

@@ -86,6 +86,15 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(self.dispatched, [])
         self.assertEqual(self.budget.tool_calls, 0)
 
+    def test_bound_capability_cannot_call_other_registered_tools(self):
+        self.gateway.register(ToolSpec("other.read", "ledger.read", False, ReadInput, self.read))
+        port = self.gateway.bind(principal=self.principal, context=self.context,
+                                 budget=self.budget, allowed_tools={"ledger.read"})
+        self.assert_code("TOOL_NOT_ALLOWED", lambda: port.call("other.read", {"entity_id": "item-1"}))
+        self.assertEqual(self.budget.tool_calls, 0)
+        port.call("ledger.read", {"entity_id": "item-1"})
+        self.assertEqual(self.budget.tool_calls, 1)
+
     def test_permission_and_company_are_checked_before_handler(self):
         other = self.principal.__class__("actor-2", "other-company", (), self.principal.permissions, 1, "r", "s")
         self.assert_code("PERMISSION_DENIED", lambda: self.execute(principal=other))

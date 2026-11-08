@@ -158,3 +158,18 @@ test('clarification status is explicit without inventing sections or evidence', 
     assert.equal(withClass(message, 'chip').length, 0);
   } finally { restore(); }
 });
+
+test('Agent router live calls are visible independently of deterministic query metadata', () => {
+  const fixture = setup();
+  try {
+    const answer = { ...response(), model_calls: 0, agent_execution: {
+      execution_id: 'execution-test', live_calls: 1, fake_calls: 0, mode: 'live' } };
+    renderQueryAnswer(fixture.message, answer);
+    assert.match(fixture.message.textContent, /실제 모델 기능 선택 1회/);
+    assert.match(withClass(fixture.message, 'answer-footer')[0].textContent, /모델 호출 1회/);
+    answer.agent_execution = { ...answer.agent_execution, live_calls: 0, fake_calls: 1, mode: 'fake' };
+    renderQueryAnswer(fixture.message, answer);
+    assert.match(fixture.message.textContent, /Fake 모델 기능 선택 1회/);
+    assert.match(withClass(fixture.message, 'answer-footer')[0].textContent, /모델 호출 0회/);
+  } finally { fixture.restore(); }
+});

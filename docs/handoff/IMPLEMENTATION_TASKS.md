@@ -129,9 +129,9 @@ DEC-H27의 최신 요청에 따라 `codex/cq68-natural-language`의 코드 `aecd
 | T02 | 서버 개발 계정·회사 범위 | 개발 계정·공통 문서와 회사 범위 | T01 | 1차 공통 기반 | IN_PROGRESS |
 | T03 | 정확 버전 승인·반영 수직 흐름 | BOM·PR·PO 드로어, 검토·반영 및 원장 사건 | T02 | 1차 공통 기반 | IN_PROGRESS |
 | T04 | 공통 Agent SDK·Gateway·Fake 계약 | 공통 AI 패널·직접 업무 버튼 | T03 | 1차 공통 기반 | IN_PROGRESS |
-| T05 | ModelGateway·Langfuse 로컬 관측 | 개인 관측·공통 연결 상태; 업무 화면에는 요약 상태만 | T04 | 1차 공통 기반 | NOT_STARTED |
-| T06 | LangGraph 상위 그래프·subgraph·진행 이벤트 | AI 패널 실행 상태·원장 사건과 구분된 진행 표시 | T04, T05 | 1차 공통 기반 | NOT_STARTED |
-| T07 | 영속 Checkpointer·HITL·복구 | 승인 대기·실행 결과·AI 이어서 실행 | T06 | 1차 공통 기반 | NOT_STARTED |
+| T05 | ModelGateway·Langfuse 로컬 관측 | 개인 관측·공통 연결 상태; 업무 화면에는 요약 상태만 | T04 | 1차 공통 기반 | IN_PROGRESS |
+| T06 | LangGraph 상위 그래프·subgraph·진행 이벤트 | AI 패널 실행 상태·원장 사건과 구분된 진행 표시 | T04, T05 | 1차 공통 기반 | IN_PROGRESS |
+| T07 | 영속 Checkpointer·HITL·복구 | 승인 대기·실행 결과·AI 이어서 실행 | T06 | 1차 공통 기반 | IN_PROGRESS |
 | T08 | 제한 파서 Sandbox·Broker | BOM 업로드·추출 상태/오류 | T02, T04 | 1차 공통 기반 | IN_PROGRESS |
 | T09 | 실제 BOM 접수·검수·등록 | BOM 등록 드로어·전체 행·검토·비교 | T03, T08 | 1차 slice + 전체 잔여 | IN_PROGRESS |
 | T10 | 온톨로지·제약·투영·관계 조회 | 온톨로지 그래프·객체/관계 상세·버전·표 | T09 | 1차 slice + 전체 잔여 | IN_PROGRESS |
@@ -418,3 +418,9 @@ DEC-H27의 최신 요청에 따라 `codex/cq68-natural-language`의 코드 `aecd
 | NOT_RUN / NOT_MEASURED | 시험/측정의 미실행 상태. Task 삭제 또는 성공을 의미하지 않음 |
 
 현재 상태는 위 실행 기록과 `TASKS.json`을 따른다. 원본 무결성·기초 원장·준비 조회 slice는 해당 범위에서만 인정하며 서술 요구 추적·실제 BOM/자재 확보·실제 AI·전체 서비스 완료로 확대하지 않는다. 인계 문서 생성·과거 오프라인 데이터 검사·Fake 계약 검사만으로 부모 Task를 완료하지 않는다. 전체 서비스 인수는 공식 G1~G5와 실행 증거가 필요하며 실제 LLM·규모·운영 배포는 별도로 보고한다.
+
+## 2026-11-08 Agent 기반 후속 실행 · DEC-H29
+
+모든 MD Task가 완료된 상태는 아니다. T04~T07의 제한된 읽기 Agent 기반을 이어 구현하며 [SERVICE-AGENT-20261108](SERVICE-AGENT-20261108.md)에 실제 검증과 잔여 범위를 분리한다. 이전 자연어 CQ PR #3은 main `848fe79`로 병합·Mac 검증을 마쳤다. 이번 작업은 그 main에서 분리한 `codex/agent-foundation`이며 자동 main 병합은 하지 않는다. T05~T07 부모는 IN_PROGRESS로 갱신하며, 전체 Product·Hybrid RAG·구매/입하/IQC·업무 승인 HITL·전체 CQ/규모 인수는 보존한다.
+
+이번 제한된 읽기 기반은 Python280/Node12·실제 로컬 Langfuse Fake 수집·Mac 작성자 A UI·영속 복구·파일/DB 보존을 검증했다. 부모 T04~T07은 IN_PROGRESS를 유지한다. 실제 모델 요청1회는 실패했으며 사용자가 충전 후 재개하기로 하여 현재 앱은 Fake다. 실제 AI 성공/의미 평가와 후속 전체 업무는 완료 처리하지 않는다.

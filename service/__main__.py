@@ -11,6 +11,7 @@ import uvicorn
 
 from dev.service_stack import load_runtime, runtime_path, StackError
 from service.db import Database
+from service.agent_config import load_agent_settings
 from service.errors import ServiceError
 from service.identity import IdentityService
 from service.imports import InitialInputError, load_initial
@@ -27,6 +28,7 @@ def main():
     parser.add_argument("--dev-mode",action="store_true")
     parser.add_argument("--reference-preview",action="store_true")
     parser.add_argument("--import-initial",action="store_true")
+    parser.add_argument("--agent-env-file",help="Optional private Agent settings; does not override DB runtime")
     args=parser.parse_args()
     if not 1<=args.port<=65535:
         parser.error("INVALID_PORT")
@@ -38,6 +40,7 @@ def main():
     stop=Event()
     try:
         settings=load_runtime(runtime_path(args.runtime_file),(55432,57474,57687))
+        agent_settings=load_agent_settings(args.agent_env_file,environ=os.environ)
         db=Database(settings["DATABASE_URL"]);db.migrate()
         identity=IdentityService(db,enabled=args.dev_mode)
         if args.dev_mode:identity.provision_dev_accounts()
@@ -59,7 +62,9 @@ def main():
 
         project_pending()
         app=create_app(db,private_root=private_root,origin=f"http://127.0.0.1:{args.port}",dev_mode=args.dev_mode,
-                       reference_preview=args.reference_preview,catalog=catalog,projector=projector)
+                       reference_preview=args.reference_preview,catalog=catalog,projector=projector,
+                       agent_settings=agent_settings,
+                       agent_receipt_path=Path(args.runtime_file).resolve().parent / 'agent-observability.sqlite3')
 
         def worker():
             while not stop.wait(2):

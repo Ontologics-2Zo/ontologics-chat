@@ -1,20 +1,23 @@
 # MK-S2 개발 인계 안내
 
-대상 저장소는 `Ontologics-2Zo/ontologics-chat`이다. 화면·메뉴·핵심 동선은 MK-S2를 기준으로 삼고, 공식 v1.7의 전체 아키텍처와 업무 범위를 유지한다. 현재는 FastAPI·PostgreSQL INITIAL 원장·서버 개발 신원·일반 근거 문서 승인과 동일 버전 RDF/SHACL·Neo4j 조회를 MK-S2 탭에 연결한 로컬 개발 서비스다. 실행은 [README](../../README.md), 초기 검증 범위는 [SERVICE-INITIAL-20261108](SERVICE-INITIAL-20261108.md)을 따른다. 선행 Cloud의 BOM 코드·합성 검사·차단 상태는 [SERVICE-BOM-20261108](SERVICE-BOM-20261108.md)에 보존한다. 과거 Cloud의 자원 제한 차단 기록은 보존한다. 최신 Mac arm64에서는 실제 제한 Runner와 원본 74행·선택 5품목 조건부 검토/독립 승인/반영을 확인했으며 [Mac 실행 기록](SERVICE-BOM-MAC-20261108.md)을 현재 기준으로 읽는다. 나머지 69행은 UNRESOLVED다. 구매/검사·Agent/모델·전체 서비스 완료본이나 이전 미커밋 서비스 복원본은 아니다. 최초 준비 및 참조 화면 기록은 당시 범위의 역사적 증거로 보존한다.
+> 현재 인계: PR #3은 main `848fe79`로 병합됐고 Mac 재시작 검증을 마쳤다. 후속 Agent 작업은 로컬 `codex/agent-foundation` 작업 트리에 있으며 main에는 병합하지 않았다. 정확한 로컬 커밋은 Git으로 확인한다. 제한된 T04~T07 Fake/읽기 경로를 검증했고 앱은 8870에서 Fake 모드로 실행 중이다. 실제 모델 호출은 사용자 충전 후 재확인할 때까지 중단한다. [SERVICE-AGENT-20261108](SERVICE-AGENT-20261108.md)을 먼저 읽는다.
 
-DEC-H27은 현재 원장 수량·BOM 소요를 근거로 기존 CQ에 자연어로 답하는 제한된 읽기 경로다. 최신 범위와 증거는 [SERVICE-CQ-NL-20261108](SERVICE-CQ-NL-20261108.md)을 먼저 읽는다. 코드 `aecd23a`의 Python 223 PASS·Node 11 PASS·live API 9질의·native Chrome 수동 UI·최종 8870 재시작·보존 확인으로 **해당 읽기 slice만 VERIFIED**다. 최신 DEC-H28은 PR #3 최종 검토·main 병합·Mac main 재시작을 명시적으로 승인했다. `cbbc55e`의 병합 전 최종 검토는 226 Python·11 Node·수동 근거 선택 확인으로 통과했으며 병합·main 재시작 완료는 아직 확인 대기다. 정확한 병합 상태는 GitHub PR #3을 기준으로 확인한다. 기존 DB·원본 파일·runtime 설정을 보존한다. 규칙 기반 해석과 같은 스냅샷의 계산·근거 표시를 전체 Agent 또는 범용 자연어 품질 검증으로 취급하지 않는다. 실제 납기 가능성은 필요한 운영 근거가 없어 UNKNOWN으로 유지한다.
+
+대상 저장소는 `Ontologics-2Zo/ontologics-chat`이다. 화면·메뉴·핵심 동선은 MK-S2를 기준으로 삼고, 공식 v1.7의 전체 아키텍처와 업무 범위를 유지한다. 현재는 FastAPI·PostgreSQL INITIAL 원장·서버 개발 신원·일반 근거 문서 승인과 동일 버전 RDF/SHACL·Neo4j 조회를 MK-S2 탭에 연결한 로컬 개발 서비스다. 실행은 [README](../../README.md), 초기 검증 범위는 [SERVICE-INITIAL-20261108](SERVICE-INITIAL-20261108.md)을 따른다. 선행 Cloud의 BOM 코드·합성 검사·차단 상태는 [SERVICE-BOM-20261108](SERVICE-BOM-20261108.md)에 보존한다. Mac arm64의 실제 제한 Runner와 원본 74행·선택 5품목 조건부 검토/독립 승인/반영은 [Mac 실행 기록](SERVICE-BOM-MAC-20261108.md)을 따른다. 나머지 69행은 UNRESOLVED다. 현재 Agent 브랜치에는 실제 LangGraph·PostgreSQL checkpoint·질문 확인 재개와 로컬 관측을 연결했지만, 구매/검사·전체 Agent·실제 AI 품질·전체 서비스 완료본은 아니다. 최초 준비 및 참조 화면 기록은 당시 범위의 역사적 증거로 보존한다.
+
+DEC-H27의 제한된 자연어 CQ 읽기는 PR #3으로 main `848fe79`에 병합됐고 DEC-H28의 Mac main 재시작·보존 검증을 마쳤다. [CQ 실행 기록](SERVICE-CQ-NL-20261108.md)의 `aecd23a` 223 Python/11 Node 및 `cbbc55e` 226 Python/11 Node는 각 당시 코드의 역사적 증거다. 현재 Agent 작업은 280 Python·12 Node 검사와 Fake 경로의 로컬 Langfuse metadata 수집을 확인했다. T04~T07의 제한된 읽기/Fake 범위만 VERIFIED이며 부모 Task는 모두 IN_PROGRESS다. 기존 DB·원본·runtime·전체 온톨로지를 보존하고 실제 납기 가능성은 UNKNOWN으로 유지한다.
 
 ## 새 채팅에서 이어가기
 
-**초기 원장 PR #1과 후속 BOM PR #2는 main에 병합됐으며, PR #2 병합 기준은 `2e6f24c`다. 자연어 CQ PR #3은 `codex/cq68-natural-language`에서 DEC-H28의 최종 검토·병합·Mac main 재시작을 진행한다.** 실행하려는 기능이 해당 브랜치 또는 이후 main에 포함됐는지 실제 Git/PR 상태를 먼저 확인한다. `codex/mks2-ui-tabs`는 초기 구현의 보존 브랜치다. 과거 참조 화면 체크포인트는 `eadb279c29e8ecfb94ef122ae700031e5976a1c9`, 기존 화면 보존 기준은 `b3ee599`다. 현재 서비스의 대상 코드·실행 증거는 최신 기록을 확인하며, 새 구현을 과거 화면 체크포인트로 되돌리지 않는다. 초기 PR의 main 병합 승인은 DEC-H24, 후속 BOM 업무는 DEC-H25, PR #2 수정·Mac 검증·병합은 DEC-H26을 따른다. DEC-H27 당시의 자동 병합 미승인은 이력을 보존하고 최신 명시적 승인은 DEC-H28을 따른다. Git으로 받는 명령과 실행 방법은 [로컬 실행 안내](CLOUD_SETUP.md)에 있다.
+**PR #1~#3은 main에 병합됐다. 현재 작업은 main `848fe79`에서 이어진 로컬 `codex/agent-foundation`이다.** 먼저 실제 브랜치·HEAD·미커밋 변경을 확인하고 보존한다. 이후 로컬 커밋 여부는 Git을 기준으로 확인하며 Agent 변경이 main이나 원격 브랜치에 이미 있다는 뜻으로 읽지 않는다. `codex/mks2-ui-tabs`는 초기 구현의 보존 브랜치이며 과거 화면 체크포인트는 `eadb279c29e8ecfb94ef122ae700031e5976a1c9`, 보존 화면 기준은 `b3ee599`다. 현재 구현을 과거 체크포인트로 되돌리지 않는다. PR #1~#3의 병합 권한을 Agent 브랜치의 새 main 병합 권한으로 확대하지 않는다. 실행 방법은 [로컬 실행 안내](CLOUD_SETUP.md)를 따른다.
 
 새 채팅에 아래 요청을 붙여넣는다.
 
-> Ontologics-2Zo/ontologics-chat의 main과 codex/cq68-natural-language의 실제 상태 및 선택된 작업 트리를 확인하고 이어서 진행해 주세요. PR #2의 main 병합 기준은 2e6f24c입니다. AGENTS.md, web/AGENTS.md, docs/handoff/START_HERE.md와 SERVICE-CQ-NL-20261108.md를 먼저 읽고 이전 INITIAL·Mac BOM 증거를 함께 확인해 주세요. 현재 구현 탭은 b3ee599 기준으로 보존하고, 이후 화면 수정은 web/mks2/에만 적용해 주세요. 전체 온톨로지를 시연 시나리오에 맞춰 축소하지 마세요. 현재의 원장·동일 버전 그래프 조회, 문서 승인 및 실제 BOM 전체 74행·선택 5품목 조건부 계산을 보존해 주세요. 최신 요청은 기존 CQ의 자연어 읽기 경로이며 수량·부족은 같은 서버 스냅샷에서 계산하고 실제 원본·합성 초기 원장·시연 가정·미확인을 구분해야 합니다. 실제 납기 가능성의 근거가 없으면 UNKNOWN으로 표시하고 제안된 일정이나 미래 사건을 원장에 반영하지 마세요. 제한된 규칙 기반 경로를 전체 Agent·범용 자연어·CQ20 완료로 취급하지 마세요. 선택된 환경의 작업 트리·PRIVATE_INPUT_ROOT·runtime·DB 접근을 확인하고 대상 버전이 같은 검증은 재사용하세요. 비공개 원본은 Git 밖에서 읽기 전용으로 유지하고 기존 DB를 초기화하지 마세요. DEC-H28에 따라 PR #3을 최종 검토·main 병합한 뒤 기존 DB·원본·runtime을 보존해 Mac main으로 재시작·확인해 주세요. 실제 병합/재시작 완료 여부를 먼저 확인해 중복 작업을 피하고 환경 Publish·배포·공급사 송신·운영 원장 변경으로 확대하지 마세요.
+> Ontologics-2Zo/ontologics-chat의 로컬 codex/agent-foundation 작업 트리를 보존하고 남은 MD 작업을 이어가 주세요. PR #3은 main 848fe79로 병합·Mac 검증이 끝났으므로 반복하지 마세요. AGENTS.md, web/AGENTS.md, START_HERE.md, SERVICE-AGENT-20261108.md와 최신 결정·Task를 읽고 실제 HEAD와 미커밋 변경부터 확인해 주세요. 제한된 T04~T07 Fake/읽기 기반의 280 Python·12 Node 및 로컬 Langfuse metadata 검증은 대상 코드가 같을 때 재사용하고 부모 Task는 IN_PROGRESS로 유지해 주세요. 앱은 8870의 Fake 모드입니다. 실제 모델 POST 한 번은 실패했고 크레딧 조회는 total credits 0/usage 0이었으나 outcome_unknown 비용 예약은 해제하지 않았습니다. 사용자가 나중에 충전하기로 했으므로 실제 호출은 계속 중단하고 충전·예산·미확정 예약을 확인한 뒤 별도로 재개해 주세요. 제공된 기존 .env를 덮어쓰거나 키를 출력하지 말고 저장된 runtime을 DB 설정의 기준으로 유지해 주세요. 기존 DB·원본·원장/그래프 v2·74행/5품목 조건부 적용·69행 미확인·전체 온톨로지·보존 화면 7파일을 유지하며 재시작에 import/reset을 하지 마세요. 그래프 정리 의견은 재배치 구현 승인이 아닙니다. 전체 Agent·실제 AI 품질·업무 쓰기 승인 HITL·CQ20 완료로 확대하지 말고, 새 main 병합·Publish·배포·공급사 송신·운영 원장 변경은 별도 승인 범위로 남겨 주세요.
 
 새 채팅이 같은 환경을 사용할 수도 있고 다른 환경일 수도 있다. Git 체크아웃만으로 비공개 입력·보안 설정·실행 프로세스·DB·Git 밖 검증 산출물이 복원되지는 않는다. 먼저 실제 브랜치/커밋/미커밋 변경과 환경을 확인하며 초기화하지 않는다. `PRIVATE_INPUT_ROOT`에 공식 v1.7·MK-S2·v1.3 자료가 있는지 확인하고, 같은 버전의 무결성 증거는 재사용한다. 누락된 자료만 보호 경로로 연결한다. 화면 미리보기에는 API 키가 필요 없다.
 
-이전 환경에서는 세 사용자 지정 키의 인증 조회가 200으로 기록됐다. 이번 실행 환경에는 해당 키가 제공되지 않았고 실제 모델 호출은 0회다. 실제 모델 연결 단계에서는 보안 설정 접근·Gateway 매핑과 이전 사용 예산을 확인한다. 키 값은 채팅·MD·Git·로그로 요청하거나 복사하지 않는다. DEC-H18/19의 모델·예산·재시도·전송 제한은 유지하며 환경 전환으로 예산을 초기화하지 않는다.
+기존 `.env`가 제공됐으며 값을 변경하지 않았다. 공개 `.env.example`에는 안전한 설정 예시만 있다. 실제 모델 POST 1회 시도는 실패했고 크레딧 조회는 total credits 0/usage 0이었다. 이것을 무과금 확정으로 간주하지 않으며 canonical `outcome_unknown`과 held reservation을 보존한다. 사용자가 추후 충전하기로 했으므로 현재는 Fake 모드를 유지한다. 키를 채팅·MD·Git·로그에 복사하지 않는다. DEC-H29의 새 승인 예산과 과거 예산 이력을 분리하고 재시작·환경 전환으로 사용액이나 예약을 초기화하지 않는다.
 
 ### 현재 검증 범위와 보존된 증거
 
@@ -26,9 +29,9 @@ DEC-H27은 현재 원장 수량·BOM 소요를 근거로 기존 CQ에 자연어�
 | 현재 자료·초기 서비스 | 원본155개 hash, literal ID349개/위치1,171개 대응. PostgreSQL migration·재시작, 개발 신원·일반 근거 문서 승인, INITIAL18노드/11관계 및 같은 버전 RDF/SHACL·Neo4j 조회의 실행 범위는 최신 기록 참조 |
 | 전체 온톨로지 | 클래스52·관계74·shape79 보존. INITIAL18노드/11관계 증거와 후속 BOM 전체 행/출처 연결 증거를 분리하며 전체 후속 업무·의미 검증은 잔여 |
 | 실제 BOM | Mac 제한 Runner로 전체 74행 보존, 선택 5품목 조건부 결정의 독립 검토·정확 버전 승인·반영 확인. 나머지 69행 UNRESOLVED, PARTIAL/제조 가능성 UNKNOWN. 원장/그래프 v2, 176노드/252관계. 최신 체크는 SERVICE-BOM-MAC 참조. 구성 충돌·기술검수·현장 재고 미확인은 유지 |
-| 자연어 CQ 읽기 | `aecd23a`의 제한된 읽기 slice VERIFIED. Python 223 PASS·Node 11 PASS·읽기 API 9 PASS, 수동 UI·8870 재시작·보존 PASS. 원장/투영 v2·모델 호출0·업무 snapshot 불변. 납기 PARTIAL/실제 가능성 UNKNOWN, 명시 가정 What-if는 읽기 전용. SERVICE-CQ-NL 참조 |
-| Agent·실제 업무 | 공통 ToolGateway와 결정적 질의 slice만 연결. 실제 모델 호출0, 관측/영속 Agent·PR/PO/입하/IQC는 미완료. Runner/BOM의 현재 부분 범위는 최신 실행 기록으로 판단 |
-| 전체 인수와 실행 환경 | Mac 실제 BOM 처리·서버 검증은 별도 기록에 연결. 수동 UI·독립 보존·재시작 검증 통과. 해당 기록의 조건부 slice와 전체 잔여 범위를 구분. 전체 CQ20·Agent·전체 인수는 미완료. Cloud localhost와 Mac 접속 주소를 구분 |
+| 선행 자연어 CQ 읽기 | `aecd23a` 당시 제한된 읽기 slice VERIFIED. 당시 Python 223 PASS·Node 11 PASS·읽기 API 9 PASS, 수동 UI·8870 재시작·보존 PASS. 원장/투영 v2·모델 호출0·업무 snapshot 불변. 납기 PARTIAL/실제 가능성 UNKNOWN, 명시 가정 What-if는 읽기 전용. SERVICE-CQ-NL 참조 |
+| Agent·실제 업무 | 로컬 Agent 브랜치의 제한된 T04~T07 Fake/읽기 경로 VERIFIED: 280 Python/12 Node, 실제 LangGraph 전문 조회·PostgreSQL checkpoint/질문 확인 재개·로컬 Langfuse metadata. 실제 모델 POST 1회 실패 후 호출 중단, outcome_unknown 예약 보존. 부모 Task는 IN_PROGRESS, 업무 쓰기 승인 HITL·PR/PO/입하/IQC·실제 AI 품질은 미완료 |
+| 전체 인수와 실행 환경 | T00~T23 부모 집계는 IN_PROGRESS 14 / NOT_STARTED 10 / VERIFIED 0. Mac BOM·CQ·Agent의 부분 검증과 전체 잔여 범위를 구분. 전체 CQ20·Agent·전체 인수는 미완료. Cloud localhost와 Mac 접속 주소를 구분 |
 
 현재 브랜치는 이전 환경의 미커밋 서비스/DB 복원본이 아니다. 사용자는 이전 환경 복구 대신 새 환경에서 진행하기로 결정했다. 과거 실행 기록을 현재 코드의 성공 증거로 이월하지 않는다.
 
@@ -47,7 +50,7 @@ DEC-H27은 현재 원장 수량·BOM 소요를 근거로 기존 CQ에 자연어�
 - 사용자의 최신 명시적 결정 → 공식 v1.7의 기능·도메인·아키텍처 → MK-S2의 화면·동선과 참고 규약 → 인계 작업표 순서로 읽는다. 최신 결정은 화면 기준과 구현 우선순위를 조정하며 공식 업무 요구를 폐기하지 않는다.
 - 공식 문서에 남아 있는 과거 v2.6 UI 배치·메뉴 고정 지시는 MK-S2 우선 결정으로 대체됐다. 공식 화면 ID의 업무 의미·수용 기준은 보존하고 화면 대응표로 재배치한다.
 - 이전 GitHub 구현은 재사용 후보 조사 자료다. 코드가 있거나 과거 테스트가 통과했다는 사실만으로 새 서비스에서 완료 처리하지 않는다.
-- 과거 계획 문서에 적힌 ‘이번에는 코드 변경하지 않음’, ‘구현 보류’, ‘T00~T01만 수행’은 당시의 제한이다. 후속 사용자 요청으로 1차 구현과 제한된 실제 모델 호출이 승인됐다. 최신 승인·제외 범위는 `AGENTS.md`와 결정 문서 DEC-H13/18~28을 따른다. 문서에 언급된 기능만으로 승인 범위를 넓히지는 않는다.
+- 과거 계획 문서에 적힌 ‘이번에는 코드 변경하지 않음’, ‘구현 보류’, ‘T00~T01만 수행’은 당시의 제한이다. 후속 사용자 요청으로 1차 구현과 제한된 실제 모델 호출이 승인됐다. 최신 승인·제외 범위는 `AGENTS.md`와 결정 문서 DEC-H13/18~29 및 실제 호출 중단 요청을 따른다. 문서에 언급된 기능만으로 승인 범위를 넓히지는 않는다.
 
 ## 단계별 완료 명칭
 
@@ -69,8 +72,8 @@ DEC-H27은 현재 원장 수량·BOM 소요를 근거로 기존 CQ에 자연어�
 ## 다음 실행
 
 1. 작업 트리·원본 접근·기존 실행 증거를 확인한다. 버전이 같은 결과는 재사용하고, 원본 부재는 해당 단계의 BLOCKED로 남긴다. 독립적인 환경 조사·계약 작성은 계속할 수 있다.
-   최신 자연어 CQ slice의 `aecd23a` 증거를 대상 코드가 같을 때 재사용하고 같은 서버 버전·출처·UNKNOWN 경계를 유지한다. 전체 Agent·범용 자연어·전체 CQ20 및 부모 Task의 잔여 수용은 별도로 진행한다.
+   현재 Agent 브랜치의 검증과 과거 CQ/BOM 증거를 각 대상 코드가 같을 때 재사용한다. Fake 8870과 같은 서버 버전·출처·UNKNOWN 경계를 유지하며 실제 호출은 사용자 충전 후 확인까지 중단한다. 전체 Agent·범용 자연어·전체 CQ20 및 부모 Task의 잔여 수용은 별도로 진행한다.
 2. T00~T02의 기준·실행 골격·신원 선행부터 확인하고 공통 기반 T00~T08 → BOM·온톨로지 T09.1~T12.1 → 자재 확보 T13.1~T14.1 순으로 준비된 작업을 이어간다. T19.1/T22.1은 각 묶음에 적용한다. Task 하나가 끝날 때마다 후속 지시를 기다리지 않는다.
 3. 전체 온톨로지 카탈로그와 INITIAL allowlist 변환·PostgreSQL opening balance의 현재 증거를 재사용한다. COMMANDS/EXPECTED의 업무별 변환·재생과 원본 BOM 검수는 별도로 남아 있다. 원본 버전과 서버 원장 버전을 구분하고 비공개 분석 스크립트를 그대로 실행하지 않는다.
 4. 현재의 Domain/outbox → RDF/Neo4j → SHACL·동일 버전 Graph/query → MK-S2 경로를 보존하면서 공식 선행 조건에 따라 확장한다. 이 준비 slice는 T09.1을 건너뛴 T10.1 완료가 아니다. 오프라인 전체 A-Box와 미래 사건·기대값을 현재 원장에 섞지 않는다.
-5. 최신 BOM 기록의 실제 적용 체크와 T00~T23의 남은 수용을 대조한다. T08 제한 파싱·T09.1 원문 등록·T13.1 직접 계산을 먼저 연결하는 현재 사용자 요청을 수행하되 T05~07·T11~12의 전체 기반을 완료 처리하지 않는다. 이후 구매·수입검사·전체 소요/업무 통합으로 이어가며 원문 기술검수, 합성 시연, 전체 온톨로지 보존, 디자인, 실제 AI 품질을 각각 검증한다.
+5. 최신 Agent/BOM 기록과 T00~T23의 남은 수용을 대조한다. 검증된 제한 기반에서 T11 권한 내 검색·T12 Product 추출/매핑과 T13~14 구매·입하/수입검사 연결을 의존성에 맞게 이어간다. T04~T07 부모를 완료 처리하지 않으며 원문 기술검수, 합성 시연, 전체 온톨로지 보존, 디자인, 실제 AI 품질은 각각 검증한다.

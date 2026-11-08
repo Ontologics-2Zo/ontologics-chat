@@ -25,6 +25,7 @@ from service.ledger import LedgerReader
 from service.ontology import OntologyCatalog
 from service.projections import ProjectionError
 from service.views import answer_query, ontology_view, snapshot_view
+from service.agent_api import mount_agent_api
 
 
 MAX_REQUEST_BYTES = 128 * 1024
@@ -46,7 +47,8 @@ class Snapshot(Contract):
 
 
 def create_app(db, *, private_root: str, origin="http://127.0.0.1:8870", dev_mode=False,
-               reference_preview=False, catalog=None,projector=None,bom_runner=None):
+               reference_preview=False, catalog=None,projector=None,bom_runner=None,agent_settings=None,
+               agent_receipt_path=None):
     parsed=urlsplit(origin)
     if parsed.scheme != "http" or parsed.hostname not in {"localhost","127.0.0.1"} or parsed.username or parsed.password or not parsed.port or parsed.path or parsed.query or parsed.fragment:
         raise ServiceError("LOCAL_ORIGIN_REQUIRED",503)
@@ -205,9 +207,30 @@ def create_app(db, *, private_root: str, origin="http://127.0.0.1:8870", dev_mod
         gateway.register(ToolSpec("bom."+action,permission,True,input_model,bom_handler(action,model)))
     app.state.gateway=gateway
 
+    workflow, observer = None, None
+    def model_summary(execution_id=None):
+        return {"mode": "disabled", "live_calls": 0, "fake_calls": 0}
+    if agent_settings is not None and agent_settings.mode != "disabled":
+        from service.agent_host import build_agent_host
+
+        def agent_context(actor, execution_id):
+            payload = ledger.read(actor)
+            ctx = context(actor, payload)
+            verified_payload(actor, ctx.ledger_version)
+            return ctx.model_copy(update={"execution_id": execution_id})
+
+        workflow, model_summary, observer = build_agent_host(db, identity, gateway, agent_context,
+            agent_settings, receipt_path=agent_receipt_path)
+    app.state.agent_workflow, app.state.agent_observer = workflow, observer
+    mount_agent_api(app, principal, workflow, model_summary)
+
     @app.get("/health")
     def health():
-        return {"status":"ok","mode":"local-development","database":db.health(),"serviceConnected":True,"model_calls":0}
+        model = model_summary()
+        return {"status":"ok","mode":"local-development","database":db.health(),"serviceConnected":True,
+                "model_calls":model["live_calls"], "agent":model,
+                "observability":{"exported":observer.exported,"failed":observer.failed,"invalid":observer.invalid}
+                if observer else {"enabled":False}}
 
     @app.get("/api/mks2/session")
     def get_session(request:Request):
