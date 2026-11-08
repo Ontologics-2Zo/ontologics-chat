@@ -30,6 +30,12 @@ def number(value):
     return value.rstrip("0").rstrip(".") if "." in value else value
 
 
+def percentage(value):
+    """Render the exact ratio as percent without Decimal context rounding."""
+    sign, digits, exponent = Decimal(str(value)).as_tuple()
+    return number(Decimal((sign, digits, exponent + 2)))
+
+
 def item(label, value, detail="", origin=None):
     result = {"label": label, "value": str(value), "detail": detail}
     if origin:
@@ -221,10 +227,10 @@ def answer_query(question, view, ontology, *, context_entity_id=None):
         origin = "user_assumption" if plan.is_what_if else DEMO
         sections.append(section("production", "시연 가정 · 양품 목표와 계획 투입", origin, [
             item("계산 양품 목표", f"{basis['production_remaining_qty']}대", "질문에 명시한 별도 가정입니다. 현재 원장 목표는 바꾸지 않습니다." if plan.target_good_qty is not None else "현재 회차의 추가 양품 목표를 사용합니다."),
-            item("계획 수율", f"{number(Decimal(basis['plan_yield']) * 100)}%", "명시한 계산 가정이며 관측 수율이나 양품 보장이 아닙니다."),
+            item("계획 수율", f"{percentage(basis['plan_yield'])}%", "명시한 계산 가정이며 관측 수율이나 양품 보장이 아닙니다."),
             item("계획 투입", f"{basis['planned_input_qty']}대", f"ceil({basis['production_remaining_qty']} ÷ {number(basis['plan_yield'])}); 계획이며 완료 실적이 아닙니다."),
         ], "PARTIAL"))
-        answers.append(f"계산 양품 목표 {basis['production_remaining_qty']}대에 수율 {number(Decimal(basis['plan_yield']) * 100)}%를 가정한 투입은 {basis['planned_input_qty']}대이며 양품을 보장하지 않습니다.")
+        answers.append(f"계산 양품 목표 {basis['production_remaining_qty']}대에 수율 {percentage(basis['plan_yield'])}%를 가정한 투입은 {basis['planned_input_qty']}대이며 양품을 보장하지 않습니다.")
         conclusion = "계획 수율을 적용한 조건부 계산"
 
     if need_materials:

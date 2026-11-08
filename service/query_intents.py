@@ -129,6 +129,13 @@ def _intents(compact: str) -> tuple[QueryIntent, ...]:
 
 
 def _yield(text: str, compact: str, intents: tuple[QueryIntent, ...]) -> tuple[Decimal | None, list[tuple[int, int]], str | None]:
+    if re.search(
+        rf"수율(?:적용|반영|보정|계산|영향)?(?:은|는|을|를|이|가)?"
+        rf"(?:{_NUMBER}(?:%|퍼센트|프로)?(?:은|는|을|를|이|가|로|으로)?)?"
+        r"(?:계산에서)?(?:없이|빼고|제외|미적용|무시|적용하지|반영하지|고려하지|적용안|반영안|안적용|안반영|안고려)",
+        compact,
+    ):
+        return None, [], "수율 미반영 요청에는 기본 수율이나 100%를 자동 적용하지 않습니다. 계산에 사용할 수율을 명시해 주세요."
     percentages = list(_PERCENT.finditer(text))
     has_yield = "수율" in compact
     percentage_words = _has(compact, ("%", "퍼센트", "프로"))

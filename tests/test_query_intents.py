@@ -67,6 +67,14 @@ class QueryIntentTests(unittest.TestCase):
         self.assertLess(plan.yield_rate, Decimal(1))
         self.assertIsNone(plan.clarification)
 
+    def test_explicit_yield_exclusion_does_not_reuse_a_default_rate(self):
+        for question in ("수율 없이 몇대 투입해?", "수율을 제외하고 투입량은?", "수율 미적용으로 몇개 생산?", "수율을 무시하면 몇대 투입?", "수율을 적용하지 말고 자재 소요량은?", "수율94%를 반영하지 말고 투입량은?", "수율 적용 없이 몇대 만들어?"):
+            with self.subTest(question=question):
+                plan = interpret_question(question)
+                self.assertIsNotNone(plan.clarification)
+                self.assertIsNone(plan.yield_rate)
+        self.assertIsNone(interpret_question("수율94%를 적용하고 재고를 빼고 자재부족 계산해줘").clarification)
+
     def test_only_explicit_good_target_changes_calculation(self):
         for question in ("양품 50대가 목표면 수율90%로 몇대투입?", "50대를 생산하려면 자재 얼마나 필요해?", "양품 50개라면 부족한 자재는?", "생산목표를 50대로 가정하면 투입량은?"):
             with self.subTest(question=question):

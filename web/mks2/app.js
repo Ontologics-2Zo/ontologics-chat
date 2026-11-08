@@ -76,6 +76,7 @@ function setContext(value) {
   }
 }
 function focusEvidence(id) {
+  cancelPendingReplay();
   if (schemaMode) { schemaMode = false; mountCurrentGraph(); }
   location.hash = '#graph';
   graph?.focus(id);

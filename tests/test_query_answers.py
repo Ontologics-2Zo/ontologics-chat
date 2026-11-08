@@ -52,6 +52,23 @@ class QueryAnswerTests(unittest.TestCase):
                 self.assertEqual(result["calculation"]["basis"]["planned_input_qty"], 12)
                 self.assertIn("보장하지 않습니다", result["answer"])
 
+    def test_near_full_yield_is_preserved_in_both_explanation_and_calculation(self):
+        percent = "99." + "9" * 40
+        result = self.answer(f"수율{percent}%면 몇대 투입?")
+        self.assertEqual(result["calculation"]["basis"]["planned_input_qty"], 12)
+        production = next(s for s in result["sections"] if s["id"] == "production")
+        rate = next(row for row in production["items"] if row["label"] == "계획 수율")
+        self.assertEqual(rate["value"], percent + "%")
+        self.assertIn(percent + "%", result["answer"])
+        self.assertNotIn("100%", result["answer"])
+
+    def test_explicit_yield_exclusion_requires_clarification_before_calculation(self):
+        for question in ("수율 없이 몇대 투입해?", "수율을 제외하고 자재 소요량은?"):
+            with self.subTest(question=question):
+                result = self.answer(question)
+                self.assertEqual(result["status"], "NEEDS_CLARIFICATION")
+                self.assertNotIn("calculation", result)
+
     def test_material_shortages_reuse_decimal_domain_results(self):
         result = self.answer("재고 빼면 어떤 자재가 얼마나 모자라?")
         req = result["calculation"]["material_requirements"]
