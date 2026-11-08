@@ -1,0 +1,250 @@
+{
+  "evidence_id": "SERVICE-BOM-MAC-20261108",
+  "date": "2026-11-08",
+  "timezone": "Asia/Seoul",
+  "status": "VERIFIED",
+  "record": "docs/handoff/SERVICE-BOM-MAC-20261108.md",
+  "decision": "DEC-H26",
+  "prior_cloud_evidence": "docs/handoff/SERVICE_BOM_EVIDENCE.json",
+  "target": {
+    "reviewed_head": "60d52fd82d8bf355300dd6f6af7dcd031efa4340",
+    "branch": "codex/mks2-bom-integration",
+    "code_sha256": {
+      "service/main.py": "33c365260e7e20ccfeb23c126fc119a636ed79f22660f1726d659a1631ab91c8",
+      "web/mks2/dashboard.js": "d996274095f544f35525092736cd9902aa1fa93c5e91410fb9fc771b5a221ed9",
+      "tests/test_request_limits.py": "34978336b80eab9a015f5edd12ea89fbe9631282f063cdf6e8c15ec275f956c0",
+      "tests/test_quantity_format.mjs": "f44aa06897fc2fd905941e1252abe6302d86ee53c18f0b3311b0a5b6038ac233",
+      "service/bom.py": "41dee68ab8db6e9a7cbb2942af0695287ca8eaed72e97c62221ea448caae681a",
+      "service/bom_contracts.py": "17aab029a3197325ba30b77c3f5ea5f5acc4e12ac79fca9956599aebaec21b32",
+      "service/ledger.py": "53d4b2900ac916e011e1876eb90662efdcc395a32c6ea2f1e7a2475adb88e0b1",
+      "service/materials.py": "d3769df176127e74bd7c2b23f7d9a3d01f2e98ea1dc5054550207dc81c26ccb9",
+      "service/bom_runner.py": "aab7e006f5693fd42cdf50a74babc854cac0d7fa89d5ce83420221375adf440f",
+      "migrations/004_bom.sql": "aed5295f09e609ebe0ab0bbd62bf51ebded60da639dd8489205d8967cf963d22",
+      "dev/check_bom_ui.mjs": "7ceb2232a8f964e29a390aa9f2f60873f6d17a8ad6c879febcc93a164351d70f"
+    },
+    "note": "Verified code-only commit and per-file SHA-256; subsequent documentation commits and final PR merge are discoverable in Git history. Manual UI is separate from an automated browser-suite result.",
+    "verified_code_commit": "c0167b26c4a118d02dd820c192abdf8f01eb7925"
+  },
+  "environment": {
+    "platform": "Darwin",
+    "architecture": "arm64",
+    "python": "3.12.14",
+    "docker": "Docker Desktop engine 29.8.2, linux/arm64, local Unix socket",
+    "postgresql": "17.11",
+    "neo4j": "5.26.32 Community"
+  },
+  "runner": {
+    "evidence_id": "MAC-BOM-RUNNER",
+    "status": "VERIFIED",
+    "build_api": "dev.build_bom_runner.build(docker_socket, runtime_dir / 'bom-runner.json')",
+    "source_sha256": "7d1751eaaa9592807a12be0639a4e278977898029cb20b97328360a4118144cf",
+    "immutable_image": true,
+    "actual_enforcement": {
+      "memory": "PASS",
+      "pids": "PASS",
+      "cpu": "PASS"
+    },
+    "host_parser_fallback": false
+  },
+  "suite": {
+    "command": ".venv/bin/python dev/verify_service.py --runtime-file <private-runtime>",
+    "total": 182,
+    "passed": 182,
+    "failed": 0,
+    "skipped": 0,
+    "required_environment": [
+      "PRIVATE_INPUT_ROOT",
+      "TEST_NEO4J_URI",
+      "TEST_NEO4J_PASSWORD",
+      "ONTO_BOM_RUNNER_IMAGE",
+      "ONTO_BOM_DOCKER_SOCKET"
+    ]
+  },
+  "fixes": {
+    "request_limit": {
+      "evidence_id": "MAC-BOM-REQUEST-LIMIT",
+      "status": "VERIFIED",
+      "bom_revision_method": "POST",
+      "bom_revision_route": "/api/mks2/bom/documents/{bom_id}/revise",
+      "bom_revision_limit_bytes": 2097152,
+      "other_write_limit_bytes": 131072,
+      "actual_74_row_body_bytes": 17534,
+      "synthetic_74_row_korean_body_bytes": 248879,
+      "synthetic_650_row_body_bytes": 137389,
+      "http_boundary_tests_passed": 8,
+      "checks": [
+        "declared_and_streamed_bytes",
+        "missing_duplicate_malformed_content_length",
+        "declared_actual_length_mismatch",
+        "route_and_method_scope",
+        "over_limit_and_malformed_json_rejection"
+      ]
+    },
+    "quantity_display": {
+      "evidence_id": "MAC-BOM-QUANTITY-FORMAT",
+      "status": "VERIFIED",
+      "passed": 4,
+      "failed": 0,
+      "scope": "Independent synthetic decimal display regression; positive fractional shortage retained, not rounded to zero."
+    }
+  },
+  "migration": {
+    "evidence_id": "MAC-BOM-MIGRATION",
+    "status": "VERIFIED",
+    "backup_created_before_migration": true,
+    "migration_before": 3,
+    "migration_after": 4,
+    "runtime_unchanged": true,
+    "original_tables_unchanged_during_upgrade": [
+      "ledger_state",
+      "ledger_events",
+      "service_snapshots",
+      "opening_imports",
+      "documents",
+      "outbox"
+    ],
+    "comparison": "Same fields/counts before versus after migration, excluding new nullable bom_document_id. Subsequent approved BOM posting is a separate intentional write."
+  },
+  "actual_bom": {
+    "evidence_ids": [
+      "MAC-BOM-INTAKE",
+      "MAC-BOM-APPROVAL",
+      "MAC-BOM-POST",
+      "MAC-BOM-READBACK"
+    ],
+    "status": "VERIFIED",
+    "scope": "Actual source registration with selected conditional demo decisions; not full technical acceptance",
+    "parsed_source_rows": 74,
+    "preserved_source_rows": 74,
+    "selected_conditional_applications": 5,
+    "unresolved_rows": 69,
+    "source_metadata_crosscheck": "PASS: selected mapping, RefDes and source quantity match prior candidate metadata",
+    "author_intake_revise": true,
+    "self_review_http_status": 403,
+    "independent_review_approval": true,
+    "exact_version_hash": true,
+    "ledger_version_before_separate_post": 1,
+    "ledger_version_after_post": 2,
+    "projection_version": 2,
+    "post_idempotency": "PASS",
+    "bom_post_events": 1,
+    "graph": {
+      "nodes": 176,
+      "edges": 252,
+      "SourceRow": 74,
+      "BOMLine": 74,
+      "BOMApplication": 5
+    },
+    "selected_item_arithmetic": "PASS",
+    "initial_inventory_unchanged": true,
+    "baseline_quantities_unchanged": true,
+    "overall_state": "PARTIAL",
+    "full_coverage": false,
+    "manufacturing_feasibility": "UNKNOWN",
+    "technical_review": "UNREVIEWED",
+    "remaining": [
+      "source_configuration_conflict",
+      "69_unresolved_rows",
+      "manufacturing_technical_review",
+      "actual_stock_evidence"
+    ]
+  },
+  "browser": {
+    "status": "VERIFIED",
+    "evidence_id": "MAC-BOM-UI",
+    "method": "Manual CUA browser inspection, not an automated browser-suite count",
+    "scope": [
+      "author_A_and_server_connected",
+      "ledger_and_graph_version_2",
+      "all_176_nodes_and_252_edges",
+      "same_version_BOM_query_and_full_TBox_SHACL",
+      "five_item_table_matches_API",
+      "partial_scope_and_demo_assumptions_and_synthetic_inventory_labels",
+      "74_rows_with_5_conditional_and_69_unreviewed",
+      "POSTED_v2_drawer_and_technical_review_incomplete_warning",
+      "returned_to_target_40"
+    ],
+    "model_calls": 0
+  },
+  "restart": {
+    "status": "VERIFIED",
+    "evidence_id": "MAC-BOM-RESTART",
+    "health_http_status": 200,
+    "ledger_version": 2,
+    "projection_version": 2,
+    "stored_snapshot_unchanged": [
+      "summary",
+      "inventory",
+      "material_requirements",
+      "entities",
+      "relationships"
+    ],
+    "posted_document_status": "POSTED",
+    "posted_document_version": 2,
+    "approved_hash_unchanged": true,
+    "source_rows_unchanged": 74,
+    "ontology_sources_hashes_version_counts_unchanged": true,
+    "entire_TBox_and_SHACL_RDF_isomorphic": true,
+    "normal_dynamic_differences": [
+      "development_identity_revision_regenerated",
+      "RDF_blank_node_identifiers_compared_by_isomorphism"
+    ]
+  },
+  "final_preservation": {
+    "status": "VERIFIED",
+    "evidence_id": "MAC-BOM-FINAL-PRESERVATION",
+    "method": "Independent verification against saved pre-change baseline",
+    "source_hashes_verified": 155,
+    "source_hashes_declared": 155,
+    "literal_ids_verified": 349,
+    "literal_ids_declared": 349,
+    "literal_locations_verified": 1171,
+    "literal_locations_declared": 1171,
+    "existing_containers_preserved": 11,
+    "existing_volumes_preserved": 11,
+    "original_table_old_rows_preserved": 6,
+    "original_ui_files_byte_identical": 7,
+    "runtime_credential_hash_unchanged": true,
+    "note": "New authorized BOM events and snapshots are additive; old-row preservation is distinct from total-table equality after posting."
+  },
+  "merge": {
+    "status": "IN_PROGRESS",
+    "pr": 2,
+    "authorized_after_relevant_validation": true,
+    "merge_commit": null,
+    "as_of_evidence_commit": "pending",
+    "authoritative_status_url": "https://github.com/Ontologics-2Zo/ontologics-chat/pull/2"
+  },
+  "parent_tasks_complete": false,
+  "model_calls": 0,
+  "private_evidence": "Original sources, extracted rows, per-item quantities, credentials, runtime, DB backup, screenshots and detailed logs remain outside public Git; only counts, code hashes and opaque case IDs are recorded here.",
+  "cq68": {
+    "evidence_id": "MAC-BOM-CQ68",
+    "status": "VERIFIED",
+    "method": "Read-only current-state observation",
+    "scope": "Current round quantities and selected conditional material scope, not full CQ20 or delivery prognosis",
+    "promised": 100,
+    "arrived": 32,
+    "remaining_promise": 68,
+    "additional_good_target": 40,
+    "conditional_planned_input": 43,
+    "selected_conditional_items": 5,
+    "ledger_version": 2,
+    "projection_version": 2,
+    "model_calls": 0,
+    "ledger_mutations": 0,
+    "full_CQ20_passed": false,
+    "natural_language_limits": [
+      "Some paraphrases asking input quantity at 94 percent yield return UNKNOWN.",
+      "Deadline-guarantee questions return current round statistics only; no prognosis or guarantee is implemented."
+    ]
+  },
+  "verified_scope": "Actual 74-row source preservation and selected five-item conditional development-ledger registration/readback, server/manual-UI/preservation/restart checks; not full technical manufacturing, CQ20, Agent or T00-T23 acceptance.",
+  "static_checks": {
+    "browser_checker_syntax": {
+      "command": "node --check dev/check_bom_ui.mjs",
+      "status": "VERIFIED",
+      "automated_browser_suite": false
+    }
+  }
+}

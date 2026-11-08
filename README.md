@@ -2,7 +2,7 @@
 
 MK-S2의 화면·핵심 동선을 유지하면서 제조 업무를 실제 서버 원장·온톨로지·Agent에 연결하기 위한 개발 기준이다. 공식 설계 v1.7과 시연 데이터 v1.3은 서로 다른 버전 축이다.
 
-**현재 코드: INITIAL 원장·같은 버전 그래프 조회에 BOM 원본 등록·검토·승인·소요 조회 경로를 추가한 개발 서비스다.** 초기 원장 연결은 검증됐으며 BOM 코드는 독립 합성 자료로 검사했고 실제 원본 처리와 구분한다. 현재 Cloud Docker는 메모리·PID·CPU 제한을 강제하지 못해 실제 BOM 경로를 `RUNNER_ENFORCEMENT_UNAVAILABLE`로 차단했다. **실제 BOM 원본 파싱·반입·승인/등록은 0건**이며, 지원되는 실행 환경에서 이어가야 한다. 최신 범위는 [SERVICE-BOM-20261108](docs/handoff/SERVICE-BOM-20261108.md), 초기 조회 증거는 [SERVICE-INITIAL-20261108](docs/handoff/SERVICE-INITIAL-20261108.md)을 따른다. 구매·검사·Agent·모델·영속 복구·전체 서비스 인수는 미완료다.
+**현재 코드: INITIAL 원장·같은 버전 그래프 조회와 BOM 원본 등록·검토·승인·소요 조회를 연결한 개발 서비스다.** Mac arm64의 제한 Runner 검사를 통과해 실제 원본 74행을 보존하고, 선택 5품목의 조건부 결정을 독립 검토·승인 후 개발 원장에 반영했다. 나머지 69행은 UNRESOLVED이며 전체 판정은 PARTIAL/제조 가능성 UNKNOWN이다. 최신 범위와 UI·보존·재시작 검증 결과는 [Mac BOM 실행 기록](docs/handoff/SERVICE-BOM-MAC-20261108.md)을 따른다. 과거 [Cloud 차단·합성 검사 기록](docs/handoff/SERVICE-BOM-20261108.md)과 [INITIAL 증거](docs/handoff/SERVICE-INITIAL-20261108.md)는 별도로 보존한다. 구매·검사·Agent·모델·영속 복구·전체 서비스 인수는 미완료다.
 
 현재 화면은 커밋 `b3ee599`로 보존하고 MK-S2 작업 공간을 별도로 추가했다. 이후 화면 수정은 `web/mks2/`에만 적용한다. 처음에는 검증한 화면을 같은 출발점으로 사용하며, 원본 HTML 자체를 공개 복사한 것이 아니다.
 
@@ -57,7 +57,7 @@ mkdir -p -m 700 "$ONTO_RUNTIME_DIR"
 
 위 요약 명령은 기본 `/var/run/docker.sock`을 사용한다. Docker Desktop이 사용자 소켓만 제공하면 `service_stack.py`에 `--docker-socket "$HOME/.docker/run/docker.sock"`을 추가한다. runtime 파일은 DB 자격증명을 담으므로 Git 밖 영속 위치에 보관한다. 기존 파일이 있으면 그 파일을 계속 사용한다.
 
-Cloud에서는 이미 제공된 `PRIVATE_INPUT_ROOT`와 runtime 파일을 유지한다. 필요하면 `UV_CACHE_DIR`를 쓰기 가능한 별도 캐시 경로로 지정한다. 실행한 머신의 브라우저에서 `http://127.0.0.1:8870/`을 연다. Cloud 내부 localhost는 사용자 Mac의 접속 주소가 아니다. 이번 BOM 브랜치의 사용자 Mac 실기 실행은 **NOT_RUN**이다. 이전 main의 로컬 실행 기록으로 BOM 검증을 대체하지 않는다.
+Cloud에서는 이미 제공된 `PRIVATE_INPUT_ROOT`와 runtime 파일을 유지한다. 필요하면 `UV_CACHE_DIR`를 쓰기 가능한 별도 캐시 경로로 지정한다. 실행한 머신의 브라우저에서 `http://127.0.0.1:8870/#mks2`를 연다. Cloud 내부 localhost는 사용자 Mac의 접속 주소가 아니다. 이번 BOM 브랜치의 Mac 실제 원본 처리·원장 반영 증거는 별도 Mac 실행 기록을 따른다. 이전 main이나 Cloud의 결과를 이번 검증으로 대체하지 않는다.
 
 MK-S2 확인 동선:
 
@@ -72,7 +72,7 @@ INITIAL은 출처가 있는 합성 기초 잔액이며 실제 제조 이력과 �
 
 ## 검증 범위
 
-BOM 코드·합성 검사·실제 원본 차단의 명령·환경·결과는 [BOM 실행 기록](docs/handoff/SERVICE-BOM-20261108.md), 기존 초기 조회는 [INITIAL 실행 기록](docs/handoff/SERVICE-INITIAL-20261108.md)에 남긴다. 원본 무결성은 `.venv/bin/python dev/audit_sources.py`로 확인한다. 이 검사는 155개 원본 및 349개 literal ID의 1,171개 위치 대응을 확인하며, T00의 서술 요구 전수 추적 완료를 뜻하지 않는다.
+최신 Mac 실제 원본·선택 5품목 검토·승인·반영은 [Mac BOM 실행 기록](docs/handoff/SERVICE-BOM-MAC-20261108.md), 과거 Cloud 합성 검사·원본 차단은 [Cloud BOM 실행 기록](docs/handoff/SERVICE-BOM-20261108.md), 초기 조회는 [INITIAL 실행 기록](docs/handoff/SERVICE-INITIAL-20261108.md)에 남긴다. Mac Python suite는 182 PASS/0 SKIP이며 실제 자료의 전체 기술검수 완료와 구분한다. 원본 무결성은 `.venv/bin/python dev/audit_sources.py`로 확인한다. 이 검사는 155개 원본 및 349개 literal ID의 1,171개 위치 대응을 확인하며, T00의 서술 요구 전수 추적 완료를 뜻하지 않는다.
 
 아래는 보존된 참조 서버와 UI 구문 검사다.
 

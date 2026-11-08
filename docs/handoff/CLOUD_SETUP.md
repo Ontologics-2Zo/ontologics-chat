@@ -2,7 +2,7 @@
 
 2026-11-08 갱신. 초기 원장 서비스는 PR #1로 `main`에 병합됐다. 후속 실제 BOM 등록·소요 조회는 `codex/mks2-bom-integration`에서 진행하며, 실행하려는 코드가 main에 포함됐는지 GitHub PR에서 확인한다. 과거 저장소 초기화·T00~T01 준비·환경 Publish 절차는 현재 로컬 실행 절차가 아니다. Cloud 환경 Publish는 로컬 실행에 필요하지 않다.
 
-Linux Cloud의 초기 조회 검증은 [INITIAL 실행 기록](SERVICE-INITIAL-20261108.md), BOM 실행은 [BOM 실행 기록](SERVICE-BOM-20261108.md)을 따른다. 아래 Mac 절차는 코드에 맞춘 안내이며 이 Cloud 작업에서 **사용자 Mac 실기 실행은 NOT_RUN**이다. 구매·Agent·모델·전체 CQ 완료를 의미하지 않는다.
+Linux Cloud의 초기 조회 검증은 [INITIAL 실행 기록](SERVICE-INITIAL-20261108.md), 과거 Cloud BOM 차단은 [BOM 실행 기록](SERVICE-BOM-20261108.md)을 따른다. 후속 Mac arm64에서는 실제 Runner 강제 검사와 원본 74행·선택 5품목 조건부 검토/승인/반영을 확인했다. 최신 UI·보존·재시작 검증 결과는 [Mac BOM 실행 기록](SERVICE-BOM-MAC-20261108.md)을 따른다. 구매·Agent·모델·전체 CQ 완료를 의미하지 않는다.
 
 ## 1. Mac에서 준비할 것
 
