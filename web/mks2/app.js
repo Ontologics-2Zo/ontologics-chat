@@ -1,5 +1,6 @@
 import { mountDashboard } from './dashboard.js';
 import { mountGraph } from './graph.js';
+import { renderQueryAnswer } from './query.js';
 
 // UI state is ephemeral. Identity, quantities, versions and answers come from the server.
 const $ = id => document.getElementById(id);
@@ -80,6 +81,11 @@ function focusEvidence(id) {
   graph?.focus(id);
 }
 function fillQuestion(text, name = currentScreen()) { panels[name].input.value = text; panels[name].input.focus(); }
+function updateSuggestions(container, name) {
+  container.replaceChildren();
+  const questions = snapshot.suggested_questions || snapshot.suggestions || [];
+  for (const question of questions) if (typeof question === 'string') container.append(button(question, () => fillQuestion(question, name), 'suggestion'));
+}
 function createPanel(name) {
   const root = $(`${name}-panel`); root.replaceChildren();
   const heading = element('div', 'panel-heading');
@@ -92,8 +98,7 @@ function createPanel(name) {
     element('p', 'note', '확인되지 않은 장착·생산·승인·입하 정보는 미확인으로 남깁니다.'));
   messages.append(greeting);
   const suggestions = element('div', 'suggestions');
-  const questions = snapshot.suggested_questions || snapshot.suggestions || ['남은 고객 도착 약속과 생산 목표는?', 'BOM 등록 상태는?', '현재 가용 재고는?'];
-  for (const question of questions) suggestions.append(button(question, () => fillQuestion(question, name), 'suggestion'));
+  updateSuggestions(suggestions, name);
   const form = element('form', 'question-form'), input = element('input');
   input.autocomplete = 'off'; input.setAttribute('aria-label', name === 'graph' ? '질문' : '에이전트에게 질문');
   input.placeholder = '질문하면 같은 버전의 원장 근거를 조회합니다';
@@ -114,7 +119,8 @@ async function runQuery(name, question) {
   const message = element('div', 'message assistant', '원장과 근거를 조회하고 있습니다.'); panel.messages.append(message);
   cancelPendingReplay();
   try {
-    const answer = await api('/api/mks2/query', { question, ledger_version: snapshot.meta.ledger_version });
+    const answer = await api('/api/mks2/query', { question, ledger_version: snapshot.meta.ledger_version,
+      context_entity_id: contextId || undefined });
     if (generation !== requestGeneration) return;
     if (answer.meta?.identity_revision !== identity?.identity_revision || answer.meta?.company_id !== identity?.company_id) {
       identity = null; csrfToken = null; invalidateView(); throw new Error('IDENTITY_CHANGED');
@@ -122,37 +128,39 @@ async function runQuery(name, question) {
     if (answer.meta?.ledger_version !== snapshot.meta.ledger_version || answer.meta?.projection_version !== snapshot.meta.projection_version) {
       const error = new Error('SNAPSHOT_MISMATCH'); error.status = 409; throw error;
     }
-    message.replaceChildren();
-    const steps = element('ol', 'trace-steps');
-    for (const text of answer.steps || []) steps.append(element('li', '', text));
-    message.append(steps);
     const hops = answer.graph_path || [], ids = [...new Set([...hops.flat(), ...(answer.evidence_node_ids || [])])];
-    if (schemaMode) { schemaMode = false; mountCurrentGraph(); }
-    const replay = ++replayGeneration;
-    const replayResult = await graph.replay({ hops, nodeIds: ids, edgeIds: answer.evidence_edge_ids || [] });
-    if (generation !== requestGeneration) return;
-    if (replay !== replayGeneration || !replayResult?.completed) {
-      message.append(element('p', 'note', '화면 조작으로 근거 재생을 중단했습니다. 아래 답변은 표시된 원장 버전의 조회 결과입니다.'));
-    } else for (const step of steps.children) step.className = 'done';
-    message.append(element('p', 'answer', typeof answer.answer === 'string' ? answer.answer : answer.answer?.text || '확인된 답변이 없습니다.'));
-    const evidence = element('div', 'evidence-path');
     const evidenceAtVersion = action => {
       if (snapshot.meta.ledger_version !== answer.meta.ledger_version || snapshot.meta.projection_version !== answer.meta.projection_version) { notify('과거 원장 버전의 답변입니다. 최신 근거가 필요하면 질문을 다시 실행해 주세요.'); return; }
       action();
     };
-    for (const id of ids) evidence.append(button(labelFor(id), () => evidenceAtVersion(() => focusEvidence(id)), 'chip'));
-    const footer = element('div', 'answer-footer', `원장 v${answer.meta.ledger_version} · 그래프 v${answer.meta.projection_version} · 모델 호출 ${answer.model_calls ?? 0}회`);
-    footer.append(button('근거 다시 보기', () => evidenceAtVersion(() => {
-      cancelPendingReplay(); if (schemaMode) { schemaMode = false; mountCurrentGraph(); }
-      location.hash = '#graph'; graph.replay({ hops, nodeIds: ids, edgeIds: answer.evidence_edge_ids || [] });
-    })));
-    message.append(evidence, footer);
+    let activeReplay = null;
+    const replayEvidence = (navigate = false) => evidenceAtVersion(() => {
+      cancelPendingReplay();
+      if (schemaMode) { schemaMode = false; mountCurrentGraph(); }
+      if (navigate) location.hash = '#graph';
+      const replay = ++replayGeneration, playGeneration = generation;
+      activeReplay = replay;
+      void presentation.play(() => graph.replay({ hops, nodeIds: ids, edgeIds: answer.evidence_edge_ids || [] }),
+        () => generation === playGeneration && replay === replayGeneration);
+    });
+    const presentation = renderQueryAnswer(message, answer, {
+      evidenceIds: ids, labelFor,
+      onEvidence: id => evidenceAtVersion(() => focusEvidence(id)),
+      onReplay: () => replayEvidence(true),
+      onCancel: () => { if (activeReplay === replayGeneration) cancelPendingReplay(); },
+    });
+    // Answers and their immutable basis are visible before animation begins.
+    // Sending another question can cancel playback without hiding the answer.
+    if (ids.length) replayEvidence();
   } catch (error) {
     if (error.name === 'AbortError' || generation !== requestGeneration) return;
     message.replaceChildren(element('p', '', errorText(error)));
     if (error.status === 401) invalidateView();
   } finally {
-    if (generation === requestGeneration) { panel.submit.disabled = false; panel.messages.scrollTop = panel.messages.scrollHeight; }
+    if (generation === requestGeneration) {
+      panel.submit.disabled = false;
+      message.scrollIntoView({ block: 'start', behavior: 'instant' });
+    }
   }
 }
 function mountCurrentGraph() {
@@ -194,9 +202,10 @@ async function loadSnapshot({ preserveMessages = false } = {}) {
     document.createTextNode(' · 그래프 '), element('b', '', `v${data.meta.projection_version}`), element('span', 'pill ok', '서버 연결'));
   $('versions').title = `원천 버전 ${data.meta.source_ledger_version ?? '미확인'} · ${data.meta.snapshot_id ?? ''}`;
   if (!preserveMessages) { createPanel('graph'); createPanel('dashboard'); }
-  else for (const panel of Object.values(panels)) {
+  else for (const [name, panel] of Object.entries(panels)) {
     panel.context.textContent = `현재 원장 v${data.meta.ledger_version} · 이전 답변은 각 답변의 기준 버전을 유지합니다.`;
     panel.submit.disabled = false;
+    updateSuggestions(panel.suggestions, name);
   }
   refreshButton.hidden = false; refreshButton.disabled = false; refreshButton.textContent = '최신 원장 조회'; latestVersion = data.meta.ledger_version;
   dashboard?.destroy();

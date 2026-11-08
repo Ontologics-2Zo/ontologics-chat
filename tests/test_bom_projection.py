@@ -106,13 +106,17 @@ class BomReducerTests(unittest.TestCase):
         self.assertEqual(apply_bom_event(original,event),apply_bom_event(original,event))
 
     def test_current_query_highlights_active_bom_while_full_history_remains(self):
-        from service.views import answer_query
+        from service.views import answer_query, snapshot_view
         first=apply_bom_event(initial_payload(),registration_event())
         second=apply_bom_event(first,registration_event(first))
         old_ids={entity["id"] for entity in first["entities"] if entity.get("evidence",{}).get("record_type")=="bom_registration"}
-        view={"summary":{},"material_requirements":requirements_for_snapshot(second),
-              "bom":second["bom"],"entities":second["entities"],"relationships":second["relationships"],
-              "meta":{"projection_state":"READY","source_sha256":"a"*64,"snapshot_id":"independent-test-snapshot"}}
+        # Query analysis validates real summary/context fields as well as BOM
+        # evidence. Use the same read-model builder as the API instead of an
+        # incomplete empty-summary stub; projection persistence is tested below.
+        second["metadata"].update(current_ledger_version=3, snapshot_id="independent-test-snapshot")
+        second["projection"]={"state":"READY","projection_version":3,
+                              "graph":{"nodes":second["entities"],"edges":second["relationships"]}}
+        view=snapshot_view(second)
         before=deepcopy(view)
         answer=answer_query("BOM 소요량",view,{})
         self.assertFalse(old_ids & set(answer["evidence_node_ids"]))

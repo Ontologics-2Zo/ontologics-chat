@@ -7,7 +7,7 @@ means zero stock. Repeated BOM rows are aggregated before stock is compared.
 
 from collections import defaultdict
 from copy import deepcopy
-from decimal import Decimal, InvalidOperation, ROUND_CEILING
+from decimal import Decimal, InvalidOperation
 
 
 RULE_VERSION = "bom-material-requirements/1"
@@ -68,7 +68,12 @@ def requirements_for_snapshot(payload, *, plan_yield="0.94"):
     yield_fraction = _decimal(plan_yield, positive=True)
     if target is None or yield_fraction is None or yield_fraction > 1:
         raise ValueError("MATERIAL_BASIS_INVALID")
-    planned = (target / yield_fraction).to_integral_value(rounding=ROUND_CEILING)
+    # Exact rational ceiling avoids Decimal context rounding a yield very close
+    # to 1 up to 1 before the extra input unit is accounted for.
+    tn, td = target.as_integer_ratio()
+    yn, yd = yield_fraction.as_integer_ratio()
+    numerator, denominator = tn * yd, td * yn
+    planned = Decimal((numerator + denominator - 1) // denominator)
     result = {
         "state": "BLOCKED_BOM", "rule_version": RULE_VERSION,
         "bom_id": None, "bom_version": None, "source": None,

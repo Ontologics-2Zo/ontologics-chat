@@ -114,6 +114,10 @@ class MaterialRequirementsTests(unittest.TestCase):
         self.assertEqual(result["state"],"BLOCKED_BOM")
         self.assertEqual(result["rows"],[])
 
+    def test_yield_close_to_one_still_requires_an_extra_input_unit(self):
+        result=requirements_for_snapshot(payload(),plan_yield="0.999999999999999999999999999999")
+        self.assertEqual(result["basis"]["planned_input_qty"],12)
+
 
 if __name__ == "__main__":
     unittest.main()
