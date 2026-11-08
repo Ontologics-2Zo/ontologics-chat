@@ -2,12 +2,18 @@
 
 from copy import deepcopy
 
+from service.materials import requirements_for_snapshot
+
 
 def display_graph(graph):
     types = {"ProductConfiguration": ("configuration", "design"), "ContractLine": ("contract_line", "doc"),
              "DeliveryRound": ("delivery_round", "doc"), "ProductionJob": ("production_job", "doc"),
              "Customer": ("customer", "party"), "Supplier": ("supplier", "party"),
-             "InternalItem": ("item", "design"), "PartLot": ("lot", "phys"), "SupplierOffer": ("quotation", "doc")}
+             "InternalItem": ("item", "design"), "PartLot": ("lot", "phys"), "SupplierOffer": ("quotation", "doc"),
+             "SourceDocument": ("source_document", "doc"), "SourceSnapshot": ("source_snapshot", "doc"),
+             "SourceRow": ("source_row", "doc"), "BOMSnapshot": ("bom", "doc"),
+             "BOMLine": ("bom_line", "design"), "BOMApplication": ("bom_application", "design"),
+             "ApprovalGrant": ("approval", "doc"), "DocumentVersion": ("document_version", "doc")}
     nodes=[]
     for node in graph.get("nodes", []):
         kind, shape = types.get(node["type"], (node["type"], "design"))
@@ -18,7 +24,8 @@ def display_graph(graph):
                                     "kind_label":node["type"],"properties":properties}})
     edges=[{**edge,"edge_id":edge["id"],"source_node_id":edge["source"],"target_node_id":edge["target"],
             "relation_type":edge.get("ontology_predicate") or edge["predicate"],"label":edge["predicate"],
-            "state":"OPENING_BALANCE","evidence_refs":[edge["evidence"]]} for edge in graph.get("edges",[])]
+            "state":"BOM_REGISTRATION" if edge.get("evidence",{}).get("record_type")=="bom_registration" else "OPENING_BALANCE",
+            "evidence_refs":[edge["evidence"]]} for edge in graph.get("edges",[])]
     return {"nodes":nodes,"edges":edges,"complete":True}
 
 
@@ -36,6 +43,8 @@ def snapshot_view(payload):
     item_ids = {row["item_id"] for row in lots}
     primary = lots if len(item_ids) == 1 else []
     config = balance["configuration"]
+    requirements = requirements_for_snapshot(payload)
+    bom = payload.get("bom")
     summary = {
         "promise_qty": round_["promised_qty"], "promised_qty": round_["promised_qty"],
         "good_qty": round_["good_qty"], "fg_received_qty": round_["fg_received_qty"],
@@ -50,9 +59,9 @@ def snapshot_view(payload):
         "on_hand_qty": sum(row["on_hand_qty"] for row in primary) if primary else None,
         "reserved_qty": sum(row["reserved_other_qty"] for row in primary) if primary else None,
         "available_qty": sum(row["available_qty"] for row in primary) if primary else None,
-        "bom_status": config["registration_status"],
-        "technical_review": config["technical_review_status"],
-        "actual_manufacturing_feasibility": "UNKNOWN", "requirements_state": "BLOCKED_BOM",
+        "bom_status": "POSTED_SOURCE" if bom else config["registration_status"],
+        "technical_review": bom.get("technical_review", "UNREVIEWED") if bom else config["technical_review_status"],
+        "actual_manufacturing_feasibility": "UNKNOWN", "requirements_state": requirements["state"],
         "item_id": next(iter(item_ids)) if len(item_ids) == 1 else None,
         "delivery_round_id": round_["round_id"], "production_job_id": round_["job_id"],
         "configuration_id": round_["configuration_id"], "arrival_due_date": round_["arrival_due_date"],
@@ -70,6 +79,11 @@ def snapshot_view(payload):
         "recorded_at": source["recorded_at"], "synthetic": True, "record_type": "opening_balance",
         "source_sha256": source["source_sha256"],
         "full_bom_inventory_coverage": source["full_bom_inventory_coverage"],
+        "bom_source_kind": source.get("bom_source_kind"), "bom_source_sha256": source.get("bom_source_sha256"),
+        "bom_registered_at": source.get("bom_registered_at"), "opening_recorded_at": source.get("opening_recorded_at"),
+        "material_rule_version": requirements["rule_version"],
+        "data_origins": {"inventory": "synthetic_opening_balance", "bom": "actual_bom" if bom else None,
+                         "application": "conditional_demo" if requirements["has_demo_assumptions"] else "unreviewed"},
     }
     return {
         "mode": "ledger-service", "serviceConnected": True, "meta": meta, "summary": summary,
@@ -81,6 +95,7 @@ def snapshot_view(payload):
         "production": balance["production_reports"], "shipments": balance["shipments"],
         "quotations": balance["quotations"], "substitutes": balance["substitutes"],
         "mapping_candidates": balance["mapping_candidates"],
+        "bom": deepcopy(bom), "material_requirements": requirements,
         "capabilities": {"bom_upload": "RUNNER_UNAVAILABLE", "purchase_write": "NOT_IMPLEMENTED", "agent": "NOT_IMPLEMENTED", "model": "NOT_RUN"},
         "suggested_questions": ["현재 납품회차의 이행 현황을 보여줘", "현재 가용 재고와 예약 근거를 보여줘", "BOM 등록 상태와 소요 계산 가능 여부를 확인해줘", "전체 온톨로지의 클래스와 관계 범위를 보여줘"],
     }
@@ -127,9 +142,28 @@ def answer_query(question, view, ontology):
         answer=f"서버에서 보존한 전체 스키마는 클래스 {counts['classes']}개, 관계 {counts['relations']}개, SHACL shape {counts['shapes']}개입니다. 전체 공식 요구 대조와 전체 CQ 인수는 별도 검증 중입니다."
         steps=["manifest와 대조한 전체 T-Box·SHACL을 조회했습니다.","시연에 쓰이지 않는 스키마도 포함했습니다."]
     elif "bom" in q or "소요" in q or "부족" in q or "생산 가능" in q:
-        answer=f"적용 BOM 상태는 {s['bom_status']}이며 기술 검수는 {s['technical_review']}입니다. 전체 자재 소요·부족량과 제조 가능성은 판단 보류입니다. 추가 양품 목표 {s['production_remaining_qty']}대와 잔여 고객 도착 약속 {s['promise_remaining_qty']}대는 서로 다른 값입니다."
-        steps=["같은 원장 버전의 구성 등록 상태를 조회했습니다.","미검수 매핑을 적용 BOM이나 승인으로 사용하지 않았습니다."]
-        kinds={"ProductConfiguration","ProductionJob","DeliveryRound"}
+        requirements=view["material_requirements"]
+        if requirements["bom_id"]:
+            basis=requirements["basis"]
+            answer=(f"실제 BOM 원본 {requirements['row_count']}행이 원장에 등록되어 있습니다. "
+                    f"원문 수량의 단순 환산 기준은 추가 양품 목표 {basis['production_remaining_qty']}대와 "
+                    f"계획 수율 {float(basis['plan_yield'])*100:g}%를 가정한 투입 {basis['planned_input_qty']}대입니다. "
+                    "단위·실장 검수 전 원문 환산은 확정 소요나 양품 보장이 아닙니다. ")
+            calculated=[item for item in requirements["items"] if item["state"]=="CALCULATED"]
+            if calculated:
+                answer += "명시적으로 검토한 조건부 매핑과 합성 기초 재고로 계산한 품목: " + "; ".join(
+                    f"{item['item_id']} 소요 {item['required_qty']}/{item['planned_required_qty']}{item['unit']}, "
+                    f"가용 {item['available_qty']}{item['unit']}, 부족 {item['shortage_qty']}/{item['planned_shortage_qty']}{item['unit']}"
+                    for item in calculated) + ". "
+            answer += (f"부족량을 확정하지 못한 행은 {requirements['unknown_shortage_count']}개이며 "
+                       "미확인 재고를 0으로 처리하지 않았습니다. 실제 제조 적용과 전체 확보 여부는 기술 검수 전 판단 보류입니다.")
+            steps=["같은 원장 버전에 등록된 BOM의 전체 원문 행과 승인 hash를 조회했습니다.",
+                   "실제 원문 수량·조건부 적용 매핑·합성 기초 재고를 구분했습니다.",
+                   "같은 품목의 소요를 합산한 뒤 타수요 예약과 검사대기를 제외한 가용 수량과 비교했습니다."]
+        else:
+            answer=f"적용 BOM 상태는 {s['bom_status']}이며 기술 검수는 {s['technical_review']}입니다. 전체 자재 소요·부족량과 제조 가능성은 판단 보류입니다. 추가 양품 목표 {s['production_remaining_qty']}대와 잔여 고객 도착 약속 {s['promise_remaining_qty']}대는 서로 다른 값입니다."
+            steps=["같은 원장 버전의 구성 등록 상태를 조회했습니다.","미검수 매핑을 적용 BOM이나 승인으로 사용하지 않았습니다."]
+        kinds={"ProductConfiguration","ProductionJob","DeliveryRound","SourceDocument","SourceSnapshot","SourceRow", "BOMSnapshot", "BOMLine", "BOMApplication", "InternalItem", "PartLot", "ApprovalGrant", "DocumentVersion"}
     elif any(word in q for word in ("재고","예약","가용","lot")):
         entries=view["inventory"]
         answer="현재 기초 원장의 품목/LOT별 가용 수량: "+"; ".join(f"{row.get('lot_id',row['item_id'])} {row['available_qty']}{row.get('unit') or ''}" for row in entries)+". 검사대기와 타 수요 예약은 가용에 포함하지 않으며 전체 BOM 확보 완료를 뜻하지 않습니다."
@@ -142,8 +176,21 @@ def answer_query(question, view, ontology):
     else:
         return {"status":"UNKNOWN","answer":"이 질문을 처리하는 업무 도구는 아직 연결되지 않았습니다. 현재 이행·재고·BOM 상태·전체 온톨로지 범위를 조회할 수 있습니다.","steps":[],"graph_path":[],"evidence_node_ids":[],"meta":view["meta"],"model_calls":0,"execution_kind":"deterministic_domain_query"}
     ids={row["id"] for row in view["entities"] if row["type"] in kinds}
+    if view.get("bom") and any(word in q for word in ("bom","소요","부족","생산 가능")):
+        active=view["bom"]
+        # Older registered sources remain in the full graph, but a current
+        # calculation must highlight only the active BOM version's evidence.
+        ids={row["id"] for row in view["entities"] if row["id"] in ids and
+             (row.get("evidence",{}).get("record_type")!="bom_registration" or
+              (row["evidence"].get("bom_id")==active["bom_id"] and row["evidence"].get("bom_version")==active["bom_version"]))}
     edges=[row for row in view["relationships"] if row["source"] in ids and row["target"] in ids]
     ready=view["meta"]["projection_state"]=="READY"
+    evidence_refs=[{"source_sha256":view["meta"]["source_sha256"],"record_type":"opening_balance","snapshot_id":view["meta"]["snapshot_id"]}]
+    if view.get("bom") and any(word in q for word in ("bom","소요","부족","생산 가능")):
+        bom=view["bom"]
+        evidence_refs.append({"source_sha256":bom["source"]["sha256"],"record_type":"bom_registration",
+                              "bom_id":bom["bom_id"],"bom_version":bom["bom_version"],"payload_hash":bom["payload_hash"],
+                              "snapshot_id":view["meta"]["snapshot_id"]})
     return {"status":"ANSWERED","answer":answer,"steps":steps,"graph_path":[[row["source"],row["target"]] for row in edges] if ready else [],
-            "evidence_node_ids":sorted(ids) if ready else [],"evidence_refs":[{"source_sha256":view["meta"]["source_sha256"],"record_type":"opening_balance","snapshot_id":view["meta"]["snapshot_id"]}],
+            "evidence_node_ids":sorted(ids) if ready else [],"evidence_refs":evidence_refs,
             "meta":deepcopy(view["meta"]),"model_calls":0,"execution_kind":"deterministic_domain_query"}

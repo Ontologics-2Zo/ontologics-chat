@@ -34,6 +34,7 @@ STATIC_FILES = {
     "/mks2/app.js": ("mks2/app.js", "text/javascript; charset=utf-8"),
     "/mks2/styles.css": ("mks2/styles.css", "text/css; charset=utf-8"),
     "/mks2/dashboard.js": ("mks2/dashboard.js", "text/javascript; charset=utf-8"),
+    "/mks2/bom.js": ("mks2/bom.js", "text/javascript; charset=utf-8"),
     "/mks2/dashboard.css": ("mks2/dashboard.css", "text/css; charset=utf-8"),
     "/mks2/graph.js": ("mks2/graph.js", "text/javascript; charset=utf-8"),
     "/mks2/graph.css": ("mks2/graph.css", "text/css; charset=utf-8"),

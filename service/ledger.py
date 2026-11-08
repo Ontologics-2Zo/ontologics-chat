@@ -7,12 +7,13 @@ from the PostgreSQL ledger sequence.
 """
 
 from copy import deepcopy
+from datetime import datetime
 from hashlib import sha256
 from uuid import uuid4
 
 from psycopg.types.json import Jsonb
 
-from service.contracts import canonical_bytes
+from service.contracts import canonical_bytes, content_hash
 from service.errors import ServiceError
 from service.imports import InitialInputError, validate_initial
 
@@ -32,6 +33,159 @@ def _import_hash(payload):
 def _projection_hash(projection):
     # Turtle statement order is not semantic and can vary between serializers.
     return sha256(canonical_bytes({key: value for key, value in projection.items() if key != "rdf_turtle"})).hexdigest()
+
+
+def apply_bom_event(previous, event):
+    """Reduce one approved registration without changing opening inventory.
+
+    Every raw BOM row remains a SourceRow and BOMLine. Only an explicit reviewed
+    application becomes a BOMApplication; an unresolved mapping creates no item
+    link. No production, consumption or installation is inferred from a BOM.
+    """
+    try:
+        value = event["payload"]
+        content = value["content"]
+        meta = previous["metadata"]
+        approval = value["approval"]
+        recorded_at = event["recorded_at"]
+        recorded_time = recorded_at if isinstance(recorded_at, datetime) else datetime.fromisoformat(recorded_at)
+        if recorded_time.utcoffset() is None:
+            raise ValueError
+        registered_at = recorded_time.isoformat()
+        if (event["event_type"] != "BomRegistered" or value["event_type"] != "BomRegistered"
+                or value["company_id"] != meta["company_id"]
+                or value["ledger_version"] != meta["server_ledger_version"] + 1
+                or event["ledger_version"] != value["ledger_version"]
+                or content["kind"] != "bom_registration"
+                or content["expected_ledger_version"] != meta["server_ledger_version"]
+                or content_hash(content) != value["payload_hash"]
+                or value["source"] != content["source"] or value["rows"] != content["rows"]
+                or value["configuration_id"] != content["configuration_id"]
+                or not approval["approved_by"] or not approval["reviewed_by"]
+                or approval["created_by"] in {approval["approved_by"], approval["reviewed_by"]}
+                or approval["approved_hash"] != value["payload_hash"]
+                or approval["approved_version"] != value["bom_version"]):
+            raise ValueError
+        configurations = [entity for entity in previous["entities"]
+                          if entity["type"] == "ProductConfiguration"
+                          and content["configuration_id"] in {entity["id"], entity["display_id"]}]
+        rows = content["rows"]
+        if len(configurations) != 1 or not isinstance(rows, list) or not rows or len(rows) > 10000:
+            raise ValueError
+        if len({row["row_id"] for row in rows}) != len(rows):
+            raise ValueError
+        if (event.get("bom_document_id") is not None
+                and str(event["bom_document_id"]) != value["bom_id"]):
+            raise ValueError
+    except (KeyError, TypeError, ValueError, AttributeError):
+        raise ServiceError("BOM_EVENT_CONTRACT_INVALID") from None
+    snapshot = deepcopy(previous)
+    company, run = meta["company_id"], meta["run_id"]
+    source = content["source"]
+    version_key = [value["bom_id"], value["bom_version"], value["payload_hash"]]
+    evidence = {"record_type": "bom_registration", "source_sha256": source["sha256"],
+                "parsed_sha256": source.get("parsed_sha256"), "bom_id": value["bom_id"],
+                "bom_version": value["bom_version"], "payload_hash": value["payload_hash"],
+                "event_id": str(event["event_id"]), "ledger_version": value["ledger_version"],
+                "registered_at": registered_at,
+                "source_kind": source["source_kind"], "configuration_binding": content.get("configuration_binding"),
+                "synthetic_inventory": True}
+    entity_ids = {entity["id"] for entity in snapshot["entities"]}
+    edge_ids = {edge["id"] for edge in snapshot["relationships"]}
+
+    def identity(kind, key):
+        return "urn:ontologics:bom:" + content_hash([company, run, version_key, kind, key])
+
+    def entity(kind, key, label, attributes, *, origin="actual_source", locator=None):
+        identifier = identity(kind, key)
+        if identifier in entity_ids:
+            raise ServiceError("BOM_GRAPH_DUPLICATE")
+        entity_ids.add(identifier)
+        snapshot["entities"].append({"id": identifier, "type": kind, "source_type": kind,
+            "display_id": label, "logicalId": label, "label": label, "origin": origin,
+            "run_id": run, "attributes": deepcopy(attributes),
+            "evidence": {**evidence, "source_locator": locator}})
+        return identifier
+
+    def edge(start, predicate, target, locator=None):
+        identifier = identity("relationship", [start, predicate, target])
+        if identifier in edge_ids:
+            raise ServiceError("BOM_GRAPH_DUPLICATE")
+        edge_ids.add(identifier)
+        snapshot["relationships"].append({"id": identifier, "source": start, "target": target,
+            "predicate": predicate, "evidence": {**evidence, "source_locator": locator}})
+
+    source_document = entity("SourceDocument", "source", source["filename"],
+                             {"source_sha256": source["sha256"], "source_kind": source["source_kind"]})
+    source_snapshot = entity("SourceSnapshot", "source-snapshot", "Source " + source["sha256"][:12], source)
+    bom_snapshot = entity("BOMSnapshot", "bom-snapshot", "BOM " + str(value["bom_version"]),
+                          {"bom_id": value["bom_id"], "bom_version": value["bom_version"],
+                           "row_count": len(rows), "payload_hash": value["payload_hash"],
+                           "registration_scope": content.get("registration_scope"),
+                           "configuration_binding": content.get("configuration_binding"),
+                           "technical_review": content.get("technical_review"), "status": "POSTED_SOURCE"})
+    edge(source_snapshot, "snapshotOfDocument", source_document)
+    edge(bom_snapshot, "parsedFromSnapshot", source_snapshot)
+    configuration_id = configurations[0]["id"]
+    edge(configuration_id, "hasBOMSnapshot", bom_snapshot)
+    # The approval is a real development-workflow record, not a claim that an
+    # operating-company engineer validated the source or mapping.
+    document_version = entity("DocumentVersion", "document-version", "BOM revision " + str(value["bom_version"]),
+                              {"bom_id": value["bom_id"], "version": value["bom_version"],
+                               "payload_hash": value["payload_hash"]}, origin="development_workflow")
+    approval_grant = entity("ApprovalGrant", "approval", "BOM source approval", approval, origin="development_workflow")
+    edge(approval_grant, "approvalForDocumentVersion", document_version)
+    items = {}
+    for existing in previous["entities"]:
+        if existing["type"] == "InternalItem":
+            for key in {existing["id"], existing["display_id"]}:
+                if key in items and items[key] != existing["id"]:
+                    raise ServiceError("BOM_MAPPING_AMBIGUOUS")
+                items[key] = existing["id"]
+    for row in rows:
+        row_id, locator = row["row_id"], row["locator"]
+        row_label = "BOM row " + str(row.get("ordinal", row.get("source_ordinal", row.get("source_row"))))
+        source_row = entity("SourceRow", row_id, row_label + " source",
+                            {key: deepcopy(value_) for key, value_ in row.items() if key != "decision"}, locator=locator)
+        bom_line = entity("BOMLine", row_id, row_label,
+                          {"source_quantity": row.get("source_quantity"), "designators": row.get("designators"),
+                           "source_description": row.get("source_description"), "decision": row.get("decision"),
+                           "source_row_id": row_id}, locator=locator)
+        edge(source_row, "rowInSnapshot", source_snapshot, locator)
+        edge(bom_snapshot, "hasBOMLine", bom_line, locator)
+        edge(bom_line, "lineSourceRow", source_row, locator)
+        decision = row.get("decision", {})
+        if (decision.get("application_status") != "UNRESOLVED"
+                and decision.get("review_basis") in {"SOURCE_VERIFIED", "DEMO_ASSUMPTION"}):
+            application = entity("BOMApplication", row_id, row_label + " application", decision,
+                                 origin="synthetic_assumption" if decision["review_basis"] == "DEMO_ASSUMPTION" else "reviewed_application",
+                                 locator=locator)
+            edge(bom_line, "lineHasApplication", application, locator)
+            edge(application, "appliesToConfiguration", configuration_id, locator)
+            if decision.get("application_status") == "APPLICABLE" and decision.get("item_id"):
+                if decision["item_id"] not in items:
+                    raise ServiceError("BOM_MAPPING_UNAVAILABLE")
+                edge(application, "applicationMapsItem", items[decision["item_id"]], locator)
+    snapshot["bom"] = {**deepcopy(content), "bom_id": value["bom_id"], "bom_version": value["bom_version"],
+                       "payload_hash": value["payload_hash"], "ledger_version": value["ledger_version"],
+                       "registered_at": registered_at,
+                       "approval": deepcopy(approval), "status": "POSTED_SOURCE"}
+    snapshot["metadata"]["server_ledger_version"] = value["ledger_version"]
+    snapshot["metadata"]["active_bom_id"] = value["bom_id"]
+    snapshot["metadata"]["bom_source_sha256"] = source["sha256"]
+    snapshot["metadata"]["bom_source_kind"] = source["source_kind"]
+    snapshot["metadata"]["initial_rule_version"] = meta.get("initial_rule_version", meta.get("rule_version"))
+    snapshot["metadata"]["rule_version"] = "bom-registration/1+bom-material-requirements/1"
+    snapshot["metadata"]["bom_registered_at"] = registered_at
+    snapshot["metadata"]["opening_recorded_at"] = meta.get("opening_recorded_at", meta.get("recorded_at"))
+    snapshot["metadata"]["recorded_at"] = registered_at
+    # The inventory's historical effective_at remains the opening baseline;
+    # knowledge of the newly registered source starts at this real event.
+    previous_knowledge = datetime.fromisoformat(meta["known_as_of"])
+    snapshot["metadata"]["known_as_of"] = max(previous_knowledge, recorded_time).isoformat()
+    snapshot["metadata"]["full_bom_inventory_coverage"] = "REGISTERED_SOURCE_APPLICATION_REVIEW_SEPARATE"
+    snapshot["metadata"]["last_bom_event"] = evidence
+    return snapshot
 
 
 class LedgerReader:
@@ -102,12 +256,12 @@ class LedgerReader:
             return conn.execute("SELECT company_id,run_id,ledger_version,payload FROM service_snapshots WHERE projection IS NULL ORDER BY company_id,ledger_version").fetchall()
 
     def advance_documents(self):
-        """Carry read facts forward after generic evidence-note commits only.
+        """Apply supported committed documents to immutable read snapshots.
 
         An EvidenceDocumentPosted event records evidence; it has no inventory,
-        BOM, production or delivery effect. Unknown event kinds stop this worker
-        until an explicit domain reducer is implemented. Every emitted snapshot
-        still requires fresh RDF/SHACL/Neo4j validation before becoming READY.
+        BOM, production or delivery effect. A BomRegistered event adds the source
+        and reviewed application decisions, never stock or future manufacturing
+        events. Every emitted snapshot requires fresh RDF/SHACL/Neo4j validation.
         """
         with self.db.connect() as conn:
             scopes = conn.execute("SELECT DISTINCT company_id,run_id FROM service_snapshots ORDER BY company_id,run_id").fetchall()
@@ -121,7 +275,7 @@ class LedgerReader:
                     (company, run),
                 ).fetchone()
                 events = conn.execute(
-                    "SELECT event_id,ledger_version,event_type,payload,document_id FROM ledger_events WHERE company_id=%s AND ledger_version>%s ORDER BY ledger_version",
+                    "SELECT event_id,ledger_version,event_type,payload,document_id,bom_document_id,recorded_at FROM ledger_events WHERE company_id=%s AND ledger_version>%s ORDER BY ledger_version",
                     (company, previous["ledger_version"]),
                 ).fetchall()
                 expected = previous["ledger_version"] + 1
@@ -129,20 +283,23 @@ class LedgerReader:
                 for event in events:
                     if event["ledger_version"] != expected:
                         raise ServiceError("LEDGER_EVENT_GAP")
-                    if event["event_type"] != "EvidenceDocumentPosted" or event["document_id"] is None:
+                    if event["event_type"] == "BomRegistered" and event["document_id"] is None and event["bom_document_id"] is not None:
+                        snapshot = apply_bom_event(previous["payload"], event)
+                    elif event["event_type"] == "EvidenceDocumentPosted" and event["document_id"] is not None:
+                        event_payload = event["payload"]
+                        if (event_payload.get("event_type") != "EvidenceDocumentPosted" or event_payload.get("company_id") != company
+                                or event_payload.get("ledger_version") != expected
+                                or event_payload.get("content", {}).get("kind") != "evidence_note"):
+                            raise ServiceError("LEDGER_EVENT_CONTRACT_INVALID")
+                        snapshot = deepcopy(previous["payload"])
+                        snapshot["metadata"]["server_ledger_version"] = expected
+                        snapshot["metadata"]["last_document_event"] = {
+                            "event_id": str(event["event_id"]), "document_id": str(event["document_id"]),
+                            "document_version": event_payload["document_version"], "payload_hash": event_payload["payload_hash"],
+                            "effect": "EVIDENCE_NOTE_ONLY", "business_facts_changed": False,
+                        }
+                    else:
                         raise ServiceError("UNSUPPORTED_LEDGER_EVENT")
-                    event_payload = event["payload"]
-                    if (event_payload.get("event_type") != "EvidenceDocumentPosted" or event_payload.get("company_id") != company
-                            or event_payload.get("ledger_version") != expected
-                            or event_payload.get("content", {}).get("kind") != "evidence_note"):
-                        raise ServiceError("LEDGER_EVENT_CONTRACT_INVALID")
-                    snapshot = deepcopy(previous["payload"])
-                    snapshot["metadata"]["server_ledger_version"] = expected
-                    snapshot["metadata"]["last_document_event"] = {
-                        "event_id": str(event["event_id"]), "document_id": str(event["document_id"]),
-                        "document_version": event_payload["document_version"], "payload_hash": event_payload["payload_hash"],
-                        "effect": "EVIDENCE_NOTE_ONLY", "business_facts_changed": False,
-                    }
                     conn.execute(
                         "INSERT INTO service_snapshots(company_id,run_id,ledger_version,source_hash,content_hash,payload) VALUES (%s,%s,%s,%s,%s,%s)",
                         (company, run, expected, previous["source_hash"], _import_hash(snapshot), Jsonb(snapshot)),

@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
@@ -13,6 +13,9 @@ import psycopg
 
 from dev.preview_server import CSP, REPO_ROOT, STATIC_FILES, PreviewServer, PreviewUnavailable
 from service.contracts import Contract, CreateDocument, DocumentAction, ReviseDocument
+from service.bom import BomService
+from service.bom_contracts import BomCreate, BomRevise, BomReview
+from service.bom_runner import BomRunner
 from service.domain import DomainService
 from service.errors import ServiceError
 from service.gateway import EvidenceRef, ExecutionBudget, ToolContext, ToolGateway, ToolOutput, ToolSpec
@@ -37,17 +40,19 @@ class Snapshot(Contract):
 
 
 def create_app(db, *, private_root: str, origin="http://127.0.0.1:8870", dev_mode=False,
-               reference_preview=False, catalog=None,projector=None):
+               reference_preview=False, catalog=None,projector=None,bom_runner=None):
     parsed=urlsplit(origin)
     if parsed.scheme != "http" or parsed.hostname not in {"localhost","127.0.0.1"} or parsed.username or parsed.password or not parsed.port or parsed.path or parsed.query or parsed.fragment:
         raise ServiceError("LOCAL_ORIGIN_REQUIRED",503)
     identity=IdentityService(db,enabled=dev_mode)
     ledger=LedgerReader(db,identity)
     domain=DomainService(db,identity)
+    bom=BomService(db,identity,private_root,bom_runner or BomRunner())
     catalog=catalog or OntologyCatalog.from_private_root(private_root)
     ontology=ontology_view(catalog)
     app=FastAPI(title="Ontologics local MK-S2 service",docs_url=None,redoc_url=None,openapi_url=None)
     app.state.identity,app.state.ledger,app.state.domain=identity,ledger,domain
+    app.state.bom=bom
     app.state.catalog=catalog
 
     def error_response(code,status):
@@ -151,6 +156,34 @@ def create_app(db, *, private_root: str, origin="http://127.0.0.1:8870", dev_mod
 
     gateway.register(ToolSpec("ledger.snapshot","ledger.read",False,Snapshot,snapshot_handler))
     gateway.register(ToolSpec("ledger.query","query.read",False,Query,query_handler))
+
+    class BomRevisionCall(BomRevise):
+        bom_id: str = Field(min_length=1, max_length=100)
+
+    class BomReviewCall(BomReview):
+        bom_id: str = Field(min_length=1, max_length=100)
+
+    class BomActionCall(DocumentAction):
+        bom_id: str = Field(min_length=1, max_length=100)
+
+    def bom_handler(action, model):
+        def execute(actor,args,ctx):
+            values=args.model_dump()
+            identifier=values.pop("bom_id",None)
+            body=model.model_validate(values)
+            method=getattr(bom,action)
+            result=method(actor,actor.company_id,body) if action=="create" else method(actor,actor.company_id,identifier,body)
+            return ToolOutput(data=result,snapshot=ctx,evidence_refs=[])
+        return execute
+
+    for action,model,input_model,permission in (
+        ("create",BomCreate,BomCreate,"document.create"),
+        ("revise",BomRevise,BomRevisionCall,"document.update"),
+        ("review",BomReview,BomReviewCall,"document.review"),
+        ("approve",DocumentAction,BomActionCall,"document.approve"),
+        ("post",DocumentAction,BomActionCall,"document.post"),
+    ):
+        gateway.register(ToolSpec("bom."+action,permission,True,input_model,bom_handler(action,model)))
     app.state.gateway=gateway
 
     @app.get("/health")
@@ -243,6 +276,53 @@ def create_app(db, *, private_root: str, origin="http://127.0.0.1:8870", dev_mod
     def get_operation(request:Request,operation_id:str):
         actor=principal(request)
         return domain.operation(actor,actor.company_id,operation_id)
+
+    @app.get("/api/mks2/bom/sources")
+    def bom_sources(request:Request):
+        return bom.sources(principal(request))
+
+    @app.get("/api/mks2/bom/documents")
+    def bom_documents(request:Request):
+        actor=principal(request)
+        return {"documents":bom.list(actor,actor.company_id)}
+
+    def execute_bom(request,action,body,bom_id=None):
+        actor=principal(request,write=True)
+        payload=ledger.read(actor)
+        ctx=context(actor,payload)
+        args=body.model_dump()
+        if bom_id is not None:args["bom_id"]=bom_id
+        return gateway.execute("bom."+action,args,principal=actor,context=ctx,
+                               budget=ExecutionBudget(ctx.execution_id,max_tool_calls=1)).data
+
+    @app.post("/api/mks2/bom/documents")
+    def create_bom(request:Request,body:BomCreate):
+        return execute_bom(request,"create",body)
+
+    @app.get("/api/mks2/bom/documents/{bom_id}")
+    def get_bom(request:Request,bom_id:str):
+        actor=principal(request)
+        return bom.get(actor,actor.company_id,bom_id)
+
+    @app.get("/api/mks2/bom/documents/{bom_id}/source")
+    def get_bom_source(request:Request,bom_id:str):
+        actor=principal(request)
+        filename,data=bom.source_bytes(actor,actor.company_id,bom_id)
+        return Response(data,media_type="application/octet-stream",
+                        headers={"Content-Disposition":"attachment; filename*=UTF-8''"+quote(filename,safe="")})
+
+    @app.post("/api/mks2/bom/documents/{bom_id}/revise")
+    def revise_bom(request:Request,bom_id:str,body:BomRevise):
+        return execute_bom(request,"revise",body,bom_id)
+
+    @app.post("/api/mks2/bom/documents/{bom_id}/review")
+    def review_bom(request:Request,bom_id:str,body:BomReview):
+        return execute_bom(request,"review",body,bom_id)
+
+    @app.post("/api/mks2/bom/documents/{bom_id}/{action}")
+    def act_bom(request:Request,bom_id:str,action:str,body:DocumentAction):
+        if action not in {"approve","post"}:raise ServiceError("ACTION_NOT_ALLOWED",404)
+        return execute_bom(request,action,body,bom_id)
 
     @app.get("/api/preview")
     def preserved_preview():

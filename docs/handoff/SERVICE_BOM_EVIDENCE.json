@@ -1,0 +1,567 @@
+{
+  "evidence_id": "SERVICE-BOM-20261108",
+  "date": "2026-11-08",
+  "branch": "codex/mks2-bom-integration",
+  "base_commit": "cc1460623e51e34324854f5e4aae89e685a6aad8",
+  "code_sha256": {
+    "dev/build_bom_runner.py": "8aa702ef1f9c2a186039568e7bc6d80d6aafd2465ea750e9ad9d2e4ac0140397",
+    "dev/check_bom_ui.mjs": "709918dcf7571ed68f41e446325d1052c34000076041d3b960b2b7dc093aa490",
+    "dev/check_service_ui.mjs": "53a9db2712e7419f58d6b8686b82d282d3731ae42d73042e159e713cfc65b181",
+    "dev/preview_server.py": "bd117ca84b624893515b6aa4fc2bfd609fb301beacec1dfee9d23fd79fb86556",
+    "migrations/004_bom.sql": "aed5295f09e609ebe0ab0bbd62bf51ebded60da639dd8489205d8967cf963d22",
+    "runner/bom/Dockerfile": "506d16eac51dec2de5d46bdc8a9e7c87b0ed7a7132cedd68ddc1bcd454168eff",
+    "runner/bom/parse.py": "f1dc2331fe84950b93cb5a7f129a1895f05a4a33ca980224ba669ae1264ffe9a",
+    "runner/bom/probe.py": "c3d25e89166834bf0085115e0632804fabcc2c89657372c92627e89d872b9d08",
+    "runner/bom/requirements.lock": "7154e7113683495ffa96abd05d7947bdc65d33d0aa980757fa94e1f4f2feef5f",
+    "service/bom.py": "41dee68ab8db6e9a7cbb2942af0695287ca8eaed72e97c62221ea448caae681a",
+    "service/bom_contracts.py": "17aab029a3197325ba30b77c3f5ea5f5acc4e12ac79fca9956599aebaec21b32",
+    "service/bom_runner.py": "aab7e006f5693fd42cdf50a74babc854cac0d7fa89d5ce83420221375adf440f",
+    "service/ledger.py": "53d4b2900ac916e011e1876eb90662efdcc395a32c6ea2f1e7a2475adb88e0b1",
+    "service/main.py": "09ef181ee44f51c990cfa2d58ecd59d13640cddd0abd3f11798e9a9b22b18a09",
+    "service/materials.py": "d3769df176127e74bd7c2b23f7d9a3d01f2e98ea1dc5054550207dc81c26ccb9",
+    "service/views.py": "dea8e496b869e462d326adab69a075ba62ae96d8543db7828d69b4d2e2fedd52",
+    "tests/test_bom.py": "937a7af59f5d6ba536c1eb25d39215c14c6cf4e08d62c4b16d1561008f347a21",
+    "tests/test_bom_api.py": "a70a782c947ce099691ab2f19808f595a68b36989071e85847c2ccfd68a37235",
+    "tests/test_bom_projection.py": "0911093a6397cd66e7e63de3dafa775d82bca0b09c3f9571ee89329058c61213",
+    "tests/test_bom_runner.py": "fdb1d816daeb32090caec54ec12346c5241c4ee858eaf1f1565e9a92e3815669",
+    "tests/test_materials.py": "d84d71dd2edf7811d4d8046b620966444f140306c0ffc1e1dae8f166dcc7c5a2",
+    "web/mks2/app.js": "6efdfc73072dc994fde1e7576c39cc35fecd2d6727e9df6ea7da132ecb0d435d",
+    "web/mks2/bom.js": "58168a67bfe8df0f2f09d8d1caeecb81714e46784763ad5652b5b882dca9da64",
+    "web/mks2/dashboard.css": "99f8cafd860b851644cba97cb1f4bfce412cbeb7863f76527d7e03372a62dd58",
+    "web/mks2/dashboard.js": "4d83b6bd8cdd613928460c65ca543c6d97ee3597761fe288ac84f9abc15968c5",
+    "web/shell.html": "9faf3893f8c8315b91be6cfe5357414ccbff19e4768a3f543adebac7e987b48c"
+  },
+  "environment": {
+    "os": "Linux Cloud",
+    "postgresql": "17, existing service and isolated test schemas",
+    "neo4j": "5.26, existing service and isolated test scopes",
+    "browser": "Chromium via local CDP",
+    "mac_execution": "NOT_RUN"
+  },
+  "suite": {
+    "command": ".venv/bin/python dev/verify_service.py --runtime-file <private-runtime>",
+    "required_environment": [
+      "PRIVATE_INPUT_ROOT",
+      "TEST_NEO4J_URI",
+      "TEST_NEO4J_PASSWORD",
+      "ONTO_BOM_RUNNER_IMAGE"
+    ],
+    "total": 174,
+    "passed": 173,
+    "failed": 0,
+    "skipped": 1,
+    "skip_reason": "RUNNER_ENFORCEMENT_UNAVAILABLE: actual resource enforcement unavailable on Cloud Docker",
+    "log_sha256": "420765b56667f7038f047de02d48c9211e03bcf9573b9e8ab7a794491b76a099"
+  },
+  "browser": [
+    {
+      "evidence_id": "SERVICE-BOM-20261108-ui",
+      "scope": "isolated synthetic BOM workflow and aggregate shortage",
+      "passed": 37,
+      "failed": 0,
+      "report_sha256": "8b26497a48495f5648bfd68f7ae5fb9d55a9c15ce0e6ee294fd40ace89938550",
+      "checks": [
+        {
+          "name": "EXISTING_DRAWER_WIDTH_PRESERVED",
+          "status": "PASS"
+        },
+        {
+          "name": "ALL_EIGHT_BOM_STAGES_PRESERVED",
+          "status": "PASS"
+        },
+        {
+          "name": "RUNNER_READY_INTAKE_ENABLED",
+          "status": "PASS"
+        },
+        {
+          "name": "INTAKE_CALLED_REAL_SERVER",
+          "status": "PASS"
+        },
+        {
+          "name": "ALL_SOURCE_ROWS_RENDERED",
+          "status": "PASS"
+        },
+        {
+          "name": "EXPECTED_SOURCE_COVERAGE",
+          "status": "PASS"
+        },
+        {
+          "name": "SOURCE_CELLS_KEPT_AS_TEXT",
+          "status": "PASS"
+        },
+        {
+          "name": "STAGE_NAVIGATION_DOES_NOT_WRITE",
+          "status": "PASS"
+        },
+        {
+          "name": "SELF_REVIEW_AND_APPROVAL_DISABLED",
+          "status": "PASS"
+        },
+        {
+          "name": "ROW_DECISIONS_STAGED_WITHOUT_SERVER_WRITE",
+          "status": "PASS"
+        },
+        {
+          "name": "REVISION_PRESERVES_ALL_ROWS",
+          "status": "PASS"
+        },
+        {
+          "name": "ACCOUNT_SWITCH_REMOVES_OLD_DRAWER",
+          "status": "PASS"
+        },
+        {
+          "name": "OTHER_REVIEWER_CAN_REVIEW",
+          "status": "PASS"
+        },
+        {
+          "name": "REVIEW_PERSISTED_BEFORE_APPROVAL",
+          "status": "PASS"
+        },
+        {
+          "name": "APPROVAL_NOT_POSTING",
+          "status": "PASS"
+        },
+        {
+          "name": "EXACT_APPROVED_BOM_POSTED",
+          "status": "PASS"
+        },
+        {
+          "name": "ALL_REQUIREMENT_ROWS_RENDERED",
+          "status": "PASS"
+        },
+        {
+          "name": "SYNTHETIC_UNRESOLVED_ROWS_PRESERVED",
+          "status": "PASS"
+        },
+        {
+          "name": "SYNTHETIC_SAME_ITEM_ROWS_AGGREGATED_ONCE",
+          "status": "PASS"
+        },
+        {
+          "name": "SYNTHETIC_TARGET_REQUIREMENT_AND_SHORTAGE",
+          "status": "PASS"
+        },
+        {
+          "name": "SYNTHETIC_PLANNED_REQUIREMENT_AND_SHORTAGE",
+          "status": "PASS"
+        },
+        {
+          "name": "TARGET_TABLE_MATCHES_AGGREGATE_SERVER_VALUES",
+          "status": "PASS"
+        },
+        {
+          "name": "SOURCE_ARITHMETIC_MARKED_CONDITIONAL",
+          "status": "PASS"
+        },
+        {
+          "name": "UNKNOWN_NOT_DISPLAYED_AS_ZERO",
+          "status": "PASS"
+        },
+        {
+          "name": "RAW_REVIEW_DETAILS_START_COLLAPSED",
+          "status": "PASS"
+        },
+        {
+          "name": "CALCULATION_SCOPE_FROM_SERVER",
+          "status": "PASS"
+        },
+        {
+          "name": "MATERIAL_EVIDENCE_OPENS_ITS_POSTED_BOM",
+          "status": "PASS"
+        },
+        {
+          "name": "MATERIAL_EVIDENCE_OPENS_EXACT_ROW",
+          "status": "PASS"
+        },
+        {
+          "name": "UNSUPPORTED_SOURCE_VERIFIED_CHOICE_EXCLUDED",
+          "status": "PASS"
+        },
+        {
+          "name": "PLAN_BASIS_LABELLED_ASSUMPTION",
+          "status": "PASS"
+        },
+        {
+          "name": "PLANNED_TABLE_MATCHES_AGGREGATE_SERVER_VALUES",
+          "status": "PASS"
+        },
+        {
+          "name": "ALL_LEDGER_NODES_PRESERVED",
+          "status": "PASS"
+        },
+        {
+          "name": "FULL_ONTOLOGY_PRESERVED",
+          "status": "PASS"
+        },
+        {
+          "name": "TABLET_LAYOUT_CONTAINED",
+          "status": "PASS"
+        },
+        {
+          "name": "NO_PREVIEW_FIXTURE_REQUESTS",
+          "status": "PASS"
+        },
+        {
+          "name": "NO_EXTERNAL_NETWORK_REQUESTS",
+          "status": "PASS"
+        },
+        {
+          "name": "NO_BROWSER_EXCEPTIONS",
+          "status": "PASS"
+        }
+      ]
+    },
+    {
+      "evidence_id": "SERVICE-BOM-20261108-ui-read",
+      "scope": "posted synthetic BOM readback",
+      "passed": 28,
+      "failed": 0,
+      "report_sha256": "c2ec1a24ff064ebb7ae107f57e77a1fc4da51519e12ada3b94284de1a1bccb10",
+      "checks": [
+        {
+          "name": "EXISTING_DRAWER_WIDTH_PRESERVED",
+          "status": "PASS"
+        },
+        {
+          "name": "ALL_EIGHT_BOM_STAGES_PRESERVED",
+          "status": "PASS"
+        },
+        {
+          "name": "ALL_SOURCE_ROWS_RENDERED",
+          "status": "PASS"
+        },
+        {
+          "name": "EXPECTED_SOURCE_COVERAGE",
+          "status": "PASS"
+        },
+        {
+          "name": "SOURCE_CELLS_KEPT_AS_TEXT",
+          "status": "PASS"
+        },
+        {
+          "name": "STAGE_NAVIGATION_DOES_NOT_WRITE",
+          "status": "PASS"
+        },
+        {
+          "name": "ALL_REQUIREMENT_ROWS_RENDERED",
+          "status": "PASS"
+        },
+        {
+          "name": "SYNTHETIC_UNRESOLVED_ROWS_PRESERVED",
+          "status": "PASS"
+        },
+        {
+          "name": "SYNTHETIC_SAME_ITEM_ROWS_AGGREGATED_ONCE",
+          "status": "PASS"
+        },
+        {
+          "name": "SYNTHETIC_TARGET_REQUIREMENT_AND_SHORTAGE",
+          "status": "PASS"
+        },
+        {
+          "name": "SYNTHETIC_PLANNED_REQUIREMENT_AND_SHORTAGE",
+          "status": "PASS"
+        },
+        {
+          "name": "TARGET_TABLE_MATCHES_AGGREGATE_SERVER_VALUES",
+          "status": "PASS"
+        },
+        {
+          "name": "SOURCE_ARITHMETIC_MARKED_CONDITIONAL",
+          "status": "PASS"
+        },
+        {
+          "name": "UNKNOWN_NOT_DISPLAYED_AS_ZERO",
+          "status": "PASS"
+        },
+        {
+          "name": "RAW_REVIEW_DETAILS_START_COLLAPSED",
+          "status": "PASS"
+        },
+        {
+          "name": "CALCULATION_SCOPE_FROM_SERVER",
+          "status": "PASS"
+        },
+        {
+          "name": "MATERIAL_EVIDENCE_OPENS_ITS_POSTED_BOM",
+          "status": "PASS"
+        },
+        {
+          "name": "MATERIAL_EVIDENCE_OPENS_EXACT_ROW",
+          "status": "PASS"
+        },
+        {
+          "name": "UNSUPPORTED_SOURCE_VERIFIED_CHOICE_EXCLUDED",
+          "status": "PASS"
+        },
+        {
+          "name": "PLAN_BASIS_LABELLED_ASSUMPTION",
+          "status": "PASS"
+        },
+        {
+          "name": "PLANNED_TABLE_MATCHES_AGGREGATE_SERVER_VALUES",
+          "status": "PASS"
+        },
+        {
+          "name": "ALL_LEDGER_NODES_PRESERVED",
+          "status": "PASS"
+        },
+        {
+          "name": "FULL_ONTOLOGY_PRESERVED",
+          "status": "PASS"
+        },
+        {
+          "name": "TABLET_LAYOUT_CONTAINED",
+          "status": "PASS"
+        },
+        {
+          "name": "NO_PREVIEW_FIXTURE_REQUESTS",
+          "status": "PASS"
+        },
+        {
+          "name": "NO_EXTERNAL_NETWORK_REQUESTS",
+          "status": "PASS"
+        },
+        {
+          "name": "NO_BROWSER_EXCEPTIONS",
+          "status": "PASS"
+        },
+        {
+          "name": "NO_BOM_MUTATIONS_IN_READ_ONLY_RUN",
+          "status": "PASS"
+        }
+      ]
+    },
+    {
+      "evidence_id": "SERVICE-BOM-20261108-ui-blocked",
+      "scope": "actual Runner fail-closed, no source registration",
+      "passed": 14,
+      "failed": 0,
+      "report_sha256": "907fb7fdfa3c072f59a3a823ea9431525e1a31ec8ada404daf350fc4fadf7d67",
+      "checks": [
+        {
+          "name": "EXISTING_DRAWER_WIDTH_PRESERVED",
+          "status": "PASS"
+        },
+        {
+          "name": "ALL_EIGHT_BOM_STAGES_PRESERVED",
+          "status": "PASS"
+        },
+        {
+          "name": "RUNNER_ENFORCEMENT_FAILS_CLOSED",
+          "status": "PASS"
+        },
+        {
+          "name": "BLOCKED_RUNNER_INTAKE_DISABLED",
+          "status": "PASS"
+        },
+        {
+          "name": "BLOCKED_RUNNER_REASON_VISIBLE",
+          "status": "PASS"
+        },
+        {
+          "name": "NO_DOCUMENT_CREATED_ON_BLOCKED_RUNNER",
+          "status": "PASS"
+        },
+        {
+          "name": "BLOCKED_RUNNER_HAS_NO_FAKE_ROWS",
+          "status": "PASS"
+        },
+        {
+          "name": "ALL_LEDGER_NODES_PRESERVED",
+          "status": "PASS"
+        },
+        {
+          "name": "FULL_ONTOLOGY_PRESERVED",
+          "status": "PASS"
+        },
+        {
+          "name": "TABLET_LAYOUT_CONTAINED",
+          "status": "PASS"
+        },
+        {
+          "name": "NO_PREVIEW_FIXTURE_REQUESTS",
+          "status": "PASS"
+        },
+        {
+          "name": "NO_EXTERNAL_NETWORK_REQUESTS",
+          "status": "PASS"
+        },
+        {
+          "name": "NO_BROWSER_EXCEPTIONS",
+          "status": "PASS"
+        },
+        {
+          "name": "NO_BOM_MUTATIONS_IN_READ_ONLY_RUN",
+          "status": "PASS"
+        }
+      ]
+    },
+    {
+      "evidence_id": "SERVICE-BOM-20261108-ui-regression",
+      "scope": "existing service UI regression",
+      "passed": 27,
+      "failed": 0,
+      "report_sha256": "dbccd85d5851d0f80385fca3efd9dad0be84f2081dc881591d0d92ca0b2cbbc4",
+      "checks": [
+        {
+          "name": "SERVER_CONNECTED",
+          "status": "PASS"
+        },
+        {
+          "name": "ORIGINAL_GRAPH_PANEL_WIDTH",
+          "status": "PASS"
+        },
+        {
+          "name": "ALL_CURRENT_NODES_RENDERED",
+          "status": "PASS"
+        },
+        {
+          "name": "SUGGESTION_ONLY_FILLS_DRAFT",
+          "status": "PASS"
+        },
+        {
+          "name": "LIVE_DOMAIN_QUERY_SENT",
+          "status": "PASS"
+        },
+        {
+          "name": "VERSIONED_QUERY_EVIDENCE",
+          "status": "PASS"
+        },
+        {
+          "name": "EVIDENCE_OPENS_DETAIL",
+          "status": "PASS"
+        },
+        {
+          "name": "REFRESH_PRESERVES_PRIOR_ANSWERS",
+          "status": "PASS"
+        },
+        {
+          "name": "FULL_ONTOLOGY_NOT_TRUNCATED",
+          "status": "PASS"
+        },
+        {
+          "name": "SCHEMA_COUNTS_MATCH_API",
+          "status": "PASS"
+        },
+        {
+          "name": "ORIGINAL_DASHBOARD_PANEL_WIDTH",
+          "status": "PASS"
+        },
+        {
+          "name": "NO_NULL_QUANTITIES",
+          "status": "PASS"
+        },
+        {
+          "name": "ALL_REGISTER_ENTITIES_RENDERED",
+          "status": "PASS"
+        },
+        {
+          "name": "ORIGINAL_BOM_DRAWER_WIDTH",
+          "status": "PASS"
+        },
+        {
+          "name": "BOM_ROWS_MATCH_AUTHORIZED_SERVER_DOCUMENT",
+          "status": "PASS"
+        },
+        {
+          "name": "RESET_ONLY_UI",
+          "status": "PASS"
+        },
+        {
+          "name": "DARK_THEME",
+          "status": "PASS"
+        },
+        {
+          "name": "TABLET_NO_HORIZONTAL_OVERFLOW",
+          "status": "PASS"
+        },
+        {
+          "name": "ACCOUNT_SWITCH_CLEARS_OLD_CONTEXT",
+          "status": "PASS"
+        },
+        {
+          "name": "SESSION_COOKIE_NOT_SCRIPT_READABLE",
+          "status": "PASS"
+        },
+        {
+          "name": "SHARED_COOKIE_SWITCH_INVALIDATES_OLD_VIEW",
+          "status": "PASS"
+        },
+        {
+          "name": "EQUAL_VERSION_UNREADY_PROJECTION_BLOCKED",
+          "status": "PASS"
+        },
+        {
+          "name": "IDENTITY_REVOCATION_RESPONSE_CLEARS_UI",
+          "status": "PASS"
+        },
+        {
+          "name": "LOGOUT_CLEARS_UI_AND_SERVER_SESSION",
+          "status": "PASS"
+        },
+        {
+          "name": "NO_PREVIEW_FIXTURE_REQUESTS",
+          "status": "PASS"
+        },
+        {
+          "name": "NO_EXTERNAL_REQUESTS",
+          "status": "PASS"
+        },
+        {
+          "name": "NO_BROWSER_EXCEPTIONS",
+          "status": "PASS"
+        }
+      ]
+    }
+  ],
+  "preservation": {
+    "original_ui_baseline": "b3ee599",
+    "original_ui_files_unchanged": 7,
+    "original_ledger_tables_unchanged": [
+      "ledger_state",
+      "ledger_events",
+      "service_snapshots",
+      "opening_imports",
+      "documents",
+      "outbox"
+    ],
+    "ledger_events_comparison": "excluding newly added nullable bom_document_id column",
+    "backup_created_before_changes": true,
+    "migration_count": 4,
+    "health": "ok",
+    "actual_bom_documents": 0,
+    "full_ontology": {
+      "classes": 52,
+      "relations": 74,
+      "shapes": 79
+    }
+  },
+  "actual_bom": {
+    "status": "BLOCKED",
+    "reason": "RUNNER_ENFORCEMENT_UNAVAILABLE",
+    "parsed": 0,
+    "registered": 0,
+    "posted": 0,
+    "shortage_validation": "NOT_RUN",
+    "source_intake_rejection": "raw byte/hash check succeeded; Runner rejected before parse; isolated DB document/source/event/outbox counts unchanged",
+    "technical_approval": "NOT_RUN"
+  },
+  "synthetic_calculation": {
+    "source_rows": 4,
+    "conditional_rows": 2,
+    "unresolved_rows_preserved": 2,
+    "aggregated_items": 1,
+    "quantity_per_unit": "3",
+    "target": "40",
+    "required": "120",
+    "available": "20",
+    "shortage": "100",
+    "planned_input": "43",
+    "planned_required": "129",
+    "planned_shortage": "109",
+    "scope": "generated source and explicit synthetic parser double; actual PostgreSQL/Neo4j; not real BOM acceptance"
+  },
+  "model_calls": 0,
+  "private_evidence": "Raw files, normalized content, DB backup, captures, runtime settings and detailed logs remain outside Git."
+}

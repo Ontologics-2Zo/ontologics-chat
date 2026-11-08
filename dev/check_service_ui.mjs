@@ -96,9 +96,10 @@ try {
   check('ALL_REGISTER_ENTITIES_RENDERED', await evaluate("(async()=>{const session=await (await fetch('/api/mks2/session')).json();const response=await fetch('/api/mks2/snapshot',{headers:{'X-Identity-Revision':session.principal.identity_revision}});const data=await response.json();return document.querySelectorAll('[data-register=entities] tbody tr').length===data.entities.length})()"));
   await shot('ledger-dashboard');
   await click('#dashboard-stage [data-action="bom"]');
+  await until("document.querySelector('.mk-drawer')?.getAttribute('aria-busy')==='false' && document.querySelector('[data-bom-step]')");
   check('ORIGINAL_BOM_DRAWER_WIDTH', await evaluate("document.querySelector('.mk-drawer').getBoundingClientRect().width===760"));
   await click('[data-bom-step="2"]');
-  check('NO_FAKE_BOM_EXECUTION', await evaluate("document.querySelector('.mk-drawer').textContent.includes('실행 결과가 없습니다') && !document.querySelector('.mk-drawer').textContent.includes('참조 결과')"));
+  check('BOM_ROWS_MATCH_AUTHORIZED_SERVER_DOCUMENT', await evaluate("(async()=>{const session=await(await fetch('/api/mks2/session')).json();const payload=await(await fetch('/api/mks2/bom/documents',{headers:{'X-Identity-Revision':session.principal.identity_revision}})).json();const selected=document.querySelector('[data-bom-field=document]')?.value;const doc=payload.documents.find(row=>row.id===selected);return document.querySelectorAll('[data-bom-table=source] tbody tr').length===(doc?.content.rows.length||0)&&!document.querySelector('.mk-drawer').textContent.includes('참조 결과');})()"));
   await click('.mk-drawer .mk-btn[data-close]');
   await click('#tab-graph'); await click('#reset');
   check('RESET_ONLY_UI', await evaluate("document.querySelector('#versions').textContent.includes('서버 연결') && document.querySelector('#graph-panel .answer')===null"));
@@ -132,7 +133,9 @@ try {
   await until("document.querySelector('#load-state')?.textContent.includes('세션을 종료했습니다')");
   check('LOGOUT_CLEARS_UI_AND_SERVER_SESSION', await evaluate("(async()=>{const state=await (await fetch('/api/mks2/session')).json();return !state.authenticated && document.querySelectorAll('.mks-node').length===0 && document.querySelector('#graph-panel').textContent===''})()"));
   check('NO_PREVIEW_FIXTURE_REQUESTS', requests.every(r => !r.url.includes('/api/preview')));
-  check('NO_EXTERNAL_REQUESTS', requests.every(r => r.url.startsWith(new URL(base).origin) || r.url === 'about:blank'));
+  // Managed Chromium injects an extension cursor image independently of the app.
+  report.browser_extension_assets = requests.filter(r => new URL(r.url).protocol === 'chrome-extension:').length;
+  check('NO_EXTERNAL_REQUESTS', requests.every(r => new URL(r.url).origin === new URL(base).origin || new URL(r.url).protocol === 'chrome-extension:' || r.url === 'about:blank'));
   check('NO_BROWSER_EXCEPTIONS', exceptions.length === 0);
   report.status = 'PASS';
 } catch (error) {

@@ -1,8 +1,8 @@
 # 로컬 실행과 Codex Cloud 환경 안내
 
-2026-11-08 갱신. 이번 PR 병합 후 `main`을 기준으로 사용하는 **INITIAL 원장 조회 서비스** 실행 안내다. 작업 브랜치는 `codex/mks2-ui-tabs`이며 병합 상태는 GitHub PR에서 확인한다. 과거 저장소 초기화·T00~T01 준비·환경 Publish 절차는 현재 로컬 실행 절차가 아니다. Cloud 환경 Publish는 로컬 실행에 필요하지 않다.
+2026-11-08 갱신. 초기 원장 서비스는 PR #1로 `main`에 병합됐다. 후속 실제 BOM 등록·소요 조회는 `codex/mks2-bom-integration`에서 진행하며, 실행하려는 코드가 main에 포함됐는지 GitHub PR에서 확인한다. 과거 저장소 초기화·T00~T01 준비·환경 Publish 절차는 현재 로컬 실행 절차가 아니다. Cloud 환경 Publish는 로컬 실행에 필요하지 않다.
 
-Linux Cloud 검증은 [실행 기록](SERVICE-INITIAL-20261108.md)을 따른다. 아래 Mac 절차는 현재 코드에 맞춘 안내이며 **Apple Silicon Mac 실기 실행은 NOT_RUN**이다. 실제 BOM·구매·Agent·모델·전체 CQ 완료를 의미하지 않는다.
+Linux Cloud의 초기 조회 검증은 [INITIAL 실행 기록](SERVICE-INITIAL-20261108.md), BOM 실행은 [BOM 실행 기록](SERVICE-BOM-20261108.md)을 따른다. 아래 Mac 절차는 코드에 맞춘 안내이며 이 Cloud 작업에서 **사용자 Mac 실기 실행은 NOT_RUN**이다. 구매·Agent·모델·전체 CQ 완료를 의미하지 않는다.
 
 ## 1. Mac에서 준비할 것
 
@@ -14,7 +14,7 @@ Linux Cloud 검증은 [실행 기록](SERVICE-INITIAL-20261108.md)을 따른다.
 
 ## 2. 코드 받기
 
-이번 PR 병합 후에는 `main`에서 받는다. 처음 받는 경우:
+초기 원장 서비스를 처음 받는 경우:
 
 ```bash
 git clone --branch main https://github.com/Ontologics-2Zo/ontologics-chat.git
@@ -29,7 +29,14 @@ git switch main
 git pull --ff-only origin main
 ```
 
-이하 명령은 저장소 루트에서 실행한다.
+후속 BOM 기능은 해당 PR이 병합되기 전에는 `main`에 없다. 작업 브랜치가 원격에 올라온 뒤 기능을 확인하려면 기존 변경을 보존한 상태에서 다음을 사용한다. 브랜치가 없다는 오류가 나면 PR/푸시 상태를 먼저 확인한다.
+
+```bash
+git fetch origin
+git switch codex/mks2-bom-integration
+```
+
+이하 명령은 선택한 저장소 루트에서 실행한다.
 
 ## 3. 비공개 입력과 영속 실행 설정
 
@@ -67,6 +74,25 @@ docker --host="unix://$ONTO_DOCKER_SOCKET" info --format '{{.ServerVersion}}'
 
 기본 포트는 PostgreSQL `55432`, Neo4j HTTP `57474`, Neo4j Bolt `57687`이다. 앱 실행기도 이 기본 DB 포트를 사용하므로 이 안내에서는 변경하지 않는다.
 
+## 4-1. 실제 BOM용 제한 Runner 준비
+
+BOM 기능이 포함된 코드에서만 수행한다. DB를 초기화하거나 비공개 입력을 Docker build context에 넣지 않는다. 빌드는 공개 `runner/` 코드로 제한되며 Runner 실행은 이미지 ID를 고정하고 네트워크·권한·입출력·시간/자원을 제한한다.
+
+```bash
+.venv/bin/python dev/build_bom_runner.py \
+  --docker-socket "$ONTO_DOCKER_SOCKET" \
+  --output "$ONTO_RUNTIME_DIR/bom-runner.json"
+```
+
+빌드 출력이 `runner: READY`, `enforcement: PASS`이고 저장된 metadata의 `ready`가 `true`여야 다음 설정과 실제 BOM 접수를 진행한다. `RUNNER_ENFORCEMENT_UNAVAILABLE`이면 Docker의 메모리·PID·CPU 제한이 지원되지 않은 것이므로 중단한다. 현재 Cloud에서 이 차단을 확인했으며 실제 원본은 파싱하지 않았다. 호스트 무제한 파싱으로 우회하지 않는다.
+
+```bash
+export ONTO_BOM_RUNNER_IMAGE="$(.venv/bin/python -c 'import json,sys; print(json.load(open(sys.argv[1]))["image_id"])' "$ONTO_RUNTIME_DIR/bom-runner.json")"
+export ONTO_BOM_DOCKER_SOCKET="$ONTO_DOCKER_SOCKET"
+```
+
+이 변수들을 설정한 같은 터미널에서 앱을 시작한다. 새 터미널이나 재시작 시 저장된 metadata의 같은 이미지 ID를 다시 읽는다. Runner 설정이 없거나 사용할 수 없으면 `RUNNER_UNAVAILABLE`이며 호스트 파서로 대체하지 않는다. CSV/ODS는 행 근거를 추출하고 텍스트 PDF는 텍스트 근거만 추출한다. PDF 텍스트 추출 성공을 구조화 BOM 검수 완료로 취급하지 않는다. 지원·실행 검증 범위는 최신 BOM 기록을 확인한다.
+
 ## 5. 앱 시작·접속
 
 ```bash
@@ -80,6 +106,8 @@ docker --host="unix://$ONTO_DOCKER_SOCKET" info --format '{{.ServerVersion}}'
 1. `현재 구현`은 보존된 참조 화면이다.
 2. `MK-S2`에서 개발 계정 **작성자 A** 또는 **검토자 B**를 선택한다. `다른 회사 G`는 다른 회사이므로 초기 원장을 보여주지 않는다.
 3. 원장/그래프 버전, 전체 온톨로지, 대시보드 수량, 추천 질문의 서버 근거 조회를 확인한다.
+4. BOM 기능을 사용하는 경우 드로어에서 원본을 접수하고 전체 행과 검토 결정을 확인한다. 작성자와 다른 검토 계정으로 정확 버전을 검토·승인한 뒤 원장에 반영한다. 승인과 반영은 별도 단계다.
+5. 반영 후 최신 원장을 조회해 소요·부족과 전체 행 coverage를 확인한다. 실제 원문, 합성 운영 잔액, 조건부 가정, 미확인 항목을 구분하며 구성 충돌·매핑·단위·재고 미확인을 임의 확정하지 않는다.
 
 `--import-initial`은 기초 사실을 빈 개발 원장에 반입한다. 같은 입력으로 재시작하면 기존 반입을 재사용하며, 변경 입력/기존 원장과 충돌하면 덮어쓰지 않고 중단한다. `--reference-preview`는 보존 탭용이다. MK-S2는 참조 fixture를 사용하지 않고 이 실행에는 실제 모델 호출이 없다.
 
@@ -107,6 +135,8 @@ docker --host="unix://$ONTO_DOCKER_SOCKET" stop ontologics-pg ontologics-neo4j
 | 표시 | 확인할 것 |
 |---|---|
 | `LOCAL_DOCKER_SOCKET_UNAVAILABLE` / `LOCAL_DOCKER_UNAVAILABLE` | Docker Desktop 실행과 실제 소켓 경로 확인 |
+| `RUNNER_ENFORCEMENT_UNAVAILABLE` | Docker 메모리·PID·CPU 제한 지원이 필요. 지원되는 실행 환경에서 probe를 다시 통과한 뒤 실제 원본 접수 |
+| `RUNNER_UNAVAILABLE` / Runner 이미지 오류 | 명시적 로컬 Docker 소켓·빌드한 이미지 ID·Runner 환경변수 확인. 호스트 파싱으로 우회하지 않음 |
 | `PRIVATE_INPUT_UNAVAILABLE` / `INITIAL_SOURCE_*` / schema 오류 | 전체 원본·manifest 위치 확인. `.env`는 자동 로드되지 않으므로 `export` 사용 |
 | `EXISTING_CONTAINER_REQUIRES_ORIGINAL_RUNTIME_FILE` / `EXISTING_VOLUME_REQUIRES_ORIGINAL_RUNTIME_FILE` | 기존 DB에 사용한 원래 runtime 파일 지정. 삭제·새 비밀번호로 덮어쓰기 금지 |
 | `EXISTING_CONTAINER_*_MISMATCH` | 같은 이름의 기존 컨테이너가 다른 구성인지 확인. 자동 삭제하지 않음 |
