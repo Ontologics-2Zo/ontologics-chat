@@ -281,6 +281,38 @@ class ServiceApiIntegrationTests(unittest.TestCase):
         stale = self.client.post("/api/mks2/query", json={"question": "납품", "ledger_version": 1}, headers=self.headers(original))
         self.assertIn(stale.status_code, (403, 409))
 
+    def test_natural_language_delivery_and_what_if_are_read_only(self):
+        session = self.select()
+        self.mark_projection_ready()
+        before = self.client.get("/api/mks2/snapshot").json()
+        context = next(node["id"] for node in before["entities"] if node["type"] == "DeliveryRound")
+        for question in ("남은 17대 납기 안에 도착 가능해?", "양품 19대가 목표면 수율 50%로 몇 대 투입해?"):
+            result = self.client.post("/api/mks2/query", json={"question": question, "ledger_version": 1,
+                                    "context_entity_id": context}, headers=self.headers(session))
+            self.assertEqual(result.status_code, 200, result.text)
+            data = result.json()
+            self.assertIn(data["status"], ("PARTIAL", "ANSWERED"))
+            self.assertTrue(data["sections"])
+            self.assertTrue(data["execution_id"])
+            self.assertEqual(data["ledger_mutations"], 0)
+            self.assertEqual(data["meta"]["snapshot_id"], before["meta"]["snapshot_id"])
+        after = self.client.get("/api/mks2/snapshot").json()
+        self.assertEqual(before, after)
+        with self.db.connect() as conn:
+            self.assertEqual(conn.execute("SELECT count(*) AS n FROM ledger_events").fetchone()["n"], 1)
+            self.assertEqual(conn.execute("SELECT count(*) AS n FROM documents").fetchone()["n"], 0)
+
+    def test_query_selection_is_checked_against_the_authorized_snapshot(self):
+        session = self.select()
+        self.mark_projection_ready()
+        response = self.client.post("/api/mks2/query", json={"question": "남은 물량 알려줘", "ledger_version": 1,
+                                    "context_entity_id": "another-company-private-id"}, headers=self.headers(session))
+        self.assertEqual(response.status_code, 200)
+        result = response.json()
+        self.assertEqual(result["status"], "NEEDS_CLARIFICATION")
+        self.assertEqual(result["evidence_refs"], [])
+        self.assertNotIn("another-company-private-id", response.text)
+
     def test_projection_backend_failure_never_uses_stored_graph_as_fallback(self):
         session = self.select()
         self.mark_projection_ready()

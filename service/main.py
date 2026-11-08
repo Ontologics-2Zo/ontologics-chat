@@ -38,6 +38,7 @@ class SelectIdentity(Contract):
 class Query(Contract):
     question: str = Field(min_length=1, max_length=2000)
     ledger_version: int = Field(ge=1)
+    context_entity_id: str | None = Field(default=None, min_length=1, max_length=250)
 
 
 class Snapshot(Contract):
@@ -168,7 +169,9 @@ def create_app(db, *, private_root: str, origin="http://127.0.0.1:8870", dev_mod
         view["meta"]["identity_revision"]=actor.identity_revision
         if view["meta"]["projection_state"]!="READY":
             raise ServiceError("PROJECTION_NOT_READY")
-        return ToolOutput(data=answer_query(args.question,view,ontology),snapshot=ctx,evidence_refs=[EvidenceRef(evidence_id=ctx.read_snapshot_id,source_version=str(ctx.ledger_version),content_hash=payload["metadata"]["source_sha256"])])
+        result=answer_query(args.question,view,ontology,context_entity_id=args.context_entity_id)
+        result["execution_id"]=ctx.execution_id
+        return ToolOutput(data=result,snapshot=ctx,evidence_refs=[EvidenceRef(evidence_id=ctx.read_snapshot_id,source_version=str(ctx.ledger_version),content_hash=payload["metadata"]["source_sha256"])])
 
     gateway.register(ToolSpec("ledger.snapshot","ledger.read",False,Snapshot,snapshot_handler))
     gateway.register(ToolSpec("ledger.query","query.read",False,Query,query_handler))

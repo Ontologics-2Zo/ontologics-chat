@@ -1,6 +1,6 @@
 # 로컬 실행과 Codex Cloud 환경 안내
 
-2026-11-08 갱신. 초기 원장 서비스는 PR #1로 `main`에 병합됐다. 후속 실제 BOM 등록·소요 조회는 `codex/mks2-bom-integration`에서 진행하며, 실행하려는 코드가 main에 포함됐는지 GitHub PR에서 확인한다. 과거 저장소 초기화·T00~T01 준비·환경 Publish 절차는 현재 로컬 실행 절차가 아니다. Cloud 환경 Publish는 로컬 실행에 필요하지 않다.
+2026-11-08 갱신. 초기 원장과 실제 BOM 등록·소요 조회는 PR #1·#2로 `main`에 병합됐다(PR #2 기준 `2e6f24c`). 자연어 CQ PR #3은 DEC-H28에 따라 `cbbc55e`의 병합 전 최종 검토를 통과했다. main 병합·Mac main 재시작은 아직 완료로 기록하지 않으며 실제 병합 상태는 GitHub PR #3, 검증은 [최신 CQ 실행 기록](SERVICE-CQ-NL-20261108.md)에서 확인한다. 과거 저장소 초기화·T00~T01 준비·환경 Publish 절차는 현재 로컬 실행 절차가 아니다. Cloud 환경 Publish는 로컬 실행에 필요하지 않다.
 
 Linux Cloud의 초기 조회 검증은 [INITIAL 실행 기록](SERVICE-INITIAL-20261108.md), 과거 Cloud BOM 차단은 [BOM 실행 기록](SERVICE-BOM-20261108.md)을 따른다. 후속 Mac arm64에서는 실제 Runner 강제 검사와 원본 74행·선택 5품목 조건부 검토/승인/반영을 확인했다. 최신 UI·보존·재시작 검증 결과는 [Mac BOM 실행 기록](SERVICE-BOM-MAC-20261108.md)을 따른다. 구매·Agent·모델·전체 CQ 완료를 의미하지 않는다.
 
@@ -29,11 +29,11 @@ git switch main
 git pull --ff-only origin main
 ```
 
-후속 BOM 기능은 해당 PR이 병합되기 전에는 `main`에 없다. 작업 브랜치가 원격에 올라온 뒤 기능을 확인하려면 기존 변경을 보존한 상태에서 다음을 사용한다. 브랜치가 없다는 오류가 나면 PR/푸시 상태를 먼저 확인한다.
+실제 BOM 기능은 이미 `main`에 있다. 자연어 CQ의 PR #3 병합 전 브랜치를 확인하려면 기존 변경을 보존한 상태에서 다음을 사용한다. 병합 후에는 위의 main 갱신 절차를 사용하며 DB·원본·runtime을 초기화하지 않는다.
 
 ```bash
 git fetch origin
-git switch codex/mks2-bom-integration
+git switch codex/cq68-natural-language
 ```
 
 이하 명령은 선택한 저장소 루트에서 실행한다.
