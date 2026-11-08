@@ -2,7 +2,7 @@
 
 MK-S2의 화면·핵심 동선을 유지하면서 제조 업무를 실제 서버 원장·온톨로지·Agent에 연결하기 위한 개발 기준이다. 공식 설계 v1.7과 시연 데이터 v1.3은 서로 다른 버전 축이다.
 
-**현재 코드: MK-S2의 내용·구성을 재현한 읽기 전용 화면 미리보기. 실제 서비스 원장·승인·T-Box/A-Box 투영·모델 연결은 이 코드에서 구현 완료되지 않았다.** 이전 미커밋 서비스가 없는 새 환경에서 사용자의 최신 화면 구현 요청에 따라 작성했다. 이전 서비스 복원본으로 취급하지 않는다.
+**현재 코드: 로컬 PostgreSQL 초기 원장과 동일 버전 RDF/SHACL·Neo4j 조회를 MK-S2 탭에 연결한 개발 서비스다.** 서버 개발 신원과 일반 근거 문서의 검토·승인·반영도 구현했다. BOM 등록·구매·검사 업무, 실제 Agent/모델, 관측·복구·파일 Runner는 아직 완료되지 않았다. 상세 범위와 실행 증거는 [SERVICE-INITIAL-20261108](docs/handoff/SERVICE-INITIAL-20261108.md)을 따른다. 이전 환경의 미커밋 서비스/DB 복원본이 아니다.
 
 현재 화면은 커밋 `b3ee599`로 보존하고 MK-S2 작업 공간을 별도로 추가했다. 이후 화면 수정은 `web/mks2/`에만 적용한다. 처음에는 검증한 화면을 같은 출발점으로 사용하며, 원본 HTML 자체를 공개 복사한 것이 아니다.
 
@@ -14,9 +14,9 @@ MK-S2의 화면·핵심 동선을 유지하면서 제조 업무를 실제 서버
 
 `/`에서 세 탭을 전환한다. 탭 전환만으로 기존 화면을 다시 로드하지 않는다. 원본과 전체 뷰포트를 직접 비교하려면 `/mks2/`를 단독으로 연다.
 
-최종 온톨로지의 전체 클래스·관계·제약·근거 계약은 유지한다. 현재 보이는 그래프는 시연용 부분 그래프이며, 시나리오 동작을 전체 온톨로지 보존·연결 완료로 인정하지 않는다. 전체 온톨로지의 실데이터 연결은 공식 T10 계약에 따라 별도로 검증한다.
+최종 온톨로지의 전체 클래스·관계·제약·근거 계약을 유지한다. 현재 확인한 전체 스키마는 클래스52·관계74·shape79이며, INITIAL에서 허용된 현재 사실은 노드18·관계11이다. 미래 사건을 제외한 초기 원장 인스턴스 수를 전체 스키마 축소와 혼동하지 않는다. 후속 업무·전체 CQ·전체 온톨로지 의미의 인수는 공식 T10/T23의 잔여 범위로 보존한다.
 
-최종 목표는 **MK-S2의 외형·동선만 유지하고, 내용은 모두 우리 온톨로지·원장·도구 결과로 바꾸는 것**이다. 이 브랜치는 그 이전의 화면 보존·작업 공간 분리 단계다. 미래 사건·기대값이 섞인 오프라인 전체 그래프를 현재 원장으로 바로 표시하거나 고정 답변을 실제 질의로 승격하지 않는다.
+최종 목표는 **MK-S2의 외형·동선만 유지하고, 내용은 모두 우리 온톨로지·원장·도구 결과로 제공하는 것**이다. MK-S2의 런타임 조회는 참조 fixture 대신 서버 원장·투영·결정적 질의를 사용한다. 아직 수행하지 않은 BOM·구매·검사·AI 동작은 미구현 상태를 표시한다. 보존된 `현재 구현` 탭은 명시적 참조 모드에서 기존 자료를 조회한다.
 
 ## ZIP 없이 Git으로 받기
 
@@ -37,29 +37,38 @@ cd ontologics-chat
 
 로컬 변경 때문에 전환이 중단되면 해당 변경을 보존하고 해결한다. 위 절차는 강제 초기화나 덮어쓰기를 하지 않는다. Git에는 코드·검사 도구·인계 문서가 들어 있고, 비공개 원본/fixtures·키·실제 환경 설정·DB·상세 검증 산출물은 들어 있지 않다. 현재 화면에 데이터를 표시하려면 아래의 `PRIVATE_INPUT_ROOT` 연결도 필요하다.
 
-## 화면 실행 — Cloud / Apple Silicon Mac
+## 로컬 서비스 실행
 
-Python 3.10 이상과 최신 브라우저를 사용한다. 이 화면에는 외부 Python/npm 의존성, 설치 과정, DB migration, Docker가 없다. 의존성 lock과 migration은 해당 없음이며 전체 서비스 패키지를 뜻하지 않는다.
+Python 3.12 이상, `uv`, Docker 및 최신 브라우저를 사용한다. Python 의존성은 `pyproject.toml`/`uv.lock`, DB 변경은 `migrations/`에 있다. 로컬 개발 신원은 명시적인 `--dev-mode`에서만 활성화하고 서버는 loopback에 바인딩한다. 운영 인증·배포 구성이 아니다.
 
-비공개 입력은 저장소 밖에 둔다. `PRIVATE_INPUT_ROOT`는 `mk-s2/fixtures`가 들어 있는 기존 입력 루트를 가리켜야 한다. 키는 화면 실행에 필요하지 않다.
+`PRIVATE_INPUT_ROOT`는 공식 문서·기초 데이터·전체 온톨로지가 있는 기존 비공개 입력 루트를 가리킨다. 원본과 runtime 파일·DB·평가 산출물은 Git 밖에 둔다. 모델 키는 이 초기 원장 조회 실행에 필요하지 않다.
 
 ```bash
-# Mac 예시: 본인의 실제 비공개 입력 위치로 지정한다.
+# 실제 보호된 입력 위치와 Git 밖 runtime 파일 위치를 사용한다.
 export PRIVATE_INPUT_ROOT="$HOME/Private/ontologics/private_inputs"
-python3 dev/preview_server.py --reference-preview --port 8765
+uv sync --locked
+mkdir -p -m 700 /tmp/ontologics-local
+.venv/bin/python dev/service_stack.py up --runtime-file /tmp/ontologics-local/runtime.json
+.venv/bin/python -m service --runtime-file /tmp/ontologics-local/runtime.json --dev-mode --reference-preview --import-initial --port 8870
 ```
 
-Mac에서 위 명령을 실행한 경우 **그 Mac의** 브라우저로 `http://127.0.0.1:8765/`를 연다. Cloud에서는 기존 `PRIVATE_INPUT_ROOT`를 그대로 사용한다. Cloud 내부의 같은 localhost 주소가 사용자 Mac에서 열리는 주소는 아니다. 현재 환경의 외부 접근용 미리보기 주소는 확인되지 않았다. Mac 실기 실행은 **NOT_RUN**이다.
+Cloud에서는 이미 제공된 `PRIVATE_INPUT_ROOT`를 유지한다. 필요하면 `UV_CACHE_DIR`를 쓰기 가능한 별도 캐시 경로로 지정한다. 실행한 머신의 브라우저에서 `http://127.0.0.1:8870/`을 연다. Cloud 내부 localhost는 사용자 Mac의 접속 주소가 아니다. Apple Silicon Mac 실기 실행은 **NOT_RUN**이다.
 
-화면 확인 동선:
+MK-S2 확인 동선:
 
-1. 온톨로지·질의 → 노드 선택 → 상세의 관계 칩. 추천 질문은 입력란만 채우며 **보내기** 후 시연 근거를 재생한다.
-2. 운영 대시보드 → KPI/자재·회차 그래프/표 → BOM 원본 등록 → 보관 원본 미리보기. 각 단계는 읽기 전용이며 실제 파일 처리·승인·반영을 실행하지 않는다.
-3. 대시보드 추천 질문 → 실행 → BOM 미등록에 따른 판단 보류 → **등록 후 견적 화면 예시**. 별도 시연 버전임을 패널에 고정 표시한다. 구매·입하·수입검사 쓰기는 미연결이다.
+1. 개발 계정 선택 → 온톨로지·질의 → 초기 원장 노드·관계·근거·버전 확인.
+2. 운영 대시보드 → 초기 기초수량·자재·회차 조회. 미반영 BOM의 소요는 보류하며 미래 구매·입하·합격 상태를 표시하지 않는다.
+3. 추천 질문 → 보내기 → 같은 서버 snapshot의 결정적 질의·근거 경로 확인. 실제 모델 응답으로 표시하지 않는다.
 
-시연 수치·답변은 원본 fixture를 실행 시 읽는다. 브라우저 화면의 데이터나 정해진 시연 답변을 실제 원장·Agent 실행으로 인정하지 않는다. 원본의 `null개` 표시는 `소요 계산 보류`로 보완했다. 새로고침·초기화는 화면 선택만 되돌리며 원장을 삭제하지 않는다.
+INITIAL은 출처가 있는 합성 기초 잔액이며 실제 제조 이력과 구별한다. 기준 원천 버전과 서버 원장 버전도 별도로 유지한다. 일반 `evidence_note`의 승인·반영 경로가 BOM/PR/PO 승인이나 재고 변경을 구현했다는 뜻은 아니다. 새로고침·화면 초기화는 원장을 삭제하지 않는다.
 
-## 변경 범위 검증
+기존 `현재 구현` 보존본만 확인하는 표준 라이브러리 참조 서버는 `python3 dev/preview_server.py --reference-preview --port 8765`로 실행한다. 이 참조 서버의 과거 검증을 새 서비스 검증으로 이월하지 않는다.
+
+## 검증 범위
+
+새 서비스의 실제 테스트 명령·환경·결과는 [실행 기록](docs/handoff/SERVICE-INITIAL-20261108.md)에 남긴다. 원본 무결성은 `.venv/bin/python dev/audit_sources.py`로 확인한다. 이 검사는 155개 원본 및 349개 literal ID의 1,171개 위치 대응을 확인하며, T00의 서술 요구 전수 추적 완료를 뜻하지 않는다.
+
+아래는 보존된 참조 서버와 UI 구문 검사다.
 
 ```bash
 python3 -m unittest discover -s tests -p 'test_preview_server.py' -v
@@ -69,14 +78,13 @@ node --check web/mks2/dashboard.js
 node --check web/mks2/graph.js
 ```
 
-선택적 브라우저 검사는 Node 22 이상과 별도로 실행한 Chromium의 loopback CDP 포트가 필요하다. 격리된 브라우저 프로필을 사용한다. 캡처에 비공개 시연 내용이 포함될 수 있으므로 산출물 경로는 Git 밖이어야 한다.
+브라우저 검사는 Node 22 이상과 별도로 실행한 Chromium의 loopback CDP 포트가 필요하다. 격리된 브라우저 프로필을 사용하며 캡처·산출물은 Git 밖에 저장한다. `check_ui`/`check_tabs`의 과거 참조 검증은 당시 코드에만 적용한다. 새 원장 연결 동작은 다음 검사와 실행 기록을 따른다.
 
 ```bash
-node dev/check_ui.mjs --cdp=http://127.0.0.1:9233 --url=http://127.0.0.1:8765/mks2/ --artifacts=/tmp/mks2-private-ui-check
-node dev/check_tabs.mjs --cdp=http://127.0.0.1:9233 --url=http://127.0.0.1:8765/ --artifacts=/tmp/mks2-private-tab-check
+node dev/check_service_ui.mjs --cdp=http://127.0.0.1:9233 --url=http://127.0.0.1:8870/mks2/ --artifacts=/tmp/mks2-private-service-check
 ```
 
-이 검사는 화면·읽기 전용 접근·근거 재생 취소·버전 불일치 처리에 한정한다. 실제 API/DB/권한/승인/SHACL/모델/관측 인수는 별도다. 원본 HTML·fixture·비밀 설정·DB·평가 원문은 실행 ZIP이나 공개 Git에 포함하지 않는다.
+기존 UI 검사는 해당 참조 버전의 표시·탐색 범위에 한정한다. 새 서비스에도 전체 BOM·업무·Agent·관측·규모 인수는 남아 있다. 원본 HTML·fixture·비밀 설정·DB·평가 원문은 실행 ZIP이나 공개 Git에 포함하지 않는다.
 
 ## 개발 인계
 

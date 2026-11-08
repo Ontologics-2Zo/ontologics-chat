@@ -1,203 +1,289 @@
 import { mountDashboard } from './dashboard.js';
 import { mountGraph } from './graph.js';
 
-// Presentation only. This module cannot approve, post, mutate inventory, or call a model.
-const $ = (id) => document.getElementById(id);
-function element(tag, className, text) {
+// UI state is ephemeral. Identity, quantities, versions and answers come from the server.
+const $ = id => document.getElementById(id);
+const element = (tag, className = '', text) => {
   const node = document.createElement(tag);
-  if (className) node.className = className;
+  node.className = className;
   if (text !== undefined) node.textContent = String(text);
   return node;
-}
-function button(text, callback, className = 'btn sm') {
+};
+function button(text, action, className = 'btn sm') {
   const node = element('button', className, text);
-  node.type = 'button'; node.addEventListener('click', callback); return node;
+  node.type = 'button'; node.addEventListener('click', action); return node;
 }
-let bundle, graph, dashboard, contextId, noticeTimer;
-let replayGeneration = 0;
-let pendingReplayMessage = null;
+let snapshot, ontology, graph, dashboard, identity, csrfToken;
+let contextId, noticeTimer, generation = 0, replayGeneration = 0, schemaMode = false;
+let requests = new AbortController();
+let polling = false, latestVersion = null;
+const refreshButton = button('최신 원장 조회', refreshSnapshot);
+refreshButton.id = 'refresh-ledger'; refreshButton.hidden = true;
+$('reset').before(refreshButton);
 const panels = {};
 const currentScreen = () => location.hash === '#dashboard' ? 'dashboard' : 'graph';
-const session = () => bundle.session.data;
+const labelFor = id => snapshot?.graph?.data?.nodes?.find(node => (node.node_id || node.id) === id)?.display_id || id;
 function notify(text) {
   $('notice').textContent = text; $('notice').hidden = false;
   clearTimeout(noticeTimer); noticeTimer = setTimeout(() => { $('notice').hidden = true; }, 4500);
 }
-function route() {
-  if (!graph) return;
-  const current = currentScreen();
-  for (const name of ['graph','dashboard']) {
-    $(`${name}-view`).hidden = current !== name;
-    $(`tab-${name}`).setAttribute('aria-current', current === name ? 'page' : 'false');
+function cancelPendingReplay() { replayGeneration++; graph?.cancelReplay(); }
+async function api(path, body, method) {
+  const headers = { 'X-Requested-With': 'MK-S2' };
+  if (identity?.identity_revision != null) headers['X-Identity-Revision'] = String(identity.identity_revision);
+  if (body !== undefined) {
+    headers['Content-Type'] = 'application/json';
+    if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
   }
-  if (current === 'graph') requestAnimationFrame(() => graph.resize());
+  const response = await fetch(path, { method: method || (body === undefined ? 'GET' : 'POST'), headers,
+    body: body === undefined ? undefined : JSON.stringify(body), credentials: 'same-origin',
+    cache: 'no-store', signal: requests.signal });
+  const data = await response.json();
+  if (!response.ok) {
+    const error = new Error(data.error?.code || data.code || 'SERVICE_UNAVAILABLE');
+    error.status = response.status;
+    if (response.status === 401 || ['IDENTITY_CHANGED', 'IDENTITY_INACTIVE', 'IDENTITY_REQUIRED'].includes(error.message)) {
+      identity = null; csrfToken = null; invalidateView();
+      $('load-state').textContent = '계정 권한이 변경되었거나 세션이 종료되었습니다. 계정을 다시 선택해 주세요.';
+    }
+    throw error;
+  }
+  return data;
+}
+function errorText(error) {
+  if (['IDENTITY_CHANGED', 'IDENTITY_INACTIVE', 'IDENTITY_REQUIRED'].includes(error.message)) return '계정 권한이 변경되었거나 세션이 종료되었습니다. 계정을 다시 선택해 주세요.';
+  if (error.status === 401) return '세션이 만료되었거나 계정 권한이 바뀌었습니다. 계정을 다시 선택해 주세요.';
+  if (error.status === 403) return '현재 계정으로 이 업무를 조회할 수 없습니다.';
+  if (error.message === 'PROJECTION_PENDING') return '원장은 준비되었지만 그래프 검증·투영이 아직 완료되지 않았습니다. 같은 버전의 근거가 준비된 뒤 다시 조회해 주세요.';
+  if (error.status === 409) return '조회 기준이 바뀌었거나 같은 버전의 근거가 준비되지 않았습니다. 최신 원장을 다시 조회해 주세요.';
+  return '서버 자료를 조회하지 못했습니다. 연결 상태를 확인한 뒤 다시 시도해 주세요.';
+}
+function route() {
+  if (!snapshot) return;
+  for (const name of ['graph', 'dashboard']) {
+    $(`${name}-view`).hidden = currentScreen() !== name;
+    $(`tab-${name}`).setAttribute('aria-current', currentScreen() === name ? 'page' : 'false');
+  }
+  if (currentScreen() === 'graph') requestAnimationFrame(() => graph?.resize());
 }
 function setContext(value) {
-  const id = typeof value === 'string' ? value : value?.node_id ?? value?.delivery_round_id ?? value?.id;
-  if (!id) return;
-  contextId = id;
-  const area = panels.graph?.context;
-  if (area) area.replaceChildren(document.createTextNode('맥락 '), button(id, () => graph.focus(id), 'chip'), document.createTextNode(` 그래프 v${session().projection_version}`));
+  contextId = typeof value === 'string' ? value : value?.node_id ?? value?.id;
+  if (!contextId) return;
+  for (const panel of Object.values(panels)) {
+    panel.context.replaceChildren(document.createTextNode('맥락 '), button(labelFor(contextId), () => focusEvidence(contextId), 'chip'),
+      document.createTextNode(` 원장 v${snapshot.meta.ledger_version}`));
+  }
 }
-function fillQuestion(text, name = currentScreen()) {
-  const panel = panels[name];
-  panel.input.value = text; panel.input.focus();
+function focusEvidence(id) {
+  if (schemaMode) { schemaMode = false; mountCurrentGraph(); }
+  location.hash = '#graph';
+  graph?.focus(id);
 }
+function fillQuestion(text, name = currentScreen()) { panels[name].input.value = text; panels[name].input.focus(); }
 function createPanel(name) {
-  const root = $(`${name}-panel`);
-  root.replaceChildren();
-  const heading = element('div','panel-heading');
-  heading.append(element('h2','',name === 'graph' ? '업무 AI 질의' : '업무 에이전트'),element('span','tag','시연용 응답'));
-  const context = element('div','panel-context');
-  const messages = element('div','messages');
-  messages.setAttribute('aria-live','polite'); messages.setAttribute('aria-relevant','additions');
-  const suggestions = element('div','suggestions');
-  const form = element('form','question-form');
-  const input = element('input'); input.autocomplete = 'off';
-  input.setAttribute('aria-label',name === 'graph' ? '질문' : '에이전트에게 질문');
-  input.placeholder = name === 'graph' ? '질문하면 근거를 그래프에서 따라갑니다' : `예: ${bundle.ai.before_bom.data.question}`;
-  const submit = element('button','btn pri',name === 'graph' ? '보내기' : '실행'); submit.type = 'submit';
-  form.append(input,submit);
-  form.addEventListener('submit', event => { event.preventDefault(); const question=input.value.trim(); if (!question) return; input.value=''; runPreview(name,question); });
-  const disclosure = element('div','disclosure',name === 'graph'
-    ? '합성 시연 · 서버 원장·실제 AI 미연결. 근거 재생은 화면 조회이며 승인·발주를 실행하지 않습니다.'
-    : '합성 시연 · 서버 원장·실제 AI 미연결. 선택·승인·확정은 서비스 연결 후 사람이 수행합니다.');
-  root.append(heading,context); context.hidden = name !== 'graph';
-  root.append(messages,suggestions,form,disclosure);
-  panels[name] = {root,context,messages,suggestions,input};
-  const greeting = element('div','message assistant');
-  greeting.append(element('p','',name === 'graph'
-    ? '질문하면 답의 근거를 관계 그래프에서 한 칸씩 따라가며 보여드립니다.'
-    : '회차 이행 가능 여부를 물으면 계약을 찾고, 불량률과 BOM으로 부품 부족을 예측하고, 공급 후보를 비교합니다.'));
-  greeting.append(element('p','note',name === 'graph' ? '노드를 눌러 속성과 연결을 볼 수 있습니다.' : '선택·승인·확정은 사람이 합니다.'));
+  const root = $(`${name}-panel`); root.replaceChildren();
+  const heading = element('div', 'panel-heading');
+  heading.append(element('h2', '', name === 'graph' ? '업무 AI 질의' : '업무 에이전트'), element('span', 'tag', '원장 근거 조회'));
+  const context = element('div', 'panel-context', `원장 v${snapshot.meta.ledger_version}`);
+  const messages = element('div', 'messages');
+  messages.setAttribute('aria-live', 'polite'); messages.setAttribute('aria-relevant', 'additions');
+  const greeting = element('div', 'message assistant');
+  greeting.append(element('p', '', '질문하면 현재 원장의 수량과 확인된 관계를 조회하고 근거 경로를 보여드립니다.'),
+    element('p', 'note', '확인되지 않은 장착·생산·승인·입하 정보는 미확인으로 남깁니다.'));
   messages.append(greeting);
-  if (name === 'graph') {
-    const intents = bundle.graphQueries.intents;
-    for (const intent of ['QTY_DECOMPOSITION','BOM_STATUS','SHORTAGE_REASON']) {
-      const item = intents.find(i => i.intent === intent);
-      if (item) suggestions.append(button(item.sample, () => fillQuestion(item.sample,name), 'suggestion'));
-    }
-    const missing = intents.find(i => i.by_state?.some(s => s.answer?.kind === 'NOT_FOUND') && !['SHORTAGE_REASON'].includes(i.intent));
-    if (missing) suggestions.append(button(missing.sample, () => fillQuestion(missing.sample,name), 'suggestion'));
-  } else {
-    const question = bundle.ai.before_bom.data.question;
-    suggestions.append(button(question, () => fillQuestion(question,name), 'suggestion'));
-  }
+  const suggestions = element('div', 'suggestions');
+  const questions = snapshot.suggested_questions || snapshot.suggestions || ['남은 고객 도착 약속과 생산 목표는?', 'BOM 등록 상태는?', '현재 가용 재고는?'];
+  for (const question of questions) suggestions.append(button(question, () => fillQuestion(question, name), 'suggestion'));
+  const form = element('form', 'question-form'), input = element('input');
+  input.autocomplete = 'off'; input.setAttribute('aria-label', name === 'graph' ? '질문' : '에이전트에게 질문');
+  input.placeholder = '질문하면 같은 버전의 원장 근거를 조회합니다';
+  const submit = element('button', 'btn pri', name === 'graph' ? '보내기' : '실행'); submit.type = 'submit';
+  form.append(input, submit);
+  form.addEventListener('submit', event => {
+    event.preventDefault(); const question = input.value.trim();
+    if (!question || submit.disabled) return;
+    input.value = ''; runQuery(name, question);
+  });
+  root.append(heading, context, messages, suggestions, form,
+    element('div', 'disclosure', '합성 초기 이관 원장 · 결정적 업무 조회. 실제 모델 호출·구매·승인 실행은 구분합니다.'));
+  panels[name] = { root, context, messages, suggestions, input, submit };
 }
-function scrollMessages(name) { const area=panels[name].messages; area.scrollTop=area.scrollHeight; }
-function unavailable(name, text) {
-  const message = element('div','message assistant');
-  message.append(element('p','',text),element('p','note','실제 모델 호출 0회 · 업무 원장 변경 없음'));
-  panels[name].messages.append(message); scrollMessages(name);
-}
-function cancelPendingReplay() {
-  replayGeneration++;
-  graph?.cancelReplay();
-  if (pendingReplayMessage) {
-    pendingReplayMessage.append(element('p','note','다른 화면 조작으로 근거 재생을 중단했습니다.'));
-    pendingReplayMessage = null;
-  }
-}
-async function runPreview(name,question) {
-  const area=panels[name].messages;
-  area.append(element('div','message user',question));
-  if (name === 'dashboard') {
-    if (question !== bundle.ai.before_bom.data.question) return unavailable(name,'현재는 등록된 화면 예시만 재생할 수 있습니다. 자유 질의는 실제 서비스 연결 후 사용할 수 있습니다.');
-    showAgentPreview(bundle.ai.before_bom, false); return;
-  }
+async function runQuery(name, question) {
+  const panel = panels[name], requestGeneration = generation;
+  panel.messages.append(element('div', 'message user', question)); panel.submit.disabled = true;
+  const message = element('div', 'message assistant', '원장과 근거를 조회하고 있습니다.'); panel.messages.append(message);
   cancelPendingReplay();
-  const intent = bundle.graphQueries.intents.find(i => i.sample === question);
-  if (!intent) return unavailable(name,'이 질문에 연결된 시연 근거가 없습니다. 추천 질문을 선택하거나 실제 질의 서비스 연결 후 다시 실행해 주세요.');
-  const data = intent.by_state.find(s => s.ledger_version === session().ledger_version && s.projection_version === session().projection_version);
-  if (!data || session().ledger_version !== session().projection_version) return unavailable(name,'같은 버전의 근거가 준비되지 않아 답변을 보류합니다.');
-  const message = element('div','message assistant');
-  const steps = element('ol','trace-steps');
-  for (const label of data.steps ?? []) steps.append(element('li','',label));
-  message.append(steps); area.append(message);
-  pendingReplayMessage = message;
-  const hops=data.graph_path ?? [];
-  const run=++replayGeneration;
-  const result = await graph.replay({hops,nodeIds:[...new Set(hops.flat())]});
-  if (run !== replayGeneration) return;
-  if (!result?.completed) { cancelPendingReplay(); return; }
-  pendingReplayMessage = null;
-  for (const step of steps.children) step.className='done';
-  message.append(element('p','answer',data.answer.text));
-  const evidence=element('div','evidence-path');
-  for (const id of [...new Set([...hops.flat(),...(data.evidence_node_ids ?? [])])]) evidence.append(button(id,()=>graph.focus(id),'chip'));
-  const footer=element('div','answer-footer',`시연 원장 v${data.ledger_version} · 그래프 v${data.projection_version} · 실제 모델 호출 0회`);
-  footer.append(button('근거 다시 보기',()=>{cancelPendingReplay();graph.replay({hops,nodeIds:[...new Set(hops.flat())]});},'btn sm'));
-  message.append(evidence,footer); scrollMessages(name);
+  try {
+    const answer = await api('/api/mks2/query', { question, ledger_version: snapshot.meta.ledger_version });
+    if (generation !== requestGeneration) return;
+    if (answer.meta?.identity_revision !== identity?.identity_revision || answer.meta?.company_id !== identity?.company_id) {
+      identity = null; csrfToken = null; invalidateView(); throw new Error('IDENTITY_CHANGED');
+    }
+    if (answer.meta?.ledger_version !== snapshot.meta.ledger_version || answer.meta?.projection_version !== snapshot.meta.projection_version) {
+      const error = new Error('SNAPSHOT_MISMATCH'); error.status = 409; throw error;
+    }
+    message.replaceChildren();
+    const steps = element('ol', 'trace-steps');
+    for (const text of answer.steps || []) steps.append(element('li', '', text));
+    message.append(steps);
+    const hops = answer.graph_path || [], ids = [...new Set([...hops.flat(), ...(answer.evidence_node_ids || [])])];
+    if (schemaMode) { schemaMode = false; mountCurrentGraph(); }
+    const replay = ++replayGeneration;
+    const replayResult = await graph.replay({ hops, nodeIds: ids, edgeIds: answer.evidence_edge_ids || [] });
+    if (generation !== requestGeneration) return;
+    if (replay !== replayGeneration || !replayResult?.completed) {
+      message.append(element('p', 'note', '화면 조작으로 근거 재생을 중단했습니다. 아래 답변은 표시된 원장 버전의 조회 결과입니다.'));
+    } else for (const step of steps.children) step.className = 'done';
+    message.append(element('p', 'answer', typeof answer.answer === 'string' ? answer.answer : answer.answer?.text || '확인된 답변이 없습니다.'));
+    const evidence = element('div', 'evidence-path');
+    const evidenceAtVersion = action => {
+      if (snapshot.meta.ledger_version !== answer.meta.ledger_version || snapshot.meta.projection_version !== answer.meta.projection_version) { notify('과거 원장 버전의 답변입니다. 최신 근거가 필요하면 질문을 다시 실행해 주세요.'); return; }
+      action();
+    };
+    for (const id of ids) evidence.append(button(labelFor(id), () => evidenceAtVersion(() => focusEvidence(id)), 'chip'));
+    const footer = element('div', 'answer-footer', `원장 v${answer.meta.ledger_version} · 그래프 v${answer.meta.projection_version} · 모델 호출 ${answer.model_calls ?? 0}회`);
+    footer.append(button('근거 다시 보기', () => evidenceAtVersion(() => {
+      cancelPendingReplay(); if (schemaMode) { schemaMode = false; mountCurrentGraph(); }
+      location.hash = '#graph'; graph.replay({ hops, nodeIds: ids, edgeIds: answer.evidence_edge_ids || [] });
+    })));
+    message.append(evidence, footer);
+  } catch (error) {
+    if (error.name === 'AbortError' || generation !== requestGeneration) return;
+    message.replaceChildren(element('p', '', errorText(error)));
+    if (error.status === 401) invalidateView();
+  } finally {
+    if (generation === requestGeneration) { panel.submit.disabled = false; panel.messages.scrollTop = panel.messages.scrollHeight; }
+  }
 }
-function showAgentPreview(envelope, separateSnapshot) {
-  const data=envelope.data, area=panels.dashboard.messages;
-  if (separateSnapshot) {
-    panels.dashboard.context.hidden=false;
-    panels.dashboard.context.textContent=`견적 화면 예시 · 별도 시연 v${envelope.meta.ledger_version} · 현재 원장과 별도`;
-    area.replaceChildren(element('div','message assistant',`견적 화면 예시 · 별도 시연 v${envelope.meta.ledger_version}. 현재 원장에 반영된 결과가 아닙니다.`));
+function mountCurrentGraph() {
+  cancelPendingReplay(); graph?.destroy();
+  const selected = schemaMode ? ontology.graph : snapshot.graph;
+  graph = mountGraph($('graph-stage'), { bundle: { graph: selected }, onSelect: setContext,
+    onAsk: fillQuestion, onBom: () => dashboard.openBom() });
+  const controls = $('graph-stage').querySelector('.mks-graph-tools');
+  const switcher = button(schemaMode ? '업무 원장 보기' : '전체 온톨로지', () => { schemaMode = !schemaMode; mountCurrentGraph(); }, 'mks-graph-button');
+  switcher.dataset.action = 'schema'; switcher.setAttribute('aria-pressed', String(schemaMode));
+  controls.prepend(switcher);
+}
+function invalidateView() {
+  generation++; requests.abort(); requests = new AbortController(); cancelPendingReplay();
+  graph?.destroy(); dashboard?.destroy(); graph = null; dashboard = null; snapshot = null; ontology = null;
+  for (const name of ['graph', 'dashboard']) { $(`${name}-view`).hidden = true; $(`${name}-panel`).replaceChildren(); }
+  $('load-state').hidden = false; $('load-state').textContent = '서버의 개발 계정을 선택해 원장을 조회하세요.';
+  $('versions').textContent = '계정 확인 필요'; latestVersion = null; refreshButton.hidden = true;
+}
+async function loadSnapshot({ preserveMessages = false } = {}) {
+  const requestGeneration = generation;
+  $('load-state').hidden = false; $('load-state').textContent = '같은 버전의 원장과 전체 온톨로지를 조회하고 있습니다.';
+  $('workspace').setAttribute('aria-busy', 'true');
+  const [data, schema] = await Promise.all([api('/api/mks2/snapshot'), api('/api/mks2/ontology')]);
+  if (generation !== requestGeneration) return;
+  if (data.meta?.identity_revision !== identity?.identity_revision || schema.meta?.identity_revision !== identity?.identity_revision
+    || data.meta?.company_id !== identity?.company_id || schema.meta?.company_id !== identity?.company_id) {
+    identity = null; csrfToken = null; invalidateView();
+    throw new Error('IDENTITY_CHANGED');
   }
-  for (const step of data.steps) {
-    const card=element('div','agent-step');
-    const title=element('h3'); title.append(element('span','tag',step.n),document.createTextNode(step.label),element('code','',step.tool)); card.append(title);
-    const result=step.result;
-    if (result.promise_remaining_qty != null) {
-      card.append(element('p','',`남은 약속 ${result.promise_remaining_qty}대 중 이미 만든 ${result.already_produced_qty}대가 있습니다. 입고 대기 ${result.good_not_received_qty} · 창고 ${result.warehouse_remaining_qty} · 운송 중 ${result.transit_qty}. 더 생산할 양품은 ${result.production_remaining_qty}대입니다.`));
-    }
-    if (result.defect_rate != null) card.append(element('p','',`불량 ${result.defect_qty} ÷ 판정 ${result.judged_qty} = ${(result.defect_rate*100).toFixed(2)}%. 판정 대기 ${result.pending_excluded}대는 제외합니다. 이 비율이 유지된다는 가정의 투입 ${result.input_needed_qty}대이며, 재고 수량이 아닙니다.`));
-    if (result.stopped) card.append(element('p','',`${result.configuration_id} · 구성 미등록으로 자재 소요 계산 보류`));
-    if (result.lines) {
-      const table=element('table','agent-table');const head=element('tr');
-      for (const name of ['품목','필요','가용','부족']) head.append(element('th','',name));
-      const thead=element('thead');thead.append(head);table.append(thead);const body=element('tbody');
-      for (const line of result.lines) {
-        const row=element('tr');
-        for(const field of ['item_id','required_qty','available_qty','shortage_qty']) row.append(element('td','',line[field]??'미확인'));
-        body.append(row);
-      }
-      table.append(body);card.append(table,element('p','note','원본 시연의 일부 품목 예시 · 전체 적용 BOM 검증은 별도입니다.'));
-    }
-    if (result.parts_need_by_date) card.append(element('p','',`도착 ${result.arrival_due_date} ← 운송 ${result.transit_days}일 ← 출하 준비 ${result.ship_prep_days}일 ← 생산 ${result.production_days}일 ← 수입검사 ${result.inspection_days}일 → 부품 입하 필요일 ${result.parts_need_by_date}.`));
-    if (step.tool === 'procurement.compare' && data.proposals?.length && dashboard.renderQuotes) {
-      card.append(element('p','',`연결된 유효 견적 ${data.proposals.length}건입니다. 가장 싼 곳을 자동으로 고르지 않습니다. 아래에서 비교합니다.`));
-      const target=element('div');card.append(target);dashboard.renderQuotes(target);
-    }
-    area.append(card);
+  if (data.meta?.projection_state !== 'READY') throw new Error('PROJECTION_PENDING');
+  if (!data.meta || !data.graph?.data || data.meta.ledger_version !== data.meta.projection_version
+    || data.graph.meta?.ledger_version !== data.meta.ledger_version || data.graph.meta?.projection_version !== data.meta.projection_version) {
+    const error = new Error('SNAPSHOT_MISMATCH'); error.status = 409; throw error;
   }
-  const verdict=element('div','verdict'); verdict.append(element('h3','',data.verdict.title),element('p','',data.verdict.body));
-  verdict.append(element('p','note','시연 자료 재생 · 실제 도구·모델 호출 및 원장 변경 없음'));
-  area.append(verdict);
-  if (!separateSnapshot) {
-    const actions=element('div','answer-footer');
-    actions.append(button('BOM 등록 화면',()=>dashboard.openBom()),button('등록 후 견적 화면 예시',()=>showAgentPreview(bundle.ai.after_bom,true)));
-    area.append(actions);
-  } else area.append(button('현재 조회 기준으로 돌아가기',()=>{createPanel('dashboard');}));
-  scrollMessages('dashboard');
+  if (!schema.graph?.data?.nodes || !schema.graph?.data?.edges) throw new Error('ONTOLOGY_UNAVAILABLE');
+  snapshot = data; ontology = schema; schemaMode = false;
+  $('versions').replaceChildren(document.createTextNode('원장 '), element('b', '', `v${data.meta.ledger_version}`),
+    document.createTextNode(' · 그래프 '), element('b', '', `v${data.meta.projection_version}`), element('span', 'pill ok', '서버 연결'));
+  $('versions').title = `원천 버전 ${data.meta.source_ledger_version ?? '미확인'} · ${data.meta.snapshot_id ?? ''}`;
+  if (!preserveMessages) { createPanel('graph'); createPanel('dashboard'); }
+  else for (const panel of Object.values(panels)) {
+    panel.context.textContent = `현재 원장 v${data.meta.ledger_version} · 이전 답변은 각 답변의 기준 버전을 유지합니다.`;
+    panel.submit.disabled = false;
+  }
+  refreshButton.hidden = false; refreshButton.disabled = false; refreshButton.textContent = '최신 원장 조회'; latestVersion = data.meta.ledger_version;
+  dashboard?.destroy();
+  dashboard = mountDashboard($('dashboard-stage'), { snapshot, onSelect: setContext,
+    onAsk: text => fillQuestion(text, 'dashboard'), onGraph: focusEvidence });
+  mountCurrentGraph();
+  const initialNode = data.graph.data.nodes.find(node => node.entity_ref?.entity_type === 'delivery_round' || node.type === 'DeliveryRound');
+  const initialContext = initialNode?.node_id || initialNode?.id;
+  if (initialContext) setContext(initialContext);
+  $('load-state').hidden = true; $('workspace').setAttribute('aria-busy', 'false'); route();
+}
+async function refreshSnapshot() {
+  if (!identity || refreshButton.disabled) return;
+  generation++; requests.abort(); requests = new AbortController(); cancelPendingReplay();
+  refreshButton.disabled = true;
+  try { await loadSnapshot({ preserveMessages: true }); }
+  catch (error) { if (error.name !== 'AbortError') { $('load-state').textContent = errorText(error); $('load-state').hidden = false; $('workspace').setAttribute('aria-busy', 'false'); } }
+  finally { refreshButton.disabled = false; }
+}
+async function pollChanges() {
+  if (polling || !snapshot || !identity || document.hidden || (window.frameElement && !window.frameElement.getBoundingClientRect().height)) return;
+  polling = true; const requestGeneration = generation;
+  try {
+    const changes = await api(`/api/mks2/events?after=${encodeURIComponent(snapshot.meta.ledger_version)}`);
+    if (generation !== requestGeneration) return;
+    if (changes.identity_revision !== identity.identity_revision || changes.company_id !== identity.company_id) {
+      identity = null; csrfToken = null; invalidateView();
+      $('load-state').textContent = '계정 권한이 변경되었습니다. 계정을 다시 선택해 주세요.'; return;
+    }
+    if (changes.current_ledger_version > snapshot.meta.ledger_version) {
+      latestVersion = changes.current_ledger_version; refreshButton.textContent = `새 원장 v${latestVersion} 조회`; refreshButton.hidden = false;
+    }
+  } catch (error) {
+    if (error.status === 401) { identity = null; csrfToken = null; invalidateView(); }
+  } finally { polling = false; }
+}
+setInterval(pollChanges, 5000);
+async function selectIdentity(profileId) {
+  invalidateView(); $('actor').disabled = true;
+  try {
+    const auth = await api('/api/mks2/session', { profile_id: profileId });
+    identity = auth.principal; csrfToken = auth.csrf_token;
+    await loadSnapshot();
+  } catch (error) {
+    if (error.name !== 'AbortError') { $('load-state').textContent = errorText(error); $('workspace').setAttribute('aria-busy', 'false'); }
+  } finally { $('actor').disabled = false; }
+}
+async function signOut() {
+  invalidateView(); $('actor').disabled = true;
+  try {
+    await api('/api/mks2/session', {}, 'DELETE');
+    identity = null; csrfToken = null; $('actor').value = '';
+    $('load-state').textContent = '세션을 종료했습니다. 개발 계정을 선택하면 다시 조회할 수 있습니다.';
+  } catch (error) {
+    if (error.status === 401) { identity = null; csrfToken = null; $('load-state').textContent = '세션이 종료되었습니다.'; }
+    else { $('load-state').replaceChildren(element('p', '', '서버에서 세션 종료를 확인하지 못했습니다.'), button('세션 종료 다시 시도', signOut)); }
+  } finally { $('actor').disabled = false; }
 }
 async function start() {
   try {
-    const response=await fetch('/api/preview',{cache:'no-store',credentials:'same-origin'});
-    if (!response.ok) throw new Error('PREVIEW_UNAVAILABLE');
-    const payload=await response.json();
-    if (payload.mode !== 'reference-preview' || payload.serviceConnected !== false || !payload.bundle) throw new Error('PREVIEW_CONTRACT');
-    bundle=payload.bundle;
-    const graphMeta = bundle.graph?.meta;
-    if (!graphMeta || graphMeta.ledger_version !== session().ledger_version || graphMeta.projection_version !== session().projection_version || graphMeta.read_snapshot_id !== session().snapshot_id) throw new Error('SNAPSHOT_MISMATCH');
-    $('versions').replaceChildren(document.createTextNode('시연 원장 '),element('b','',`v${session().ledger_version}`),document.createTextNode(' · 그래프 '),element('b','',`v${session().projection_version}`),element('span','pill mute','원장 미연결'));
-    $('actor').replaceChildren(...session().selectable_actors.map(actor=>{const option=element('option','',`${actor.actor_id} · ${actor.label}`); option.value=actor.actor_id; return option;}));
-    $('actor').value=session().current_actor.actor_id;
-    createPanel('graph'); createPanel('dashboard');
-    dashboard=mountDashboard($('dashboard-stage'),{bundle,onSelect:setContext,onAsk:text=>fillQuestion(text,'dashboard'),onGraph:id=>{location.hash='#graph';setContext(id);requestAnimationFrame(()=>graph.focus(typeof id==='string'?id:id.node_id));}});
-    graph=mountGraph($('graph-stage'),{bundle,onSelect:setContext,onAsk:text=>fillQuestion(text,'graph'),onBom:()=>dashboard.openBom()});
-    setContext(bundle.ai.before_bom.data.context.delivery_round_id);
-    $('load-state').hidden=true; $('workspace').setAttribute('aria-busy','false'); route();
+    const state = await api('/api/mks2/session'); identity = state.principal; csrfToken = state.csrf_token;
+    const prompt = element('option', '', '계정 선택 / 세션 종료'); prompt.value = '';
+    $('actor').replaceChildren(prompt, ...(state.profiles || []).map(profile => {
+      const option = element('option', '', profile.label || profile.id); option.value = profile.id; return option;
+    }));
+    $('actor').disabled = false;
+    $('actor').value = state.profile_id || identity?.profile_id || '';
+    if (state.authenticated && identity) await loadSnapshot();
+    else { $('load-state').textContent = '위의 개발 계정을 선택하면 해당 회사와 권한으로 원장을 조회합니다.'; $('workspace').setAttribute('aria-busy', 'false'); $('versions').textContent = '계정 선택 대기'; }
   } catch (error) {
-    $('load-state').textContent=error.message === 'SNAPSHOT_MISMATCH'
-      ? '원장과 그래프의 조회 버전이 달라 표시를 보류합니다. 같은 snapshot의 자료를 연결해 주세요.'
-      : '화면 자료를 읽을 수 없습니다. PRIVATE_INPUT_ROOT와 비공개 시연 실행 설정을 확인해 주세요. 임의의 수치나 정상 상태로 대체하지 않습니다.';
-    $('workspace').setAttribute('aria-busy','false'); $('versions').textContent='자료 미연결';
+    $('load-state').textContent = errorText(error);
+    $('workspace').setAttribute('aria-busy', 'false'); $('versions').textContent = '서비스 미연결';
   }
 }
-window.addEventListener('hashchange',route);
-$('theme').addEventListener('click',()=>{const dark=document.documentElement.dataset.theme!=='dark';document.documentElement.dataset.theme=dark?'dark':'light';$('theme').setAttribute('aria-label',dark?'밝은 테마로 전환':'어두운 테마로 전환');});
-$('reset').addEventListener('click',()=>{if(!graph)return;cancelPendingReplay();graph.reset();dashboard.select?.(null);createPanel('graph');createPanel('dashboard');setContext(bundle.ai.before_bom.data.context.delivery_round_id);notify('화면 선택과 시연 대화를 초기화했습니다. 원장 변경은 없습니다.');});
+$('actor').addEventListener('change', () => {
+  if ($('actor').value) selectIdentity($('actor').value);
+  else if (identity) signOut();
+});
+window.addEventListener('hashchange', route);
+$('theme').addEventListener('click', () => {
+  const dark = document.documentElement.dataset.theme !== 'dark'; document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  $('theme').setAttribute('aria-label', dark ? '밝은 테마로 전환' : '어두운 테마로 전환');
+});
+$('reset').addEventListener('click', () => {
+  if (!snapshot) return;
+  generation++; requests.abort(); requests = new AbortController();
+  cancelPendingReplay(); graph.reset(); dashboard.select(null); createPanel('graph'); createPanel('dashboard');
+  notify('화면 선택과 대화를 초기화했습니다. 원장은 유지됩니다.');
+});
 start();

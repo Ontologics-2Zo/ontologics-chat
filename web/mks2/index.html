@@ -12,19 +12,19 @@
 <body>
   <div class="application">
     <header class="topbar">
-      <div class="brand"><span class="brand-mark" aria-hidden="true"></span>ontologics <span class="tag">MK-S2 · 합성 시연</span></div>
+      <div class="brand"><span class="brand-mark" aria-hidden="true"></span>ontologics <span class="tag">MK-S2 · 원장 조회</span></div>
       <nav class="tabs" aria-label="화면">
         <a href="#graph" id="tab-graph">온톨로지 · 질의</a>
         <a href="#dashboard" id="tab-dashboard">운영 대시보드</a>
       </nav>
       <span class="sp"></span>
       <div id="versions" class="version" aria-label="조회 기준">자료 읽는 중</div>
-      <label class="role-label">역할 <select id="actor" disabled title="시연 역할입니다. 서버 인증·권한은 연결되지 않았습니다."><option>미연결</option></select></label>
+      <label class="role-label">역할 <select id="actor" disabled title="서버의 개발 계정을 선택합니다."><option>미연결</option></select></label>
       <button class="btn sm" id="theme" type="button" aria-label="어두운 테마로 전환">테마</button>
-      <button class="btn sm" id="reset" type="button" title="화면 선택과 시연 대화만 초기화합니다">초기화</button>
+      <button class="btn sm" id="reset" type="button" title="화면 선택과 대화만 초기화합니다">초기화</button>
     </header>
     <main id="workspace" aria-busy="true">
-      <div id="load-state" class="load-state" role="status">비공개 시연 자료를 읽고 있습니다.</div>
+      <div id="load-state" class="load-state" role="status">서버 연결과 현재 계정을 확인하고 있습니다.</div>
       <section id="graph-view" class="screen graph-screen" aria-label="온톨로지와 질의" hidden>
         <div id="graph-stage"></div><aside id="graph-panel" class="assistant-panel" aria-label="업무 AI 질의"></aside>
       </section>

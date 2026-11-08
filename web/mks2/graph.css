@@ -84,3 +84,5 @@
 @media (prefers-reduced-motion: reduce) { .mks-edge.mks-hit > line, .mks-node.mks-hit .mks-node-ring { animation: none; } }
 @media (max-width: 700px) { .mks-graph-legend { max-width: calc(100% - 28px); top: 50px; } }
 @media (max-width: 520px) { .mks-graph-legend { display: none; } }
+
+.mks-graph-search{width:130px;min-width:0;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--fg);padding:3px 8px;font-size:12px}

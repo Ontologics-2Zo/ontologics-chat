@@ -34,8 +34,9 @@ function positionNodes(nodes, edges) {
     count.set(type, index + 1);
     return index;
   };
-  const targetOf = (id, predicate) => edges.some(edge => edge.target_node_id === id && edge.relation_type === predicate);
-  const sourceOf = (id, predicate) => edges.some(edge => edge.source_node_id === id && edge.relation_type === predicate);
+  const predicateOf = edge => edge.predicate || edge.label || edge.relation_type?.split(/[#/:]/).at(-1);
+  const targetOf = (id, predicate) => edges.some(edge => edge.target_node_id === id && predicateOf(edge) === predicate);
+  const sourceOf = (id, predicate) => edges.some(edge => edge.source_node_id === id && predicateOf(edge) === predicate);
   for (const node of nodes) {
     const id = node.node_id;
     const type = node.entity_ref?.entity_type || node.node_type;
@@ -48,7 +49,7 @@ function positionNodes(nodes, edges) {
         case 'customer': point = [90, 110 + 150 * occurrence(type)]; break;
         case 'contract_line': point = [260, 110 + 150 * occurrence(type)]; break;
         case 'delivery_round':
-          point = targetOf(id, 'HAS_ROUND') ? [260, 300] : [90, 450 + 170 * occurrence('other-round')]; break;
+          point = targetOf(id, 'HAS_ROUND') || sourceOf(id, 'roundOfContractLine') ? [260, 300] : [90, 450 + 170 * occurrence('other-round')]; break;
         case 'production_job': point = [470, 300 + 170 * occurrence(type)]; break;
         case 'production_report': point = [430, 130 + 150 * occurrence(type)]; break;
         case 'fg_receipt': point = [470, 470 + 150 * occurrence(type)]; break;
@@ -57,8 +58,8 @@ function positionNodes(nodes, edges) {
         case 'configuration': point = [690, 300 + 160 * occurrence(type)]; break;
         case 'item':
           if (targetOf(id, 'SUBSTITUTE_CANDIDATE')) point = [900, 40];
-          else if (targetOf(id, 'QUOTES_ITEM') || sourceOf(id, 'HAS_LOT')) point = [900, 160];
-          else point = [900, 450 + 140 * occurrence('other-item')];
+          else if (targetOf(id, 'QUOTES_ITEM') || sourceOf(id, 'HAS_LOT') || targetOf(id, 'offersItem') || targetOf(id, 'lotOf')) point = [900, 160];
+          else { const index = occurrence('other-item'); point = [720 + (index % 2) * 180, 450 + Math.floor(index / 2) * 140]; }
           break;
         case 'lot': point = [1100, 160 + 170 * occurrence(type)]; break;
         case 'reservation': point = [1100, 40 + 120 * occurrence(type)]; break;
@@ -85,8 +86,8 @@ function positionNodes(nodes, edges) {
     const source = slots.get(edge.source_node_id);
     const target = slots.get(edge.target_node_id);
     if (!source || !target) continue;
-    if (edge.relation_type === 'QUOTED_BY' && nodesById.get(target.node_id)?.entity_ref?.entity_type === 'supplier') target.y = source.y;
-    if (edge.relation_type === 'ARRIVED_AS') {
+    if (['QUOTED_BY', 'offerFromSupplier'].includes(predicateOf(edge)) && nodesById.get(target.node_id)?.entity_ref?.entity_type === 'supplier') target.y = source.y;
+    if (predicateOf(edge) === 'ARRIVED_AS') {
       target.x = source.x === 90 ? 215 : source.x;
       target.y = source.y === 750 ? 760 : source.y + 140;
     }
@@ -110,9 +111,16 @@ export function mountGraph(container, { bundle, onSelect = () => {}, onAsk = () 
   const graph = bundle?.graph?.data || { nodes: [], edges: [] };
   const meta = bundle?.graph?.meta || {};
   const presentation = new Map((Array.isArray(bundle?.presentation?.nodes) ? bundle.presentation.nodes : []).map(node => [node.id, node]));
-  const originalNodes = (Array.isArray(graph.nodes) ? graph.nodes : []).map(node => {
+  const lanes = { Customer: 'customer', Supplier: 'supplier', ContractLine: 'contract_line', DeliveryRound: 'delivery_round', ProductionJob: 'production_job', ProductConfiguration: 'configuration', InternalItem: 'item', PartLot: 'lot', InventoryReservation: 'reservation', Reservation: 'reservation', Demand: 'demand', SupplierQuote: 'quotation', Quotation: 'quotation', SourceDocument: 'source_document', BOMSnapshot: 'bom_snapshot', BOMLine: 'bom_line', ProductionReport: 'production_report', FGReceipt: 'fg_receipt', Shipment: 'shipment', Arrival: 'arrival' };
+  const shapeFor = type => ['Customer', 'Supplier'].includes(type) ? 'party' : ['PartLot', 'BoardUnit'].includes(type) ? 'phys' : /Event$|Report$|Receipt$|Arrival$|Shipment$/.test(type) ? 'event' : ['InternalItem', 'ProductConfiguration', 'ProductModel', 'Revision'].includes(type) ? 'design' : 'doc';
+  const originalNodes = (Array.isArray(graph.nodes) ? graph.nodes : []).map((raw, index, all) => {
+    const node = raw.node_id ? raw : { ...raw, node_id: raw.id, node_type: shapeFor(raw.type || ''), entity_ref: { entity_type: lanes[raw.type] || raw.type, entity_id: raw.id }, attributes: { kind_label: raw.type, display: raw.label || raw.display_id, properties: raw.attributes || {}, badge: meta.synthetic ? '합성 초기 이관' : undefined } };
     const visual = presentation.get(node.node_id);
-    if (!visual) return node;
+    if (!visual) {
+      if (meta.scope !== 'full_schema') return node;
+      const columns = Math.max(6, Math.ceil(Math.sqrt(all.length * 1.3)));
+      return { ...node, display_id: node.display_id || node.label, position: node.position || { x: 110 + (index % columns) * 210, y: 110 + Math.floor(index / columns) * 150 } };
+    }
     return {
       ...node,
       position: Number.isFinite(visual.x) && Number.isFinite(visual.y) ? { x: visual.x, y: visual.y } : node.position,
@@ -122,7 +130,7 @@ export function mountGraph(container, { bundle, onSelect = () => {}, onAsk = () 
       attributes: { ...node.attributes, kind_label: visual.kind ?? node.attributes?.kind_label, badge: visual.badge ?? node.attributes?.badge },
     };
   });
-  const originalEdges = Array.isArray(graph.edges) ? graph.edges : [];
+  const originalEdges = (Array.isArray(graph.edges) ? graph.edges : []).map(edge => edge.edge_id ? edge : { ...edge, edge_id: edge.id, source_node_id: edge.source, target_node_id: edge.target, relation_type: edge.predicate, evidence_refs: edge.evidence ? [edge.evidence] : [] });
   const positions = positionNodes(originalNodes, originalEdges);
   const nodeById = new Map(positions.map(node => [node.node_id, node]));
   const edges = originalEdges.filter(edge => nodeById.has(edge.source_node_id) && nodeById.has(edge.target_node_id));
@@ -155,7 +163,18 @@ export function mountGraph(container, { bundle, onSelect = () => {}, onAsk = () 
   }
   legend.append(html('span', 'mks-legend-bad', '■ 부족'), html('span', 'mks-legend-warn', '■ 확인 필요'), html('span', '', '┄ 초안'));
   const tools = html('div', 'mks-graph-tools');
-  tools.append(button('BOM 등록', onBom, 'mks-graph-button'), button('전체 보기', reset, 'mks-graph-button'));
+  const search = html('input', 'mks-graph-search');
+  search.type = 'search'; search.placeholder = '객체 찾기'; search.setAttribute('aria-label', '전체 그래프 객체 찾기');
+  search.addEventListener('keydown', event => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    const query = search.value.trim().toLocaleLowerCase();
+    if (!query) return;
+    const found = positions.find(node => [node.node_id, node.display_id, node.label].some(value => String(value || '').toLocaleLowerCase().includes(query)));
+    if (found) focus(found.node_id);
+    else { status.hidden = false; status.textContent = '현재 그래프에서 일치하는 객체를 찾지 못했습니다.'; }
+  });
+  tools.append(search, button('BOM 등록', onBom, 'mks-graph-button'), button('전체 보기', reset, 'mks-graph-button'));
   const detail = html('aside', 'mks-graph-detail');
   detail.setAttribute('aria-label', '선택 객체 상세');
   detail.hidden = true;
@@ -166,7 +185,9 @@ export function mountGraph(container, { bundle, onSelect = () => {}, onAsk = () 
     status.textContent = `그래프 동기화 대기 · 원장 v${meta.ledger_version ?? '미확인'} / 그래프 v${meta.projection_version ?? '미확인'}`;
     status.hidden = false;
   }
-  const scope = html('div', 'mks-graph-scope', 'MK-S2 시연 부분 그래프 · 전체 온톨로지 연결 전');
+  const scope = html('div', 'mks-graph-scope', meta.scope_label || `${meta.scope === 'full_schema' ? '전체 온톨로지 · T-Box / SHACL' : '서버 원장'} · 객체 ${originalNodes.length} · 관계 ${originalEdges.length}`);
+  scope.dataset.nodeCount = String(originalNodes.length);
+  scope.dataset.edgeCount = String(originalEdges.length);
   scope.setAttribute('role', 'note');
   canvas.append(svg, legend, status, tools, detail, scope);
   container.replaceChildren(canvas);
@@ -206,24 +227,29 @@ export function mountGraph(container, { bundle, onSelect = () => {}, onAsk = () 
     const node = nodeById.get(id);
     if (!node) { detail.hidden = true; return; }
     const attributes = node.attributes || {};
-    detail.replaceChildren(html('div', 'mks-detail-kind', attributes.kind_label || node.entity_ref?.entity_type || node.node_type), html('h4', '', node.node_id));
+    detail.replaceChildren(html('div', 'mks-detail-kind', attributes.kind_label || node.entity_ref?.entity_type || node.node_type), html('h4', '', node.display_id || node.node_id));
     detail.append(html('div', 'mks-detail-description', `${attributes.display || node.label || ''}${attributes.badge ? ` · ${attributes.badge}` : ''}`));
     if (attributes.properties && typeof attributes.properties === 'object') {
       const properties = html('dl', 'mks-detail-properties');
-      for (const [name, value] of Object.entries(attributes.properties)) properties.append(html('dt', '', name), html('dd', '', value === null ? '미확인' : value));
+      for (const [name, value] of Object.entries(attributes.properties)) properties.append(html('dt', '', name), html('dd', '', value == null ? '미확인' : typeof value === 'object' ? JSON.stringify(value) : value));
       detail.append(properties);
+    }
+    if (node.evidence) {
+      const evidence = html('dl', 'mks-detail-properties');
+      for (const [name, value] of Object.entries(node.evidence)) evidence.append(html('dt', '', name), html('dd', '', value == null ? '미확인' : typeof value === 'object' ? JSON.stringify(value) : value));
+      detail.append(evidence);
     }
     const relations = html('div', 'mks-detail-relations');
     for (const edge of edges.filter(edge => edge.source_node_id === id || edge.target_node_id === id)) {
       const outgoing = edge.source_node_id === id;
       const other = outgoing ? edge.target_node_id : edge.source_node_id;
-      const chip = button(other, () => focus(other), 'mks-detail-chip');
+      const chip = button(nodeById.get(other)?.display_id || nodeById.get(other)?.label || other, () => focus(other), 'mks-detail-chip');
       chip.title = `${outgoing ? '→' : '←'} ${edge.label || edge.relation_type} · ${edge.edge_id}`;
       chip.setAttribute('aria-label', `${other}, ${outgoing ? '나가는' : '들어오는'} 관계 ${edge.label || edge.relation_type}`);
       chip.dataset.edgeId = edge.edge_id;
       relations.append(chip);
     }
-    detail.append(relations, html('div', 'mks-detail-note', `데이터 기준 그래프 v${meta.projection_version ?? '미확인'}`));
+    detail.append(relations, html('div', 'mks-detail-note', `${node.node_id} · ${meta.scope === 'full_schema' ? `온톨로지 ${meta.ontology_version || '미확인'}` : `그래프 v${meta.projection_version ?? '미확인'}`}`));
     detail.hidden = false;
   }
 
@@ -264,7 +290,7 @@ export function mountGraph(container, { bundle, onSelect = () => {}, onAsk = () 
       const title = svgNode('title', {}, node.label || node.node_id);
       const ring = node.node_type === 'party' ? svgNode('rect', { class: 'mks-node-ring', x: -30, y: -14, width: 60, height: 28, rx: 14 }) : svgNode('circle', { class: 'mks-node-ring', r: 22 });
       const labelY = node.node_type === 'party' ? 28 : 36;
-      group.append(title, ring, makeShape(node.node_type), svgNode('text', { class: 'mks-node-id', y: labelY, 'text-anchor': 'middle' }, node.node_id), svgNode('text', { class: 'mks-node-label', y: labelY + 14, 'text-anchor': 'middle' }, node.label));
+      group.append(title, ring, makeShape(node.node_type), svgNode('text', { class: 'mks-node-id', y: labelY, 'text-anchor': 'middle' }, node.display_id || node.node_id), svgNode('text', { class: 'mks-node-label', y: labelY + 14, 'text-anchor': 'middle' }, node.label));
       if (attributes.badge) group.append(svgNode('text', { class: 'mks-node-badge', y: labelY + 27, 'text-anchor': 'middle' }, attributes.badge));
       group.addEventListener('click', event => { event.stopPropagation(); if (!dragMoved) select(node.node_id); });
       group.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); select(node.node_id); } });
@@ -298,7 +324,8 @@ export function mountGraph(container, { bundle, onSelect = () => {}, onAsk = () 
     for (const type of ['design', 'doc', 'event', 'phys', 'party']) selectedTypes.add(type);
     for (const filter of legend.querySelectorAll('button')) filter.setAttribute('aria-pressed', 'true');
     detail.hidden = true;
-    updateView({ ...STAGE }, true);
+    if (positions.length) fit(positions.map(node => node.node_id));
+    else updateView({ ...STAGE }, true);
     render();
   }
 
@@ -372,7 +399,7 @@ export function mountGraph(container, { bundle, onSelect = () => {}, onAsk = () 
   svg.addEventListener('wheel', event => {
     event.preventDefault();
     const factor = event.deltaY > 0 ? 1.12 : 1 / 1.12;
-    const width = Math.max(280, Math.min(4200, view.width * factor));
+    const width = Math.max(280, Math.min(Math.max(4200, positions.length * 220), view.width * factor));
     const height = width * 840 / 1400;
     updateView({ x: view.x + (view.width - width) / 2, y: view.y + (view.height - height) / 2, width, height });
   }, { passive: false });
@@ -386,6 +413,7 @@ export function mountGraph(container, { bundle, onSelect = () => {}, onAsk = () 
   });
   canvas.addEventListener('keydown', event => { if (event.key === 'Escape') reset(); });
   render();
+  if (positions.length) fit(positions.map(node => node.node_id));
   return {
     focus,
     replay,
