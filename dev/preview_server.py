@@ -18,7 +18,10 @@ from urllib.parse import urlsplit
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 STATIC_FILES = {
-    "/": ("index.html", "text/html; charset=utf-8"),
+    "/": ("shell.html", "text/html; charset=utf-8"),
+    "/shell.css": ("shell.css", "text/css; charset=utf-8"),
+    "/shell.js": ("shell.js", "text/javascript; charset=utf-8"),
+    "/current/": ("index.html", "text/html; charset=utf-8"),
     "/index.html": ("index.html", "text/html; charset=utf-8"),
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/styles.css": ("styles.css", "text/css; charset=utf-8"),
@@ -26,6 +29,14 @@ STATIC_FILES = {
     "/dashboard.css": ("dashboard.css", "text/css; charset=utf-8"),
     "/graph.js": ("graph.js", "text/javascript; charset=utf-8"),
     "/graph.css": ("graph.css", "text/css; charset=utf-8"),
+    "/mks2/": ("mks2/index.html", "text/html; charset=utf-8"),
+    "/mks2/index.html": ("mks2/index.html", "text/html; charset=utf-8"),
+    "/mks2/app.js": ("mks2/app.js", "text/javascript; charset=utf-8"),
+    "/mks2/styles.css": ("mks2/styles.css", "text/css; charset=utf-8"),
+    "/mks2/dashboard.js": ("mks2/dashboard.js", "text/javascript; charset=utf-8"),
+    "/mks2/dashboard.css": ("mks2/dashboard.css", "text/css; charset=utf-8"),
+    "/mks2/graph.js": ("mks2/graph.js", "text/javascript; charset=utf-8"),
+    "/mks2/graph.css": ("mks2/graph.css", "text/css; charset=utf-8"),
 }
 FIXTURE_FILES = {
     "session": "00_session.json",
@@ -45,7 +56,8 @@ MAX_FIXTURE_BYTES = 2 * 1024 * 1024
 CSP = (
     "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
     "img-src 'self' data:; font-src 'self'; connect-src 'self'; "
-    "base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'"
+    "base-uri 'none'; form-action 'self'; frame-src 'self'; "
+    "frame-ancestors 'self'; object-src 'none'"
 )
 
 
@@ -132,7 +144,7 @@ class PreviewHandler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("Cross-Origin-Resource-Policy", "same-origin")
-        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("X-Frame-Options", "SAMEORIGIN")
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)

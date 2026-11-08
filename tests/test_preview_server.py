@@ -23,6 +23,14 @@ class PreviewBoundaryTests(unittest.TestCase):
         self.web = self.repo / "web"
         self.web.mkdir(parents=True)
         (self.web / "index.html").write_text("<!doctype html><title>Independent test fixture</title>")
+        (self.web / "shell.html").write_text('<!doctype html><iframe src="/current/"></iframe><iframe src="/mks2/"></iframe>')
+        (self.web / "shell.css").write_text("/* shell styles */")
+        (self.web / "shell.js").write_text("// shell behavior")
+        (self.web / "mks2").mkdir()
+        (self.web / "mks2" / "index.html").write_text('<!doctype html><title>Separate MK-S2</title><script type="module" src="./app.js"></script>')
+        for filename in ("app.js", "styles.css", "dashboard.js", "dashboard.css", "graph.js", "graph.css"):
+            (self.web / filename).write_text(f"/* preserved current {filename} */")
+            (self.web / "mks2" / filename).write_text(f"/* separate MK-S2 {filename} */")
         (self.repo / "private.txt").write_text("MUST_NOT_BE_SERVED")
         self.private = self.base / "private"
         fixture_root = self.private / "mk-s2" / "fixtures"
@@ -93,7 +101,8 @@ class PreviewBoundaryTests(unittest.TestCase):
             self.assertNotIn(b"MUST_NOT_BE_SERVED", body)
 
     def test_unknown_paths_traversal_queries_and_static_symlinks_rejected(self):
-        paths = ["/../private.txt", "/%2e%2e/private.txt", "/private_inputs/", "/fixtures/00_session.json", "/api/preview?file=private.txt", "/.env", "/%5c..%5cprivate.txt"]
+        paths = ["/../private.txt", "/%2e%2e/private.txt", "/private_inputs/", "/fixtures/00_session.json", "/api/preview?file=private.txt", "/.env", "/%5c..%5cprivate.txt", "/mks2/../app.js", "/mks2/%2e%2e/app.js", "/mks2/private.txt"]
+        (self.web / "mks2" / "private.txt").write_text("MUST_NOT_BE_SERVED")
         with self.running() as server:
             for path in paths:
                 with self.subTest(path=path):
@@ -101,8 +110,41 @@ class PreviewBoundaryTests(unittest.TestCase):
                     self.assertEqual(status, 404)
                     self.assertNotIn(b"MUST_NOT_BE_SERVED", body)
             self.assertEqual(self.request(server, "/")[0], 200)
+            (self.web / "app.js").unlink()
             (self.web / "app.js").symlink_to(self.repo / "private.txt")
             self.assertEqual(self.request(server, "/app.js")[0], 404)
+
+    def test_shell_current_and_mks2_routes_remain_separate(self):
+        with self.running() as server:
+            status, _, shell = self.request(server, "/")
+            self.assertEqual(status, 200)
+            self.assertEqual(shell, (self.web / "shell.html").read_bytes())
+            for path in ("/current/", "/index.html"):
+                self.assertEqual(self.request(server, path)[2], (self.web / "index.html").read_bytes())
+            for path in ("/mks2/", "/mks2/index.html"):
+                self.assertEqual(self.request(server, path)[2], (self.web / "mks2" / "index.html").read_bytes())
+            for filename in ("app.js", "styles.css", "dashboard.js", "dashboard.css", "graph.js", "graph.css"):
+                with self.subTest(filename=filename):
+                    current = self.request(server, "/" + filename)
+                    separate = self.request(server, "/mks2/" + filename)
+                    self.assertEqual((current[0], separate[0]), (200, 200))
+                    self.assertEqual(current[2], (self.web / filename).read_bytes())
+                    self.assertEqual(separate[2], (self.web / "mks2" / filename).read_bytes())
+                    self.assertNotEqual(current[2], separate[2])
+            for filename in ("shell.css", "shell.js"):
+                self.assertEqual(self.request(server, "/" + filename)[0], 200)
+
+    def test_same_origin_frames_allowed_without_external_frame_access(self):
+        with self.running() as server:
+            for path in ("/", "/current/", "/mks2/"):
+                with self.subTest(path=path):
+                    status, headers, _ = self.request(server, path, headers={"Sec-Fetch-Site": "same-origin", "Sec-Fetch-Dest": "iframe"})
+                    self.assertEqual(status, 200)
+                    self.assertEqual(headers["X-Frame-Options"], "SAMEORIGIN")
+                    directives = {part.strip() for part in headers["Content-Security-Policy"].split(";")}
+                    self.assertIn("frame-src 'self'", directives)
+                    self.assertIn("frame-ancestors 'self'", directives)
+                    self.assertEqual(self.request(server, path, headers={"Sec-Fetch-Site": "cross-site", "Sec-Fetch-Dest": "iframe"})[0], 403)
 
     def test_writes_rejected_and_cross_origin_cannot_read_private_data(self):
         with self.running() as server:

@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const options = Object.fromEntries(process.argv.slice(2).map(arg => arg.replace(/^--/,'').split(/=(.*)/s)));
-const base = options.url || 'http://127.0.0.1:8765/';
+const base = options.url || 'http://127.0.0.1:8765/mks2/';
 const cdp = options.cdp || 'http://127.0.0.1:9233';
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 if (!options.artifacts) throw Error('An explicit --artifacts directory outside the repository is required.');

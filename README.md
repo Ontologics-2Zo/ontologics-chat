@@ -4,6 +4,20 @@ MK-S2의 화면·핵심 동선을 유지하면서 제조 업무를 실제 서버
 
 **현재 코드: MK-S2의 내용·구성을 재현한 읽기 전용 화면 미리보기. 실제 서비스 원장·승인·T-Box/A-Box 투영·모델 연결은 이 코드에서 구현 완료되지 않았다.** 이전 미커밋 서비스가 없는 새 환경에서 사용자의 최신 화면 구현 요청에 따라 작성했다. 이전 서비스 복원본으로 취급하지 않는다.
 
+현재 화면은 커밋 `b3ee599`로 보존하고 MK-S2 작업 공간을 별도로 추가했다. 이후 화면 수정은 `web/mks2/`에만 적용한다. 처음에는 검증한 화면을 같은 출발점으로 사용하며, 원본 HTML 자체를 공개 복사한 것이 아니다.
+
+| 탭 | 동작·주소 | 수정 경계 |
+|---|---|---|
+| 현재 구현 | `/current/` — 기존 화면과 선택·초안 유지 | `web/` 직속 7개 화면 파일 보존 |
+| MK-S2 | `/mks2/` — 독립된 화면·대화·초기화 | `web/mks2/`에서 이후 수정 |
+| 확인 목록 | `/#checks` — 수동 확인 10항목과 미연결 범위 | 수동 체크는 새로고침 전까지 유지; 서비스 완료 판정과 분리 |
+
+`/`에서 세 탭을 전환한다. 탭 전환만으로 기존 화면을 다시 로드하지 않는다. 원본과 전체 뷰포트를 직접 비교하려면 `/mks2/`를 단독으로 연다.
+
+최종 온톨로지의 전체 클래스·관계·제약·근거 계약은 유지한다. 현재 보이는 그래프는 시연용 부분 그래프이며, 시나리오 동작을 전체 온톨로지 보존·연결 완료로 인정하지 않는다. 전체 온톨로지의 실데이터 연결은 공식 T10 계약에 따라 별도로 검증한다.
+
+최종 목표는 **MK-S2의 외형·동선만 유지하고, 내용은 모두 우리 온톨로지·원장·도구 결과로 바꾸는 것**이다. 이 브랜치는 그 이전의 화면 보존·작업 공간 분리 단계다. 미래 사건·기대값이 섞인 오프라인 전체 그래프를 현재 원장으로 바로 표시하거나 고정 답변을 실제 질의로 승격하지 않는다.
+
 ## 화면 실행 — Cloud / Apple Silicon Mac
 
 Python 3.10 이상과 최신 브라우저를 사용한다. 이 화면에는 외부 Python/npm 의존성, 설치 과정, DB migration, Docker가 없다. 의존성 lock과 migration은 해당 없음이며 전체 서비스 패키지를 뜻하지 않는다.
@@ -30,15 +44,17 @@ Mac에서 위 명령을 실행한 경우 **그 Mac의** 브라우저로 `http://
 
 ```bash
 python3 -m unittest discover -s tests -p 'test_preview_server.py' -v
-node --check web/app.js
-node --check web/dashboard.js
-node --check web/graph.js
+node --check web/shell.js
+node --check web/mks2/app.js
+node --check web/mks2/dashboard.js
+node --check web/mks2/graph.js
 ```
 
 선택적 브라우저 검사는 Node 22 이상과 별도로 실행한 Chromium의 loopback CDP 포트가 필요하다. 격리된 브라우저 프로필을 사용한다. 캡처에 비공개 시연 내용이 포함될 수 있으므로 산출물 경로는 Git 밖이어야 한다.
 
 ```bash
-node dev/check_ui.mjs --cdp=http://127.0.0.1:9233 --url=http://127.0.0.1:8765/ --artifacts=/tmp/mks2-private-ui-check
+node dev/check_ui.mjs --cdp=http://127.0.0.1:9233 --url=http://127.0.0.1:8765/mks2/ --artifacts=/tmp/mks2-private-ui-check
+node dev/check_tabs.mjs --cdp=http://127.0.0.1:9233 --url=http://127.0.0.1:8765/ --artifacts=/tmp/mks2-private-tab-check
 ```
 
 이 검사는 화면·읽기 전용 접근·근거 재생 취소·버전 불일치 처리에 한정한다. 실제 API/DB/권한/승인/SHACL/모델/관측 인수는 별도다. 원본 HTML·fixture·비밀 설정·DB·평가 원문은 실행 ZIP이나 공개 Git에 포함하지 않는다.
