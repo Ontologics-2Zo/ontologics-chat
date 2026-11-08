@@ -1,6 +1,6 @@
 # 로컬 실행과 Codex Cloud 환경 안내
 
-2026-11-08 갱신. 현재 `codex/mks2-ui-tabs`의 **INITIAL 원장 조회 서비스** 실행 안내다. 과거 저장소 초기화·T00~T01 준비·환경 Publish 절차는 현재 로컬 실행 절차가 아니다. main 병합과 Cloud 환경 Publish는 로컬 실행에 필요하지 않다.
+2026-11-08 갱신. 이번 PR 병합 후 `main`을 기준으로 사용하는 **INITIAL 원장 조회 서비스** 실행 안내다. 작업 브랜치는 `codex/mks2-ui-tabs`이며 병합 상태는 GitHub PR에서 확인한다. 과거 저장소 초기화·T00~T01 준비·환경 Publish 절차는 현재 로컬 실행 절차가 아니다. Cloud 환경 Publish는 로컬 실행에 필요하지 않다.
 
 Linux Cloud 검증은 [실행 기록](SERVICE-INITIAL-20261108.md)을 따른다. 아래 Mac 절차는 현재 코드에 맞춘 안내이며 **Apple Silicon Mac 실기 실행은 NOT_RUN**이다. 실제 BOM·구매·Agent·모델·전체 CQ 완료를 의미하지 않는다.
 
@@ -14,10 +14,10 @@ Linux Cloud 검증은 [실행 기록](SERVICE-INITIAL-20261108.md)을 따른다.
 
 ## 2. 코드 받기
 
-아직 main에는 구현이 병합되지 않았다. 처음 받는 경우:
+이번 PR 병합 후에는 `main`에서 받는다. 처음 받는 경우:
 
 ```bash
-git clone --branch codex/mks2-ui-tabs https://github.com/Ontologics-2Zo/ontologics-chat.git
+git clone --branch main https://github.com/Ontologics-2Zo/ontologics-chat.git
 cd ontologics-chat
 ```
 
@@ -25,8 +25,8 @@ cd ontologics-chat
 
 ```bash
 git fetch origin
-git switch codex/mks2-ui-tabs
-git pull --ff-only origin codex/mks2-ui-tabs
+git switch main
+git pull --ff-only origin main
 ```
 
 이하 명령은 저장소 루트에서 실행한다.
@@ -100,7 +100,7 @@ curl --fail http://127.0.0.1:8870/health
 docker --host="unix://$ONTO_DOCKER_SOCKET" stop ontologics-pg ontologics-neo4j
 ```
 
-다음 실행 때 같은 입력·runtime 파일을 지정하고 4~5단계를 반복한다. 코드 갱신은 앱을 종료한 상태에서 `git pull --ff-only origin codex/mks2-ui-tabs`와 `uv sync --locked --python 3.12`로 한다. 컨테이너·볼륨·runtime 파일을 지워 재설정하지 않는다.
+다음 실행 때 같은 입력·runtime 파일을 지정하고 4~5단계를 반복한다. 코드 갱신은 앱을 종료한 상태에서 `git pull --ff-only origin main`과 `uv sync --locked --python 3.12`로 한다. 컨테이너·볼륨·runtime 파일을 지워 재설정하지 않는다.
 
 ## 자주 막히는 지점
 

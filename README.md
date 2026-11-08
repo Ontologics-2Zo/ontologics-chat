@@ -20,18 +20,18 @@ MK-S2의 화면·핵심 동선을 유지하면서 제조 업무를 실제 서버
 
 ## ZIP 없이 Git으로 받기
 
-화면 구현은 **`codex/mks2-ui-tabs` 브랜치**에 있다. `main`에서 `git pull`만 하면 이 화면을 받지 못한다. 기존 로컬 저장소에서 다음을 실행한다.
+**이번 PR 병합 후 실행용 기준 브랜치는 `main`이다.** `codex/mks2-ui-tabs`는 이번 구현의 작업 브랜치이며, 병합 여부는 GitHub PR에서 확인한다. 기존 로컬 저장소에서 다음을 실행한다.
 
 ```bash
 git fetch origin
-git switch codex/mks2-ui-tabs
-git pull --ff-only origin codex/mks2-ui-tabs
+git switch main
+git pull --ff-only origin main
 ```
 
 저장소가 처음이라면 다음으로 받는다.
 
 ```bash
-git clone --branch codex/mks2-ui-tabs https://github.com/Ontologics-2Zo/ontologics-chat.git
+git clone --branch main https://github.com/Ontologics-2Zo/ontologics-chat.git
 cd ontologics-chat
 ```
 
