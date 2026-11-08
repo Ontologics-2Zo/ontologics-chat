@@ -90,4 +90,6 @@ Linux Cloud의 실제 PostgreSQL·Neo4j를 사용하되, 성공 경로의 BOM �
 
 ## Git과 후속 인계
 
+공개 코드와 비식별 검증 기록은 [Draft PR #2](https://github.com/Ontologics-2Zo/ontologics-chat/pull/2)에 올렸다. 구현 커밋은 `d9da671`이며 실제 원본 경로가 차단된 상태라 main에 병합하지 않았다.
+
 공개 가능한 코드·작업 상태·비식별 검증 요약을 작업 브랜치와 draft PR로 보존한다. 실제 원본 경로의 BLOCKED와 합성 검사 범위를 PR에 명시한다. 초기 구현 PR의 main 병합 승인 DEC-H24를 이번 후속 PR의 자동 병합으로 해석하지 않는다. 이번 실행은 배포·공급사 송신·운영 DB 변경을 포함하지 않는다. 사용자가 요청한 실제 원본 등록·승인·반영은 지원되는 실행 환경에서 개발 원장의 명시적 업무 절차로 이어간다.
