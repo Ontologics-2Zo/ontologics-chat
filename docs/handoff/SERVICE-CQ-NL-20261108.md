@@ -1,8 +1,23 @@
 # SERVICE-CQ-NL-20261108 — 자연어 CQ의 원장 조회와 판단 범위
 
-2026-11-08 · 작업 브랜치 `codex/cq68-natural-language` · 검증 코드 `aecd23a` · 기준 main `2e6f24c` (PR #2 병합).
+2026-11-08 · 작업 브랜치 `codex/cq68-natural-language` · 병합 전 최종 검토 코드 `cbbc55e` · 선행 검증 코드 `aecd23a` · 기준 main `2e6f24c` (PR #2 병합).
 
-**상태: VERIFIED — 아래의 제한된 규칙 기반 읽기 slice에 한정.** Mac의 실제 PostgreSQL·Neo4j·제한 Runner 환경에서 Python 223개·Node 11개 검사, native Chrome 수동 확인, 최종 8870 재시작과 읽기 API 9질의를 통과했다. 전체 Agent·범용 자연어·CQ20·부모 Task 수용은 미완료다. DEC-H27은 기존 MD의 CQ·근거·가정 계약에 따른 읽기 기능 구현 요청이다. PR #2의 병합 승인을 이 후속 변경의 자동 병합 승인으로 해석하지 않으며 새 main 병합은 수행하지 않았다.
+**선행 상태: VERIFIED — `aecd23a`의 제한된 규칙 기반 읽기 slice에 한정.** Mac의 실제 PostgreSQL·Neo4j·제한 Runner 환경에서 Python 223개·Node 11개 검사, native Chrome 수동 확인, 최종 8870 재시작과 읽기 API 9질의를 통과했다. 전체 Agent·범용 자연어·CQ20·부모 Task 수용은 미완료다. DEC-H27은 기존 MD의 CQ·근거·가정 계약에 따른 읽기 기능 구현 요청이며, 당시 PR #2의 병합 승인을 후속 변경의 자동 병합 승인으로 확대하지 않았다.
+
+**후속 승인 DEC-H28:** 사용자가 [PR #3](https://github.com/Ontologics-2Zo/ontologics-chat/pull/3)의 최종 검토·main 병합·Mac main 재시작을 명시적으로 승인했다. 최종 검토는 아래 병합 전 체크포인트에서 통과했으며 병합·main 재시작은 아직 완료로 기록하지 않는다. 실제 병합 상태와 커밋은 GitHub PR #3을 기준으로 확인한다. 기존 DB·원본 파일·runtime 설정·보존 화면7파일·전체 온톨로지를 유지하고 DB를 초기화하지 않는다. 아래의 브랜치 검증 증거와 후속 main 검증을 구분한다.
+
+## PR #3 병합 전 최종 확인 — PRE-MERGE CHECKPOINT
+
+**최종 검토 PASS / 병합·main 재시작 확인 대기.** 대상 코드는 `cbbc55e5545f451efc673e5f3a5f885266a99335`다. 검토에서 발견한 근거 선택 시 재생 취소, 정밀 수율 표시, 수율 제외 표현의 처리 세 항목을 수정했고 독립 backend/frontend 재검토에서 추가 병합 차단 사항이 없었다. 전체 Agent·범용 자연어·CQ20 인수를 완료한 것은 아니다.
+
+| 확인 | 결과 |
+|---|---|
+| 비공개 환경을 주입한 `.venv/bin/python dev/verify_service.py --runtime-file <Git 밖 runtime>` | 실제 Mac PostgreSQL·Neo4j·Runner suite 226 PASS, 24.622초 |
+| `node --test tests/*.mjs` | 11 PASS |
+| native Chrome 8870 | 즉시 답변·자동 근거 재생 중 답변의 LOT 근거 선택 → 해당 LOT 상세 선택·이전 재생 취소·답변/v2 메타데이터 유지 PASS |
+| 병합 전 보호 자료 | PostgreSQL 백업 및 새 DB/BOM/온톨로지/runtime/Runner/로컬 IDE 설정/Docker 기준 상태를 Git 밖에 보존 |
+
+최종 Python suite 증거 SHA-256은 `8e4baff41120fba1c1644fdf5b87703ee42a2806ec9776344b4efb5d3930e670`이다. 아래 223/11 검사와 기존 hash는 `aecd23a`의 선행 증거로 보존한다. 이 체크포인트는 병합 후 main 실행 증거를 대신하지 않는다.
 
 이전 [Mac BOM 실행 기록](SERVICE-BOM-MAC-20261108.md)의 실제 원문 74행·선택 5품목·69행 미확인, 원장/그래프 v2와 보존 증거는 해당 버전의 기록으로 유지한다. 그때 확인한 키워드 분기의 한계나 수량 검사를 이번 자연어 표현 범위의 통과 증거로 이월하지 않는다.
 

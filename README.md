@@ -4,7 +4,7 @@ MK-S2의 화면·핵심 동선을 유지하면서 제조 업무를 실제 서버
 
 **현재 코드: INITIAL 원장·같은 버전 그래프 조회와 BOM 원본 등록·검토·승인·소요 조회를 연결한 개발 서비스다.** Mac arm64의 제한 Runner 검사를 통과해 실제 원본 74행을 보존하고, 선택 5품목의 조건부 결정을 독립 검토·승인 후 개발 원장에 반영했다. 나머지 69행은 UNRESOLVED이며 전체 판정은 PARTIAL/제조 가능성 UNKNOWN이다. 최신 범위와 UI·보존·재시작 검증 결과는 [Mac BOM 실행 기록](docs/handoff/SERVICE-BOM-MAC-20261108.md)을 따른다. 과거 [Cloud 차단·합성 검사 기록](docs/handoff/SERVICE-BOM-20261108.md)과 [INITIAL 증거](docs/handoff/SERVICE-INITIAL-20261108.md)는 별도로 보존한다. 구매·검사·Agent·모델·영속 복구·전체 서비스 인수는 미완료다.
 
-후속 `codex/cq68-natural-language`에서는 자연어·복합 질문을 제한된 읽기 기능으로 해석하고 같은 원장의 수량·소요·부족을 설명한다. 실제 원문·합성 원장·가정·미확인을 구분하며 납기 근거 부족은 PARTIAL/UNKNOWN으로 표시한다. 코드 `aecd23a`에서 Python 223개·Node 11개·읽기 API 9질의, 수동 UI·8870 재시작·보존 검증을 통과했다. 해당 제한된 읽기 slice의 증거와 한계는 [자연어 CQ 기록](docs/handoff/SERVICE-CQ-NL-20261108.md)을 따른다. LLM이나 전체 Agent 완료를 뜻하지 않으며 새 main 병합은 수행하지 않았다.
+후속 `codex/cq68-natural-language`에서는 자연어·복합 질문을 제한된 읽기 기능으로 해석하고 같은 원장의 수량·소요·부족을 설명한다. 실제 원문·합성 원장·가정·미확인을 구분하며 납기 근거 부족은 PARTIAL/UNKNOWN으로 표시한다. 코드 `aecd23a`에서 Python 223개·Node 11개·읽기 API 9질의, 수동 UI·8870 재시작·보존 검증을 통과했다. 해당 제한된 읽기 slice의 증거와 한계는 [자연어 CQ 기록](docs/handoff/SERVICE-CQ-NL-20261108.md)을 따른다. LLM이나 전체 Agent 완료를 뜻하지 않는다. 최신 DEC-H28로 [PR #3](https://github.com/Ontologics-2Zo/ontologics-chat/pull/3) 최종 검토·main 병합·Mac main 재시작을 승인받았다. `cbbc55e`의 병합 전 최종 검토는 Python 226 PASS·Node 11 PASS·수동 재생/근거 선택 확인으로 통과했다. 병합·main 재시작은 아직 완료로 기록하지 않으며 실제 병합 상태는 GitHub PR #3을 따른다. 기존 DB·원본 파일·runtime 설정은 보존한다.
 
 현재 화면은 커밋 `b3ee599`로 보존하고 MK-S2 작업 공간을 별도로 추가했다. 이후 화면 수정은 `web/mks2/`에만 적용한다. 처음에는 검증한 화면을 같은 출발점으로 사용하며, 원본 HTML 자체를 공개 복사한 것이 아니다.
 
@@ -22,7 +22,7 @@ MK-S2의 화면·핵심 동선을 유지하면서 제조 업무를 실제 서버
 
 ## ZIP 없이 Git으로 받기
 
-**초기 원장 서비스와 Mac BOM 후속 구현은 PR #1·#2로 `main`에 병합됐다.** PR #2 병합 커밋은 `2e6f24c`다. 자연어 CQ 후속 변경은 `codex/cq68-natural-language`에서 진행하며 해당 변경의 병합 상태를 별도로 확인한다. 기존 로컬 저장소에서는 다음을 실행한다.
+**초기 원장 서비스와 Mac BOM 후속 구현은 PR #1·#2로 `main`에 병합됐다.** PR #2 병합 커밋은 `2e6f24c`다. 자연어 CQ의 PR #3은 DEC-H28에 따라 최종 검토·병합·Mac main 재시작을 진행하며 실제 완료 상태를 별도로 확인한다. 기존 로컬 저장소에서는 다음을 실행한다.
 
 ```bash
 git fetch origin
