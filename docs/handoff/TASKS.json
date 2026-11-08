@@ -2,8 +2,8 @@
   "schema_version": "1.0",
   "created_on": "2026-11-08",
   "repository": "Ontologics-2Zo/ontologics-chat",
-  "artifact_kind": "development_handoff_plan_not_runtime",
-  "status": "PLAN_ONLY",
+  "artifact_kind": "development_handoff_and_execution_index",
+  "status": "IN_PROGRESS",
   "source_precedence": [
     "latest_explicit_user_decisions",
     "official_v1.7_business_and_architecture",
@@ -16,15 +16,19 @@
     "T01"
   ],
   "next_batch": [
+    "T00",
+    "T01",
     "T02",
-    "T03"
+    "T03",
+    "T04",
+    "T05"
   ],
   "official_first_batch": [
     "T00",
     "T01",
     "T02"
   ],
-  "first_batch_note": "공식 첫 묶음을 더 작게 나눈 인계 제안이다. 서버 개발 신원 T02를 삭제하거나 승인/업무 쓰기 전에 생략하지 않는다. 이번 자료 준비는 실행 허가나 코드 구현이 아니다.",
+  "first_batch_note": "최초 묶음의 역사적 기록이다. 후속 승인으로 1차 구현을 진행하며 현재 구현·검증 범위는 SERVICE-INITIAL-20261108을 따른다. 서버 신원과 공식 선행/전체 인수 조건은 생략하지 않는다.",
   "dependency_rule": "prerequisites는 공식 전체 Task 의존성이다. 1차 slice는 아래 phase1_slices에 지정한 동등 범위의 선행 수용을 충족해야 착수한다. slice 완료는 부모 전체 완료가 아니며 후속 요구를 그대로 유지한다.",
   "evidence_rule": "실제 저장소에서 확인한 명령·경로·환경·실행결과만 채운다. NOT_STARTED/NOT_RUN/BLOCKED와 Fake/실모델/운영 결과를 구분한다.",
   "all_requirements_preserved": true,
@@ -49,7 +53,8 @@
         "T03",
         "T08"
       ],
-      "retained": "T09.2 전체 4모델·5스냅샷 일반화"
+      "retained": "T09.2 전체 4모델·5스냅샷 일반화",
+      "status": "NOT_STARTED"
     },
     {
       "id": "T10.1",
@@ -58,7 +63,9 @@
       "requires": [
         "T09.1"
       ],
-      "retained": "전체 시간/품질/추적 관계와 수용"
+      "retained": "전체 시간/품질/추적 관계와 수용",
+      "status": "NOT_STARTED",
+      "preparatory_scope": "INITIAL 조회·전체 스키마 검증 준비는 구현했지만 T09.1 선행 및 본 slice 수용은 미완료"
     },
     {
       "id": "T11.1",
@@ -67,7 +74,8 @@
       "requires": [
         "T10.1"
       ],
-      "retained": "전체 corpus/CQ와 선택 검색 전략 평가"
+      "retained": "전체 corpus/CQ와 선택 검색 전략 평가",
+      "status": "NOT_STARTED"
     },
     {
       "id": "T12.1",
@@ -78,7 +86,8 @@
         "T09.1",
         "T11.1"
       ],
-      "retained": "전체 모델·형식·후속 사용례"
+      "retained": "전체 모델·형식·후속 사용례",
+      "status": "NOT_STARTED"
     },
     {
       "id": "T13.1",
@@ -90,7 +99,8 @@
         "T09.1",
         "T11.1"
       ],
-      "retained": "이동/반납/폐기·범용 대체/다업무 원장"
+      "retained": "이동/반납/폐기·범용 대체/다업무 원장",
+      "status": "NOT_STARTED"
     },
     {
       "id": "T14.1",
@@ -99,7 +109,8 @@
       "requires": [
         "T13.1"
       ],
-      "retained": "다품목/다업무 일반화 및 전체 예외"
+      "retained": "다품목/다업무 일반화 및 전체 예외",
+      "status": "NOT_STARTED"
     },
     {
       "id": "T19.1",
@@ -110,7 +121,9 @@
         "T12.1",
         "T14.1"
       ],
-      "retained": "생산/납품/클레임을 포함한 전체 통합 게이트"
+      "retained": "생산/납품/클레임을 포함한 전체 통합 게이트",
+      "status": "IN_PROGRESS",
+      "completion_note": "현재 서버 조회·검증 일부만 구현; 공식 선행 및 전체 slice 인수 미완료"
     },
     {
       "id": "T22.1",
@@ -118,7 +131,9 @@
       "scope": "첫 Task부터 검증 계약·계측; 기능별 Fake 서버 통합·CQ 회귀; 허용된 live 평가",
       "requires": [],
       "prerequisite_note": "각 검증은 해당 구현 Task의 실행 가능한 경로가 존재한 뒤 수행한다. 빈 선행은 전체 비교 실험 완료 가능이라는 뜻이 아니다.",
-      "retained": "T07/T19/T20/T21 이후 전체 비교·규모·live 검증"
+      "retained": "T07/T19/T20/T21 이후 전체 비교·규모·live 검증",
+      "status": "IN_PROGRESS",
+      "completion_note": "현재 서버 조회·검증 일부만 구현; 공식 선행 및 전체 slice 인수 미완료"
     }
   ],
   "tasks": [
@@ -128,7 +143,7 @@
       "prerequisites": [],
       "requirements_original_text": "전체 요구 목록, DEV-ID, AG16, LG17, OBS17",
       "source_line": 1145,
-      "status": "NOT_STARTED",
+      "status": "IN_PROGRESS",
       "phase": "FOUNDATION",
       "sources": [
         {
@@ -171,12 +186,24 @@
         "실제 실행한 명령과 출력/실패 사유"
       ],
       "scope_and_completion": "현재 인계 문서의 추적 골격을 저장소 실물에 대조한다. 지금 문서 작성만으로 T00을 완료 처리하지 않는다.",
-      "verification_commands": [],
-      "execution_evidence": [],
-      "actual_implementation_paths": [],
+      "verification_commands": [
+        "python dev/audit_sources.py"
+      ],
+      "execution_evidence": [
+        {
+          "record": "docs/handoff/SERVICE-INITIAL-20261108.md",
+          "scope": "155개 원본 hash 및 literal ID349개/위치1171개 대응",
+          "parent_complete": false
+        }
+      ],
+      "actual_implementation_paths": [
+        "dev/audit_sources.py",
+        "tests/test_source_audit.py"
+      ],
       "actual_api_or_tool_contract": null,
       "blockers": [],
-      "goal_summary": "원본/목업/합성 자료/현 구현/제안/미검증 구분표; 요구 ID별 화면·API·Task·검증 추적표와 소스 해시; 현재 실행 명령 및 환경 제약 목록"
+      "goal_summary": "원본/목업/합성 자료/현 구현/제안/미검증 구분표; 요구 ID별 화면·API·Task·검증 추적표와 소스 해시; 현재 실행 명령 및 환경 제약 목록",
+      "remaining_acceptance": "ID 없는 서술 요구·범위 전개·예외의 전수 추적 미완료"
     },
     {
       "id": "T01",
@@ -186,7 +213,7 @@
       ],
       "requirements_original_text": "CM04, CM05, CM06",
       "source_line": 1146,
-      "status": "NOT_STARTED",
+      "status": "IN_PROGRESS",
       "phase": "FOUNDATION",
       "sources": [
         {
@@ -226,11 +253,26 @@
       ],
       "scope_and_completion": "첫 개발 묶음에서 T00 다음에 구현한다. 서비스 코드 생성은 후속 개발 요청에서 수행한다.",
       "verification_commands": [],
-      "execution_evidence": [],
-      "actual_implementation_paths": [],
+      "execution_evidence": [
+        {
+          "record": "docs/handoff/SERVICE-INITIAL-20261108.md",
+          "scope": "FastAPI·PostgreSQL migration/초기 저장/재시작 조회 로컬 slice",
+          "parent_complete": false
+        }
+      ],
+      "actual_implementation_paths": [
+        "service/db.py",
+        "service/main.py",
+        "service/__main__.py",
+        "dev/service_stack.py",
+        "migrations/",
+        "pyproject.toml",
+        "uv.lock"
+      ],
       "actual_api_or_tool_contract": null,
       "blockers": [],
-      "goal_summary": "FastAPI/Host·오류 계약·PostgreSQL migration; 개발 실행 설정·health·DB roundtrip; MK-S2 UX 보존 기준 및 연결 상태 표시"
+      "goal_summary": "FastAPI/Host·오류 계약·PostgreSQL migration; 개발 실행 설정·health·DB roundtrip; MK-S2 UX 보존 기준 및 연결 상태 표시",
+      "remaining_acceptance": "부모 Task 전체 수용과 다른 실행 환경 검증 미완료"
     },
     {
       "id": "T02",
@@ -240,7 +282,7 @@
       ],
       "requirements_original_text": "DEV-ID-01~10, RV01, CM02",
       "source_line": 1147,
-      "status": "NOT_STARTED",
+      "status": "IN_PROGRESS",
       "phase": "FOUNDATION",
       "sources": [
         {
@@ -280,11 +322,23 @@
       ],
       "scope_and_completion": "OIDC 후속과 구분하며 개발 단계의 서버 권한을 생략하지 않는다.",
       "verification_commands": [],
-      "execution_evidence": [],
-      "actual_implementation_paths": [],
+      "execution_evidence": [
+        {
+          "record": "docs/handoff/SERVICE-INITIAL-20261108.md",
+          "scope": "서버 개발 세션·회사/행위 권한 및 요청 경계 slice",
+          "parent_complete": false
+        }
+      ],
+      "actual_implementation_paths": [
+        "service/identity.py",
+        "service/main.py",
+        "tests/test_identity.py",
+        "tests/test_service_api.py"
+      ],
       "actual_api_or_tool_contract": null,
       "blockers": [],
-      "goal_summary": "서버 DevIdentity allowlist·세션·회사 scope; CSRF·현재 권한·계정 전환 맥락 처리"
+      "goal_summary": "서버 DevIdentity allowlist·세션·회사 scope; CSRF·현재 권한·계정 전환 맥락 처리",
+      "remaining_acceptance": "전체 DEV-ID 인수·운영 인증 완료가 아님"
     },
     {
       "id": "T03",
@@ -294,7 +348,7 @@
       ],
       "requirements_original_text": "RV01~03, H01~H08, CM04",
       "source_line": 1148,
-      "status": "NOT_STARTED",
+      "status": "IN_PROGRESS",
       "phase": "FOUNDATION",
       "sources": [
         {
@@ -337,11 +391,22 @@
       ],
       "scope_and_completion": "작은 근거 있는 문서로 공통 경계를 먼저 입증한다. 모든 도구를 무조건 2인 승인으로 바꾸지 않는다.",
       "verification_commands": [],
-      "execution_evidence": [],
-      "actual_implementation_paths": [],
+      "execution_evidence": [
+        {
+          "record": "docs/handoff/SERVICE-INITIAL-20261108.md",
+          "scope": "일반 evidence_note 정확 hash/version 검토·승인·반영·멱등·audit/outbox",
+          "parent_complete": false
+        }
+      ],
+      "actual_implementation_paths": [
+        "service/contracts.py",
+        "service/domain.py",
+        "tests/test_domain.py"
+      ],
       "actual_api_or_tool_contract": null,
       "blockers": [],
-      "goal_summary": "정확 버전/hash 승인 계약; transaction·idempotency·audit·outbox; 반영 상태·응답 유실 대사"
+      "goal_summary": "정확 버전/hash 승인 계약; transaction·idempotency·audit·outbox; 반영 상태·응답 유실 대사",
+      "remaining_acceptance": "BOM/PR/PO 승인·재고 변경 미구현"
     },
     {
       "id": "T04",
@@ -351,7 +416,7 @@
       ],
       "requirements_original_text": "AI01~03, AG16-01~03, CM03, CM05",
       "source_line": 1149,
-      "status": "NOT_STARTED",
+      "status": "IN_PROGRESS",
       "phase": "FOUNDATION",
       "sources": [
         {
@@ -389,12 +454,25 @@
         "도구 거부 및 Fake 두 모듈 실행 로그"
       ],
       "scope_and_completion": "1차 서비스 필수 기반. 개발 skills와 runtime 권한은 분리한다.",
-      "verification_commands": [],
-      "execution_evidence": [],
-      "actual_implementation_paths": [],
+      "verification_commands": [
+        ".venv/bin/python -m unittest discover -s tests -p 'test_gateway.py' -v"
+      ],
+      "execution_evidence": [
+        {
+          "record": "docs/handoff/SERVICE-INITIAL-20261108.md",
+          "scope": "공통 typed ToolGateway·제한 포트·공유 호출 예산과 결정적 질의",
+          "parent_complete": false
+        }
+      ],
+      "actual_implementation_paths": [
+        "service/gateway.py",
+        "service/main.py",
+        "tests/test_gateway.py"
+      ],
       "actual_api_or_tool_contract": null,
       "blockers": [],
-      "goal_summary": "Agent SDK typed request/result·evidence/version; Tool/LLM/Evidence/Budget ports·capability registry; Gateway·공통 Fake·두 모듈 독립 시험"
+      "goal_summary": "Agent SDK typed request/result·evidence/version; Tool/LLM/Evidence/Budget ports·capability registry; Gateway·공통 Fake·두 모듈 독립 시험",
+      "remaining_acceptance": "전문 Agent·영속/금액 예산·전체 SDK 인수 미완료"
     },
     {
       "id": "T05",
@@ -682,7 +760,7 @@
       ],
       "requirements_original_text": "CM05, G-01~09, AT08",
       "source_line": 1155,
-      "status": "NOT_STARTED",
+      "status": "IN_PROGRESS",
       "phase": "PHASE1_SLICE_AND_RETAINED_FULL",
       "sources": [
         {
@@ -725,11 +803,27 @@
       ],
       "scope_and_completion": "1차 구매·BOM·LOT·승인 관계부터 구현하되 보드·제거·Coverage·품질 TBox/계약을 삭제하지 않는다.",
       "verification_commands": [],
-      "execution_evidence": [],
-      "actual_implementation_paths": [],
+      "execution_evidence": [
+        {
+          "record": "docs/handoff/SERVICE-INITIAL-20261108.md",
+          "scope": "준비 slice: 전체 스키마52클래스/74관계/79shape, INITIAL18노드/11관계와 실제 동일 버전 RDF/SHACL·Neo4j 조회",
+          "parent_complete": false
+        }
+      ],
+      "actual_implementation_paths": [
+        "service/imports.py",
+        "service/ontology.py",
+        "service/ledger.py",
+        "service/projections.py",
+        "tests/test_imports.py",
+        "tests/test_ontology.py",
+        "tests/test_ledger.py",
+        "tests/test_projections.py"
+      ],
       "actual_api_or_tool_contract": null,
       "blockers": [],
-      "goal_summary": "TBox/ABox·Triple·SHACL·SPARQL 계약; PostgreSQL→RDF/Neo4j versioned outbox 투영; ready publication fence·Graph port·관계 필터"
+      "goal_summary": "TBox/ABox·Triple·SHACL·SPARQL 계약; PostgreSQL→RDF/Neo4j versioned outbox 투영; ready publication fence·Graph port·관계 필터",
+      "remaining_acceptance": "T09.1 선행 미완료; T10.1 업무·전체 CQ/시점/후속 관계 인수 미완료"
     },
     {
       "id": "T11",
@@ -1217,7 +1311,7 @@
       ],
       "requirements_original_text": "AI01~03, AI-01~07, AT07, UX01~03",
       "source_line": 1164,
-      "status": "NOT_STARTED",
+      "status": "IN_PROGRESS",
       "phase": "CROSS_CUTTING_WITH_FULL_GATE",
       "sources": [
         {
@@ -1260,11 +1354,23 @@
       ],
       "scope_and_completion": "T19.1 자재 확보 AI를 T12~T14와 함께 구현한다. 부모의 전체 업무 통합 게이트는 T07/T12/T14/T16/T18 완료 후에만 통과한다.",
       "verification_commands": [],
-      "execution_evidence": [],
-      "actual_implementation_paths": [],
+      "execution_evidence": [
+        {
+          "record": "docs/handoff/SERVICE-INITIAL-20261108.md",
+          "scope": "INITIAL 서버 조회·결정적 질의·근거/버전·신원 오류 표시 slice",
+          "parent_complete": false
+        }
+      ],
+      "actual_implementation_paths": [
+        "service/main.py",
+        "service/views.py",
+        "web/mks2/",
+        "dev/check_service_ui.mjs"
+      ],
       "actual_api_or_tool_contract": null,
       "blockers": [],
-      "goal_summary": "Supervisor/Product/Knowledge/Quality·전문 기능 통합; 공유 선택/권한/시점/원장·투영 버전; 원장 중심 갱신·관련 채팅 상태·최신 근거 조회"
+      "goal_summary": "Supervisor/Product/Knowledge/Quality·전문 기능 통합; 공유 선택/권한/시점/원장·투영 버전; 원장 중심 갱신·관련 채팅 상태·최신 근거 조회",
+      "remaining_acceptance": "T07/T12.1/T14.1 선행·실제 Agent/모델·관측 미완료"
     },
     {
       "id": "T20",
@@ -1392,7 +1498,7 @@
       ],
       "requirements_original_text": "AG16-04~08, OBS17, AT07, CM02~04",
       "source_line": 1167,
-      "status": "NOT_STARTED",
+      "status": "IN_PROGRESS",
       "phase": "CROSS_CUTTING_WITH_FULL_GATE",
       "sources": [
         {
@@ -1434,11 +1540,21 @@
       ],
       "scope_and_completion": "T22.1은 각 구현 Task와 함께 계약·Fake 서버 통합·작은 회귀를 수행한다. 부모 최종 비교 게이트는 T07/T19/T20/T21 이후, live 허용과 등록된 기준에 따라 수행한다.",
       "verification_commands": [],
-      "execution_evidence": [],
-      "actual_implementation_paths": [],
+      "execution_evidence": [
+        {
+          "record": "docs/handoff/SERVICE-INITIAL-20261108.md",
+          "scope": "현재 source/권한/승인/원장/투영/화면의 회귀 검사 slice",
+          "parent_complete": false
+        }
+      ],
+      "actual_implementation_paths": [
+        "tests/",
+        "dev/check_service_ui.mjs"
+      ],
       "actual_api_or_tool_contract": null,
       "blockers": [],
-      "goal_summary": "CQ 전체 기대결과·오류·보류·검출 규칙; 결정적 검증·원답/제공답 분리·지표 계약; B0~B5와 EX-CP/ROUTE/LOOP/CONTEXT/RAG/PROVIDER/SEC/ONTOLOGY 비교"
+      "goal_summary": "CQ 전체 기대결과·오류·보류·검출 규칙; 결정적 검증·원답/제공답 분리·지표 계약; B0~B5와 EX-CP/ROUTE/LOOP/CONTEXT/RAG/PROVIDER/SEC/ONTOLOGY 비교",
+      "remaining_acceptance": "전체 비교·실제 모델/관측·규모·업무효과 미실행"
     },
     {
       "id": "T23",
@@ -1502,5 +1618,6 @@
       "goal_summary": "전수 요구→구현→검증→실행 증거 추적; G1~G5·잔여 요구·운영 게이트 판정; 재현 인계·변경 내역·미결/한계"
     }
   ],
-  "source_access_rule": "공개 저장소에는 요약 인계와 참조 ID만 둔다. 실제 원본은 Git 밖 private_inputs에 별도 보관한다. 원본 접근이 없는 Cloud는 T00 원문·해시 전수 대조를 완료할 수 없으며 T09 원본 처리는 BLOCKED다. 허용된 공개 계약 기반 T01 준비 부분은 독립 진행하되 T00 완료나 T01 전체 수용으로 기록하지 않는다."
+  "source_access_rule": "공개 저장소에는 요약 인계와 참조 ID만 둔다. 실제 원본은 Git 밖 private_inputs에 별도 보관한다. 원본 접근이 없는 Cloud는 T00 원문·해시 전수 대조를 완료할 수 없으며 T09 원본 처리는 BLOCKED다. 허용된 공개 계약 기반 T01 준비 부분은 독립 진행하되 T00 완료나 T01 전체 수용으로 기록하지 않는다.",
+  "current_execution_record": "docs/handoff/SERVICE-INITIAL-20261108.md"
 }

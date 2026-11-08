@@ -1,6 +1,6 @@
 # 데이터 초기화·시연 실행·기대 결과 분리 계약
 
-상태: 개발 인계 설계. 2026-11-08. 서비스용 변환기·seed·원장 재생기는 **NOT_IMPLEMENTED / NOT_RUN**이다. 본 문서는 기존 데이터의 역할과 구현 수용 기준을 정의하며, 기존 원문·fixture·운영 원장을 변경하지 않는다.
+상태: 2026-11-08 INITIAL 변환·초기 원장 조회 slice 구현. `service/imports.py`는 허용된 기초 잔액만 변환하고 `service/ledger.py`가 개발용 PostgreSQL 원장에 반영한다. 전체 bundle의 업무 명령 실행·BOM 등록·후속 원장 재생은 미구현이다. 실제 증거는 [SERVICE-INITIAL-20261108](SERVICE-INITIAL-20261108.md)을 따른다. 본 문서는 기존 데이터 역할·전체 수용 계약을 유지하며 원문·fixture·운영 원장을 변경하지 않는다.
 
 ## 1. 기준과 입력 자료
 
@@ -26,7 +26,7 @@
 | `COMMANDS` | 사용자 선택 후 실행할 typed 명령과 사건의 기대 순서·허용 입력 | `POSTED_DESIGN`을 실제 POSTED로 바로 복사, 저장된 승인 fixture를 실제 승인으로 사용 | 서버 신원·승인·정확버전·멱등 검증 후 서비스가 사건 생성 |
 | `EXPECTED` | 시점별 수량·경로·거절·UNKNOWN 기대값, 오프라인 검증 보고서 | Agent의 검색 문맥·정답 입력·운영 조회 데이터 | 도구·DB에서 계산한 실제 결과와 독립 비교. 정답 누출 금지 |
 
-서비스용 변환기는 아직 없다. 구현 시 세 출력을 분리하고, 입력 hash·변환기 버전·dataset/ontology/rule 버전·seed·run을 기록한다. 변환이 끝났다는 판단은 파일 생성이 아니라 아래 검증 통과로 한다. 기존 `analysis_tools/build_dataset.py`를 DB seed로 실행하지 않는다.
+현재 INITIAL 변환은 `cq-v1.1`의 기초 잔액을 명시적 allowlist로 읽고 입력 hash·변환기/원천 버전·회사/profile/run 및 canonical ID를 보존한다. `partition_reference_bundle`은 COMMANDS 후보와 EXPECTED를 별도 객체로 분리하지만 후보를 실행 가능한 명령이나 실제 승인으로 승격하지 않는다. 전체 업무별 변환·실행/대사는 남아 있다. 기존 `analysis_tools/build_dataset.py`를 DB seed로 실행하지 않는다.
 
 `bundle.entities`에는 새 보드·미래 사건·완료 관계·승인 기대값이 함께 들어 있다. `events`만 걸러서 나머지 `entities`·`relationships`를 모두 초기 적재하는 방식도 금지한다. 초기 객체·필드·관계는 **허용 목록과 유효/인지 시점**으로 분리한다. 미래 계획은 필요할 때 별도 계획/후보 상태로 표시하며, 이미 관측된 사실이나 확보 재고로 조회되지 않아야 한다.
 
@@ -99,7 +99,7 @@ v1.3 최종 장착에서 신규 LOT23개는 보드001~023에 사용되고, 기�
 - reset은 전용 테스트 회사·run에서만 허용하고 운영 원장 삭제와 구분한다. 새로운 실행은 새 run을 부여하고, 고정 seed와 입력 hash로 결과를 비교한다.
 - 원장 변경은 새 서버 승인·반영을 거친다. What-if에서 payload가 바뀌면 기존 승인을 재사용하지 않는다.
 
-초기 생성기·명령 fixture 변환·재생/대사 도구는 별도 구현 작업이다. 현재 파일에 있는 `POSTED_DESIGN`, `actual_execution=false`, `real_service_execution=false`를 바꾸는 것만으로 실행 증거가 되지 않는다.
+INITIAL 생성·개발 원장 반영은 현재 slice로 구현했으며, 후속 명령 fixture의 실행 변환·재생/대사는 별도 작업이다. 원자료의 `POSTED_DESIGN`, `actual_execution=false`, `real_service_execution=false`를 바꾸는 것만으로 실행 증거가 되지 않는다.
 
 ## 7. ID와 Triple 이행 규칙
 
@@ -130,6 +130,8 @@ v1.3 최종 장착에서 신규 LOT23개는 보드001~023에 사용되고, 기�
 | `check_visual.cjs` | macOS의 Playwright 위치와 Google Chrome 실행 경로 고정 | Cloud의 실제 설치 패키지/브라우저로 검사 설정 작성. 기존 통과 결과를 Cloud 통과로 복사하지 않음 |
 
 ## 9. 데이터 준비의 수용 기준
+
+아래는 전체 계약이다. 현재 실행은 원본 무결성, INITIAL 기초수량·미래 사실 차단, 전체 스키마 보존, 같은 버전의 PostgreSQL/RDF/Neo4j 조회 slice를 확인했다. 원문 BOM 파싱·검수, 전체 적용 소요·입하/IQC, 후속 이행·전체 CQ와 실제 AI를 이 결과로 통과시키지 않는다. 현재 인스턴스18노드/11관계와 전체 카탈로그52클래스/74관계/79shape는 서로 다른 범위다.
 
 1. 모든 원문·이전 fixture의 hash 보존과 manifest 대조. 누락된 입력은 이름·영향 Task·대체 가능 여부로 보고한다.
 2. 초기 DB에서 `100/60/50/35/32`, 잔여68, 가용20, BOM 미등록을 재조회한다. 원천 v131와 서버 버전을 구분한다.

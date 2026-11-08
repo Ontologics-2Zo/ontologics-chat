@@ -1,0 +1,122 @@
+{
+  "evidence_id": "SERVICE-INITIAL-20261108",
+  "date": "2026-11-08",
+  "branch": "codex/mks2-ui-tabs",
+  "base_commit": "bc51aa0cc5ea72d4cc55a65bf18e2e14c39b5d52",
+  "scope": "local_INITIAL_ledger_and_full_schema_read_slice",
+  "status": "VERIFIED_SLICE",
+  "parent_tasks_complete": false,
+  "environment": {
+    "os": "Linux x86_64",
+    "python": "3.12.14",
+    "node": "24.22.1",
+    "chromium": "156.0.8078.79",
+    "postgresql": "17.11",
+    "neo4j": "5.26.32"
+  },
+  "checks": {
+    "public_contract_tests": {
+      "passed": 124,
+      "failed": 0,
+      "command": ".venv/bin/python dev/verify_service.py --runtime-file <private-runtime>"
+    },
+    "live_browser": {
+      "passed": 27,
+      "failed": 0,
+      "report_sha256": "e00792f52a7557226343eaf68f24fbee8755e5fe89a48d30da9ec7c2c097feba",
+      "command": "node dev/check_service_ui.mjs --url=http://127.0.0.1:8870/mks2/ --cdp=http://127.0.0.1:9233 --artifacts=<private-artifacts>"
+    },
+    "source_integrity": {
+      "status": "PASS",
+      "files": 155,
+      "literal_ids": 349,
+      "literal_locations": 1171,
+      "manifest_sha256": "a7364cfef6e50d9f55b00a620535c30605f7728df8e5d3a41786782f852c4b99",
+      "t00_narrative_complete": false
+    },
+    "current_ui": {
+      "baseline": "b3ee599",
+      "unchanged_files": 7
+    },
+    "postgres_restart_roundtrip": "PASS",
+    "rdf_shacl": "CONFORMS",
+    "neo4j_live_read": "PASS"
+  },
+  "ontology": {
+    "version": "55f419ea031b141fbd77b7c8a135f40c31f1fe6690629d1b444534a3a8065c88",
+    "classes": 52,
+    "relations": 74,
+    "shapes": 79,
+    "tbox_triples": 420,
+    "shape_triples": 604,
+    "official_semantic_coverage": "NOT_RUN"
+  },
+  "initial": {
+    "nodes": 18,
+    "relationships": 11,
+    "future_events_imported": 0,
+    "expected_answers_imported": 0,
+    "full_bom_inventory_coverage": "NOT_IMPORTED"
+  },
+  "model": {
+    "calls_this_run": 0,
+    "cost_usd_this_run": 0,
+    "live_evaluation": "NOT_RUN",
+    "prior_budget_reset": false
+  },
+  "not_run": [
+    "actual_BOM_Runner",
+    "full_BOM_and_procurement_workflow",
+    "LangGraph_Checkpointer_HITL",
+    "Langfuse_LangSmith",
+    "full_CQ20",
+    "scale",
+    "Apple_Silicon_Mac"
+  ],
+  "code_manifest_sha256": "c22f827a4081b5177041cde58aa01de927626f513330d2f4bf1d9d9aa2493779",
+  "code_sha256": {
+    "dev/audit_sources.py": "6d936211079e0e95b5d6d7bbe01b50886d5402ab76fce48bb1733015cfcc0256",
+    "dev/check_service_ui.mjs": "82cac787bc85e8d21ae6815caed8b884cf336efd936387918f221f8db0b91a8d",
+    "dev/check_tabs.mjs": "38fbbae2b23fa7d46691560811edeba4cd23819848bdb9cd8876856b9fd02c97",
+    "dev/check_ui.mjs": "8fd2d75da4a6887d2f094e17ecc236938d6c444ccb2498a99e9b2a9da521cf05",
+    "dev/preview_server.py": "37482ee606dae30d5a75fb80512c6b9d2b555e44d1ae29b62496a7edaea00621",
+    "dev/service_stack.py": "390c54595fd4e5592960334e8c2d601bff935ceecefee8143531268c00d6e6b1",
+    "dev/verify_service.py": "d49cd921e2d840c2cdad8f88a6a839ce46731e3dd7ce154b22cc2c24aaba4940",
+    "migrations/001_identity.sql": "d8c72d943d913fb6c2ca65334d0890822fc88356a8f33d1587caf7d2fd543488",
+    "migrations/002_domain.sql": "3b5b469a2da018f1700372531c3fa29c12dca250a02f900cdf864ab9e248a91a",
+    "migrations/003_read_models.sql": "b2f63ee7bf183af8bfebca5e4b627b97872e5f49e88c0e1afd0534b4b8d9a644",
+    "pyproject.toml": "0eacd7a494b7881f07f81e334db9aa51b1ca6a622a4d18f1d5284a8721148527",
+    "service/__init__.py": "c22b8803f876c5afc41afa2420f4372b8756ff4cf032e48a552476ad5b951ade",
+    "service/__main__.py": "865548c85be99870a4510529cc229d2976bc2835d5e455790f69dbafa7e1b658",
+    "service/contracts.py": "bae1c99a0fd395ed596eb400c8750ffba33850482a233f2041a50cc47b5cf793",
+    "service/db.py": "02b1d0a9399adcae96ac158b1ae8421cda545b4ee271fef628c0cf6615325096",
+    "service/domain.py": "7ed2b64bda0049ca586bfe3ffa629217114e2e38222f7e7f3ba65d26a55ae48c",
+    "service/errors.py": "3b32450a4b4f9e7af5546935f0e507de57e1e7d65f17179e7258df64b28107b4",
+    "service/gateway.py": "f7932fcd6bf0a4efbfb2117bb64f00facc607555e9af23bb93c94fb525b4c84f",
+    "service/identity.py": "77f71b3a9c5634e34fdd3e21b04975b81fa3d5b8257f34db6489eef22a0dd022",
+    "service/imports.py": "c8c545dcba34d202a6996a6214f0b3533b8821b520797827e7771c3718830794",
+    "service/ledger.py": "9bf0ee5ee2b3e2cf4d12cdd254e22f90f57076a2c17f2381f6555c2e2a72f710",
+    "service/main.py": "d4c769b83733a456bd2a8a584855084e8656321c6d13d8482eebffe704180520",
+    "service/ontology.py": "54c35438ef126877835d3b15c513fb83839a52ffb3208a7f4d5e9fe6e0cfcc53",
+    "service/projections.py": "ee781f1b2f49f25028b63fbd03d7597257cff59762cceb7de9defbe805c73fa7",
+    "service/views.py": "d74cf37037c34bee95cc358570e5d6618c435932f4c41074cf91e57ec934691d",
+    "tests/test_domain.py": "101a1f54969b89370f279f03862808e3724d28659d84d59c13456b93d46d68ef",
+    "tests/test_gateway.py": "f63e3c85d4ecf226dce755481d574a2b9a30e96d63e8dfb11af7e694d5935522",
+    "tests/test_identity.py": "07e08c7050b238ca2045c2af7cd1df06e513eeb8d9c34f3e1e2b247984e8e72c",
+    "tests/test_imports.py": "6b6026579ca0e3cf30dfc24bcb6bb6e04e8da56c686da4f9842de298589ae3e4",
+    "tests/test_ledger.py": "120bffa3cdb8e188bee1842eeb44f31240a569faebce445a3b0f76d90b79513c",
+    "tests/test_ontology.py": "5c432c692313f3cc1a5a9f571f510dc27a06732cbdf44b1185e7e3122f800778",
+    "tests/test_preview_server.py": "7b641e99d9d46711d07841019a34b7419b5c7be27e9a4660c980428473b497ad",
+    "tests/test_projections.py": "49af0c45d2348f8f10aae41bd2f2036f07aca406b934b1d2ac2573b54a849587",
+    "tests/test_service_api.py": "72ec6e3c1ce57c14b12a2db89e028084a1cf48cfd249230e625631dafe69bb09",
+    "tests/test_source_audit.py": "b0d8545f0efd261526a52aa23aebe99011cb6f9ddae0f7e8cc30080543766fca",
+    "uv.lock": "c640840fef312f149a7bc21b63df67b555130444b2a6865dbcead620ee6034a3",
+    "web/mks2/app.js": "209d8394bb3685798169110f3e51b5ef4697be541cd50a3a254513122a33fdc9",
+    "web/mks2/dashboard.css": "daada3afc8050558e9194468b9e180cf55ac9269289637f486fa5fed4dc549b4",
+    "web/mks2/dashboard.js": "2fb97ddaa663890c2242a1279e567623cd369ebc6bef3c7a2a0788b63cc43375",
+    "web/mks2/graph.css": "04206c6742168a842a83f7540bedaaab824178c93561ca720ac5989ab8833268",
+    "web/mks2/graph.js": "51116552d1d2a48b3f8ae8e00056bace3caeff0d0df092ff6bb288a4c1746227",
+    "web/mks2/index.html": "8d361ff193faa2e4a158d98cad9bcae209d17d203d7132a1fa030d6dd25c90d6",
+    "web/mks2/styles.css": "a1c7e2ca8cb40986ec0608bd19f4103da88710834441fb33b1f8048fa44782c2"
+  }
+}

@@ -1,0 +1,20 @@
+[project]
+name = "ontologics-chat"
+version = "0.1.0"
+description = "Versioned local ontology and ledger service for the MK-S2 workspace"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115,<1",
+  "uvicorn>=0.34,<1",
+  "psycopg[binary]>=3.2,<4",
+  "rdflib>=7.6,<8",
+  "pyshacl>=0.40,<1",
+  "neo4j>=5.28,<7",
+  "httpx>=0.28,<1",
+]
+
+[dependency-groups]
+dev = ["pytest>=8,<10"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
