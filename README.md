@@ -4,6 +4,8 @@ MK-S2의 화면·핵심 동선을 유지하면서 제조 업무를 실제 서버
 
 **현재 코드: INITIAL 원장·같은 버전 그래프 조회와 BOM 원본 등록·검토·승인·소요 조회를 연결한 개발 서비스다.** Mac arm64의 제한 Runner 검사를 통과해 실제 원본 74행을 보존하고, 선택 5품목의 조건부 결정을 독립 검토·승인 후 개발 원장에 반영했다. 나머지 69행은 UNRESOLVED이며 전체 판정은 PARTIAL/제조 가능성 UNKNOWN이다. 최신 범위와 UI·보존·재시작 검증 결과는 [Mac BOM 실행 기록](docs/handoff/SERVICE-BOM-MAC-20261108.md)을 따른다. 과거 [Cloud 차단·합성 검사 기록](docs/handoff/SERVICE-BOM-20261108.md)과 [INITIAL 증거](docs/handoff/SERVICE-INITIAL-20261108.md)는 별도로 보존한다. 구매·검사·Agent·모델·영속 복구·전체 서비스 인수는 미완료다.
 
+후속 `codex/cq68-natural-language`에서는 자연어·복합 질문을 제한된 읽기 기능으로 해석하고 같은 원장의 수량·소요·부족을 설명한다. 실제 원문·합성 원장·가정·미확인을 구분하며 납기 근거 부족은 PARTIAL/UNKNOWN으로 표시한다. 코드 `aecd23a`에서 Python 223개·Node 11개·읽기 API 9질의, 수동 UI·8870 재시작·보존 검증을 통과했다. 해당 제한된 읽기 slice의 증거와 한계는 [자연어 CQ 기록](docs/handoff/SERVICE-CQ-NL-20261108.md)을 따른다. LLM이나 전체 Agent 완료를 뜻하지 않으며 새 main 병합은 수행하지 않았다.
+
 현재 화면은 커밋 `b3ee599`로 보존하고 MK-S2 작업 공간을 별도로 추가했다. 이후 화면 수정은 `web/mks2/`에만 적용한다. 처음에는 검증한 화면을 같은 출발점으로 사용하며, 원본 HTML 자체를 공개 복사한 것이 아니다.
 
 | 탭 | 동작·주소 | 수정 경계 |
@@ -20,7 +22,7 @@ MK-S2의 화면·핵심 동선을 유지하면서 제조 업무를 실제 서버
 
 ## ZIP 없이 Git으로 받기
 
-**초기 원장 서비스는 PR #1로 `main`에 병합됐다.** 후속 BOM 코드는 `codex/mks2-bom-integration`에서 진행하며 해당 PR이 병합되기 전에는 main에 포함되지 않는다. 초기 서비스를 사용하는 기존 로컬 저장소에서는 다음을 실행한다.
+**초기 원장 서비스와 Mac BOM 후속 구현은 PR #1·#2로 `main`에 병합됐다.** PR #2 병합 커밋은 `2e6f24c`다. 자연어 CQ 후속 변경은 `codex/cq68-natural-language`에서 진행하며 해당 변경의 병합 상태를 별도로 확인한다. 기존 로컬 저장소에서는 다음을 실행한다.
 
 ```bash
 git fetch origin
@@ -35,7 +37,7 @@ git clone --branch main https://github.com/Ontologics-2Zo/ontologics-chat.git
 cd ontologics-chat
 ```
 
-BOM 후속 브랜치가 원격에 올라온 뒤 확인하려면 `git fetch origin` 후 `git switch codex/mks2-bom-integration`을 사용한다. 정확한 브랜치·PR 상태와 현재 변경을 먼저 확인한다. 로컬 변경 때문에 전환이 중단되면 해당 변경을 보존하고 해결한다. 위 절차는 강제 초기화나 덮어쓰기를 하지 않는다. Git에는 코드·검사 도구·인계 문서가 들어 있고, 비공개 원본/fixtures·키·실제 환경 설정·DB·상세 검증 산출물은 들어 있지 않다. 현재 화면에 데이터를 표시하려면 아래의 `PRIVATE_INPUT_ROOT` 연결도 필요하다.
+자연어 CQ 후속 브랜치가 원격에 올라온 뒤 확인하려면 `git fetch origin` 후 `git switch codex/cq68-natural-language`를 사용한다. 정확한 브랜치·PR 상태와 현재 변경을 먼저 확인한다. 로컬 변경 때문에 전환이 중단되면 해당 변경을 보존하고 해결한다. 위 절차는 강제 초기화나 덮어쓰기를 하지 않는다. Git에는 코드·검사 도구·인계 문서가 들어 있고, 비공개 원본/fixtures·키·실제 환경 설정·DB·상세 검증 산출물은 들어 있지 않다. 현재 화면에 데이터를 표시하려면 아래의 `PRIVATE_INPUT_ROOT` 연결도 필요하다.
 
 ## 로컬 서비스 실행
 
@@ -72,7 +74,7 @@ INITIAL은 출처가 있는 합성 기초 잔액이며 실제 제조 이력과 �
 
 ## 검증 범위
 
-최신 Mac 실제 원본·선택 5품목 검토·승인·반영은 [Mac BOM 실행 기록](docs/handoff/SERVICE-BOM-MAC-20261108.md), 과거 Cloud 합성 검사·원본 차단은 [Cloud BOM 실행 기록](docs/handoff/SERVICE-BOM-20261108.md), 초기 조회는 [INITIAL 실행 기록](docs/handoff/SERVICE-INITIAL-20261108.md)에 남긴다. Mac Python suite는 182 PASS/0 SKIP이며 실제 자료의 전체 기술검수 완료와 구분한다. 원본 무결성은 `.venv/bin/python dev/audit_sources.py`로 확인한다. 이 검사는 155개 원본 및 349개 literal ID의 1,171개 위치 대응을 확인하며, T00의 서술 요구 전수 추적 완료를 뜻하지 않는다.
+최신 자연어 읽기의 Python 223 PASS·Node 11 PASS·API/수동 UI/재시작·보존 증거는 [자연어 CQ 기록](docs/handoff/SERVICE-CQ-NL-20261108.md)에 남긴다. 선행 실제 원본·선택 5품목 검토·승인·반영과 당시 Python 182 PASS/0 SKIP는 [Mac BOM 실행 기록](docs/handoff/SERVICE-BOM-MAC-20261108.md), 과거 Cloud 합성 검사·원본 차단은 [Cloud BOM 실행 기록](docs/handoff/SERVICE-BOM-20261108.md), 초기 조회는 [INITIAL 실행 기록](docs/handoff/SERVICE-INITIAL-20261108.md)에 보존한다. 실제 자료의 전체 기술검수 완료와 구분한다. 원본 무결성은 `.venv/bin/python dev/audit_sources.py`로 확인한다. 이 검사는 155개 원본 및 349개 literal ID의 1,171개 위치 대응을 확인하며, T00의 서술 요구 전수 추적 완료를 뜻하지 않는다.
 
 아래는 보존된 참조 서버와 UI 구문 검사다.
 
