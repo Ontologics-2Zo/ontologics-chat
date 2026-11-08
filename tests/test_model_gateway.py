@@ -6,6 +6,7 @@ from decimal import Decimal
 import json
 import os
 import unittest
+from unittest.mock import patch
 from uuid import uuid4
 
 import httpx
@@ -13,6 +14,7 @@ from psycopg import sql
 from pydantic import ValidationError
 
 from service.db import Database
+from service.agent_host import verified_prices, verified_zdr_endpoint
 from service.errors import ServiceError
 from service.gateway import ExecutionBudget
 from service.identity import Principal
@@ -44,9 +46,9 @@ def principal(**updates):
     return Principal(**values)
 
 
-def adapter(client, key="synthetic"):
+def adapter(client, key="synthetic", **kwargs):
     return OpenRouterRouteProvider(key, client=client, input_usd_per_token=Decimal("0.000002"),
-                                   output_usd_per_token=Decimal("0.00001"))
+                                   output_usd_per_token=Decimal("0.00001"), **kwargs)
 
 
 class RecordingObserver:
@@ -148,6 +150,127 @@ class ModelContractTests(unittest.TestCase):
                 with httpx.Client(transport=httpx.MockTransport(lambda req: httpx.Response(200, json={**baseline, **replacement}))) as client:
                     result = adapter(client).complete(request(), timeout_seconds=2)
                 self.assertEqual(result.error_code, code)
+
+    def test_catalog_canonical_alias_is_exact_and_preserves_requested_model(self):
+        canonical = "openai/gpt-6.1-sol-20260929"
+        for returned in ("openai/gpt-6.1-sol", canonical,
+                         "openai/gpt-6.1-sol-20990101", "openai/gpt-6.1-sol-other"):
+            with self.subTest(returned=returned):
+                seen = []
+                def handler(req):
+                    seen.append(json.loads(req.content))
+                    return httpx.Response(200, json={"model": returned, "provider": "OpenAI",
+                        "choices": [{"finish_reason": "stop", "message": {
+                            "content": '{"capability":"material_analysis"}'}}]})
+                with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+                    result = adapter(client, canonical_model_id=canonical).complete(request(), timeout_seconds=2)
+                self.assertEqual(result.actual_model, returned)
+                self.assertEqual(result.error_code, None if returned in {"openai/gpt-6.1-sol", canonical}
+                                 else "MODEL_RETURNED_MODEL_MISMATCH")
+                self.assertEqual(seen[0]["model"], "openai/gpt-6.1-sol")
+                self.assertEqual(seen[0]["provider"]["only"], ["openai"])
+                self.assertFalse(seen[0]["provider"]["allow_fallbacks"])
+
+    def test_alias_not_from_host_and_wrong_provider_remain_rejected(self):
+        canonical = "openai/gpt-6.1-sol-20260929"
+        for options, provider, error in (({}, "OpenAI", "MODEL_RETURNED_MODEL_MISMATCH"),
+                ({"canonical_model_id": canonical}, "Other", "MODEL_RETURNED_PROVIDER_MISMATCH")):
+            with self.subTest(options=options, provider=provider):
+                with httpx.Client(transport=httpx.MockTransport(lambda req: httpx.Response(200, json={
+                        "model": canonical, "provider": provider, "choices": [{"finish_reason": "stop",
+                        "message": {"content": '{"capability":"material_analysis"}'}}]}))) as client:
+                    result = adapter(client, **options).complete(request(), timeout_seconds=2)
+                self.assertEqual(result.error_code, error)
+
+    def test_public_catalog_binds_prices_and_canonical_alias_to_exact_model(self):
+        records = [{"id": "unapproved/model", "canonical_slug": "unapproved/canonical", "pricing": {}},
+                   {"id": "openai/gpt-6.1-sol", "canonical_slug": "openai/gpt-6.1-sol-20260929",
+                    "pricing": {"prompt": "0.000002", "completion": "0.00001"}}]
+        digests = []
+        for canonical in ("openai/gpt-6.1-sol-20260929", "openai/gpt-6.1-sol-20990101"):
+            records[1]["canonical_slug"] = canonical
+            seen = []
+            def handler(req):
+                seen.append(req)
+                return httpx.Response(200, json={"data": records})
+            client = httpx.Client(transport=httpx.MockTransport(handler))
+            with patch("service.agent_host.httpx.Client", return_value=client):
+                prompt, completion, digest, actual = verified_prices("openai/gpt-6.1-sol")
+            self.assertEqual((prompt, completion), (Decimal("0.000002"), Decimal("0.00001")))
+            self.assertEqual(actual, canonical)
+            self.assertEqual(str(seen[0].url), "https://openrouter.ai/api/v1/models")
+            self.assertEqual(seen[0].method, "GET")
+            self.assertNotIn("authorization", seen[0].headers)
+            digests.append(digest)
+        self.assertNotEqual(*digests)
+
+    def test_missing_or_invalid_catalog_alias_blocks_live_profile(self):
+        for canonical in (None, 7, "other/gpt-6.1-sol", "openai/gpt-6.1-sol*", "openai/gpt-6.1-sol\n"):
+            with self.subTest(canonical=canonical):
+                row = {"id": "openai/gpt-6.1-sol", "pricing": {"prompt": "0.000002", "completion": "0.00001"}}
+                if canonical is not None:
+                    row["canonical_slug"] = canonical
+                client = httpx.Client(transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"data": [row]})))
+                with patch("service.agent_host.httpx.Client", return_value=client):
+                    with self.assertRaises(ServiceError) as caught:
+                        verified_prices("openai/gpt-6.1-sol")
+                self.assertEqual(caught.exception.code, "MODEL_PRICING_UNVERIFIED")
+
+    def test_fixed_azure_route_uses_supported_limit_and_checks_actual_provider(self):
+        for actual in ("Azure", "OpenAI"):
+            with self.subTest(actual=actual):
+                seen = []
+                def handler(req):
+                    seen.append(json.loads(req.content))
+                    return httpx.Response(200, json={"model": "openai/gpt-6.1-sol", "provider": actual,
+                        "choices": [{"finish_reason": "stop", "message": {
+                            "content": '{"capability":"material_analysis"}'}}]})
+                with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+                    result = adapter(client, provider_slug="azure", output_token_parameter="max_completion_tokens").complete(request(), timeout_seconds=2)
+                self.assertEqual(seen[0]["max_completion_tokens"], 128)
+                self.assertNotIn("max_tokens", seen[0])
+                self.assertEqual(seen[0]["provider"], {"only": ["azure"], "allow_fallbacks": False,
+                    "require_parameters": True, "data_collection": "deny", "zdr": True,
+                    "max_price": {"prompt": 2, "completion": 10, "request": 0}})
+                self.assertEqual(result.error_code, None if actual == "Azure" else "MODEL_RETURNED_PROVIDER_MISMATCH")
+        with self.assertRaises(ServiceError):
+            adapter(None, output_token_parameter="arbitrary_parameter")
+
+    def test_zdr_catalog_requires_exact_fixed_endpoint_and_safe_price_tiers(self):
+        baseline = {"model_id": "openai/gpt-6.1-sol", "tag": "azure", "provider_name": "Azure",
+            "status": 0, "safety_retention": False,
+            "supported_parameters": ["max_completion_tokens", "response_format", "structured_outputs"],
+            "pricing": {"prompt": "0.000002", "completion": "0.00001", "web_search": "0.01",
+                        "overrides": [{"min_prompt_tokens": 272000, "prompt": "0.000004", "completion": "0.000015"}]}}
+        cases = [(None, [baseline]), ("missing", []), ("duplicate", [baseline, baseline])]
+        for field, value in (("model_id", "openai/other"), ("tag", "openai"), ("provider_name", "OpenAI"),
+                ("safety_retention", True), ("safety_retention", 0), ("status", 1), ("status", False),
+                ("supported_parameters", ["max_tokens", "response_format", "structured_outputs"]),
+                ("supported_parameters", ["max_completion_tokens", "response_format"])):
+            cases.append((field, [{**baseline, field: value}]))
+        for change in ({"prompt": "0.000003"}, {"completion": "0.00002"}, {"request": "0.01"},
+                       {"overrides": [{"min_prompt_tokens": 3000}]}, {"overrides": [{"min_prompt_tokens": "272000"}]},
+                       {"overrides": [{}]}, {"overrides": {}}):
+            cases.append(("pricing", [{**baseline, "pricing": {**baseline["pricing"], **change}}]))
+        for error, records in cases:
+            with self.subTest(error=error, records=records):
+                seen = []
+                def handler(req):
+                    seen.append(req)
+                    return httpx.Response(200, json={"data": records})
+                client = httpx.Client(transport=httpx.MockTransport(handler))
+                with patch("service.agent_host.httpx.Client", return_value=client):
+                    if error is None:
+                        self.assertTrue(verified_zdr_endpoint("openai/gpt-6.1-sol", Decimal("0.000002"),
+                            Decimal("0.00001"), input_token_bound=3000))
+                    else:
+                        with self.assertRaises(ServiceError) as caught:
+                            verified_zdr_endpoint("openai/gpt-6.1-sol", Decimal("0.000002"),
+                                Decimal("0.00001"), input_token_bound=3000)
+                        self.assertEqual(caught.exception.code, "MODEL_ZDR_PROFILE_UNVERIFIED")
+                self.assertEqual(str(seen[0].url), "https://openrouter.ai/api/v1/endpoints/zdr")
+                self.assertEqual(seen[0].method, "GET")
+                self.assertNotIn("authorization", seen[0].headers)
 
     def test_transport_failure_never_exposes_response_or_key(self):
         with httpx.Client(transport=httpx.MockTransport(lambda req: httpx.Response(503, text="private provider body secret-key"))) as client:

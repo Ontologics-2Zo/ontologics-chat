@@ -183,14 +183,25 @@ class OpenRouterRouteProvider:
     MAX_RESPONSE_BYTES = 65536
 
     def __init__(self, api_key, *, model_id="openai/gpt-6.1-sol", provider_slug="openai", client=None,
-                 input_usd_per_token=None, output_usd_per_token=None):
+                 input_usd_per_token=None, output_usd_per_token=None, canonical_model_id=None,
+                 output_token_parameter="max_tokens"):
         if not isinstance(api_key, str) or not api_key or any(ord(c) < 32 for c in api_key):
             raise ServiceError("MODEL_CREDENTIAL_MISSING", 503)
         if not re.fullmatch(r"[a-z0-9_.-]+/[a-z0-9_.-]+", model_id) or not re.fullmatch(r"[a-z0-9_.-]+", provider_slug):
             raise ServiceError("MODEL_PROFILE_INVALID", 503)
+        if canonical_model_id is not None and (not isinstance(canonical_model_id, str)
+                or not re.fullmatch(r"[a-z0-9_.-]+/[a-z0-9_.-]+", canonical_model_id)
+                or canonical_model_id.partition("/")[0] != model_id.partition("/")[0]):
+            raise ServiceError("MODEL_PROFILE_INVALID", 503)
+        if output_token_parameter not in ("max_tokens", "max_completion_tokens"):
+            raise ServiceError("MODEL_PROFILE_INVALID", 503)
         self._api_key = api_key
         self.model_id = model_id
+        # Host supplies the exact canonical_slug from the selected public
+        # catalog record. No prefix match, caller override or model fallback.
+        self._response_model_ids = frozenset((model_id, canonical_model_id or model_id))
         self.provider_slug = provider_slug
+        self.output_token_parameter = output_token_parameter
         self._client = client
         self._price_caps = None
         if input_usd_per_token is not None and output_usd_per_token is not None:
@@ -216,7 +227,7 @@ class OpenRouterRouteProvider:
 
     def _body(self, request):
         body = {
-            "model": self.model_id, "stream": False, "max_tokens": request.max_output_tokens,
+            "model": self.model_id, "stream": False, self.output_token_parameter: request.max_output_tokens,
             "messages": [
                 {"role": "system", "content": "Choose one read-only capability from synthetic boolean routing features. Use material_analysis for materials or inventory; fulfillment_read for fulfillment, production or delivery; otherwise needs_clarification. Return only the requested JSON object. Never output facts, tools, actions or explanations."},
                 {"role": "user", "content": json.dumps({feature: feature in request.features for feature in FEATURES}, sort_keys=True)},
@@ -321,7 +332,7 @@ class OpenRouterRouteProvider:
                     capability = decoded["capability"]
                 except (KeyError, TypeError, ValueError, IndexError):
                     error = "MODEL_OUTPUT_INVALID"
-                if model != self.model_id:
+                if model not in self._response_model_ids:
                     error = "MODEL_RETURNED_MODEL_MISMATCH"
                 if actual_provider is None:
                     error = "MODEL_PROVIDER_UNCONFIRMED"

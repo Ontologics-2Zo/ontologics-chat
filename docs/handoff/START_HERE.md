@@ -1,11 +1,11 @@
 # MK-S2 개발 인계 안내
 
-> 현재 인계: PR #3은 main `848fe79`로 병합됐고 Mac 재시작 검증을 마쳤다. 후속 Agent 작업은 로컬 `codex/agent-foundation` 작업 트리에 있으며 main에는 병합하지 않았다. 정확한 로컬 커밋은 Git으로 확인한다. 제한된 T04~T07 Fake/읽기 경로를 검증했고 앱은 8870에서 Fake 모드로 실행 중이다. 실제 모델 호출은 사용자 충전 후 재확인할 때까지 중단한다. [SERVICE-AGENT-20261108](SERVICE-AGENT-20261108.md)을 먼저 읽는다.
+> 현재 인계: PR #3은 main `848fe79`에 병합됐다. 후속 `codex/agent-foundation`은 main 미병합이다. 2026-11-09 충전 후 실제 모델 연결을 검증했고 현재 Mac 앱은 8870에서 live다. 승인 모델은 동일하며 Azure ZDR 단일 경로, 자동 fallback OFF다. [SERVICE-MODEL-20261109](SERVICE-MODEL-20261109.md)와 선행 Agent 기록을 먼저 읽는다.
 
 
 대상 저장소는 `Ontologics-2Zo/ontologics-chat`이다. 화면·메뉴·핵심 동선은 MK-S2를 기준으로 삼고, 공식 v1.7의 전체 아키텍처와 업무 범위를 유지한다. 현재는 FastAPI·PostgreSQL INITIAL 원장·서버 개발 신원·일반 근거 문서 승인과 동일 버전 RDF/SHACL·Neo4j 조회를 MK-S2 탭에 연결한 로컬 개발 서비스다. 실행은 [README](../../README.md), 초기 검증 범위는 [SERVICE-INITIAL-20261108](SERVICE-INITIAL-20261108.md)을 따른다. 선행 Cloud의 BOM 코드·합성 검사·차단 상태는 [SERVICE-BOM-20261108](SERVICE-BOM-20261108.md)에 보존한다. Mac arm64의 실제 제한 Runner와 원본 74행·선택 5품목 조건부 검토/독립 승인/반영은 [Mac 실행 기록](SERVICE-BOM-MAC-20261108.md)을 따른다. 나머지 69행은 UNRESOLVED다. 현재 Agent 브랜치에는 실제 LangGraph·PostgreSQL checkpoint·질문 확인 재개와 로컬 관측을 연결했지만, 구매/검사·전체 Agent·실제 AI 품질·전체 서비스 완료본은 아니다. 최초 준비 및 참조 화면 기록은 당시 범위의 역사적 증거로 보존한다.
 
-DEC-H27의 제한된 자연어 CQ 읽기는 PR #3으로 main `848fe79`에 병합됐고 DEC-H28의 Mac main 재시작·보존 검증을 마쳤다. [CQ 실행 기록](SERVICE-CQ-NL-20261108.md)의 `aecd23a` 223 Python/11 Node 및 `cbbc55e` 226 Python/11 Node는 각 당시 코드의 역사적 증거다. 현재 Agent 작업은 280 Python·12 Node 검사와 Fake 경로의 로컬 Langfuse metadata 수집을 확인했다. T04~T07의 제한된 읽기/Fake 범위만 VERIFIED이며 부모 Task는 모두 IN_PROGRESS다. 기존 DB·원본·runtime·전체 온톨로지를 보존하고 실제 납기 가능성은 UNKNOWN으로 유지한다.
+DEC-H27의 제한된 자연어 CQ 읽기는 PR #3으로 main `848fe79`에 병합됐고 DEC-H28의 Mac main 재시작·보존 검증을 마쳤다. [CQ 실행 기록](SERVICE-CQ-NL-20261108.md)의 `aecd23a` 223 Python/11 Node 및 `cbbc55e` 226 Python/11 Node는 각 당시 코드의 역사적 증거다. 선행 Agent의 280 Python·12 Node/Fake·로컬 관측 증거를 보존한다. 후속 모델 연결 수정은 286 Python 검사와 실제 기능 선택1회·원장 조회를 확인했다. T04~T07의 제한된 읽기 범위만 VERIFIED이며 부모 Task는 모두 IN_PROGRESS다. 기존 DB·원본·runtime·전체 온톨로지를 보존하고 실제 납기 가능성은 UNKNOWN으로 유지한다.
 
 ## 새 채팅에서 이어가기
 
@@ -13,11 +13,11 @@ DEC-H27의 제한된 자연어 CQ 읽기는 PR #3으로 main `848fe79`에 병합
 
 새 채팅에 아래 요청을 붙여넣는다.
 
-> Ontologics-2Zo/ontologics-chat의 로컬 codex/agent-foundation 작업 트리를 보존하고 남은 MD 작업을 이어가 주세요. PR #3은 main 848fe79로 병합·Mac 검증이 끝났으므로 반복하지 마세요. AGENTS.md, web/AGENTS.md, START_HERE.md, SERVICE-AGENT-20261108.md와 최신 결정·Task를 읽고 실제 HEAD와 미커밋 변경부터 확인해 주세요. 제한된 T04~T07 Fake/읽기 기반의 280 Python·12 Node 및 로컬 Langfuse metadata 검증은 대상 코드가 같을 때 재사용하고 부모 Task는 IN_PROGRESS로 유지해 주세요. 앱은 8870의 Fake 모드입니다. 실제 모델 POST 한 번은 실패했고 크레딧 조회는 total credits 0/usage 0이었으나 outcome_unknown 비용 예약은 해제하지 않았습니다. 사용자가 나중에 충전하기로 했으므로 실제 호출은 계속 중단하고 충전·예산·미확정 예약을 확인한 뒤 별도로 재개해 주세요. 제공된 기존 .env를 덮어쓰거나 키를 출력하지 말고 저장된 runtime을 DB 설정의 기준으로 유지해 주세요. 기존 DB·원본·원장/그래프 v2·74행/5품목 조건부 적용·69행 미확인·전체 온톨로지·보존 화면 7파일을 유지하며 재시작에 import/reset을 하지 마세요. 그래프 정리 의견은 재배치 구현 승인이 아닙니다. 전체 Agent·실제 AI 품질·업무 쓰기 승인 HITL·CQ20 완료로 확대하지 말고, 새 main 병합·Publish·배포·공급사 송신·운영 원장 변경은 별도 승인 범위로 남겨 주세요.
+> Ontologics-2Zo/ontologics-chat의 로컬 codex/agent-foundation 작업 트리를 보존하고 남은 MD 작업을 이어가 주세요. PR #3은 main 848fe79로 병합·Mac 검증이 끝났으므로 반복하지 마세요. AGENTS.md, web/AGENTS.md, START_HERE.md, SERVICE-AGENT-20261108.md와 최신 결정·Task를 읽고 실제 HEAD와 미커밋 변경부터 확인해 주세요. 제한된 T04~T07 Fake/읽기 기반의 280 Python·12 Node 및 로컬 Langfuse metadata 검증은 대상 코드가 같을 때 재사용하고 부모 Task는 IN_PROGRESS로 유지해 주세요. 앱은 충전 후 승인 모델의 Azure ZDR 단일 경로로 live 연결을 확인했습니다. 최신 회귀286건, 실제 기능 선택1회·원장 조회1회 성공과 비용$0.00043을 기록했습니다. 과거 실패2건의 미확정 예약$0.010932는 보존하며 예산을 초기화하지 마세요. 제공된 기존 .env를 덮어쓰거나 키를 출력하지 말고 저장된 runtime을 DB 설정의 기준으로 유지해 주세요. 기존 DB·원본·원장/그래프 v2·74행/5품목 조건부 적용·69행 미확인·전체 온톨로지·보존 화면 7파일을 유지하며 재시작에 import/reset을 하지 마세요. 그래프 정리 의견은 재배치 구현 승인이 아닙니다. 전체 Agent·실제 AI 품질·업무 쓰기 승인 HITL·CQ20 완료로 확대하지 말고, 새 main 병합·Publish·배포·공급사 송신·운영 원장 변경은 별도 승인 범위로 남겨 주세요.
 
 새 채팅이 같은 환경을 사용할 수도 있고 다른 환경일 수도 있다. Git 체크아웃만으로 비공개 입력·보안 설정·실행 프로세스·DB·Git 밖 검증 산출물이 복원되지는 않는다. 먼저 실제 브랜치/커밋/미커밋 변경과 환경을 확인하며 초기화하지 않는다. `PRIVATE_INPUT_ROOT`에 공식 v1.7·MK-S2·v1.3 자료가 있는지 확인하고, 같은 버전의 무결성 증거는 재사용한다. 누락된 자료만 보호 경로로 연결한다. 화면 미리보기에는 API 키가 필요 없다.
 
-기존 `.env`가 제공됐으며 값을 변경하지 않았다. 공개 `.env.example`에는 안전한 설정 예시만 있다. 실제 모델 POST 1회 시도는 실패했고 크레딧 조회는 total credits 0/usage 0이었다. 이것을 무과금 확정으로 간주하지 않으며 canonical `outcome_unknown`과 held reservation을 보존한다. 사용자가 추후 충전하기로 했으므로 현재는 Fake 모드를 유지한다. 키를 채팅·MD·Git·로그에 복사하지 않는다. DEC-H29의 새 승인 예산과 과거 예산 이력을 분리하고 재시작·환경 전환으로 사용액이나 예약을 초기화하지 않는다.
+기존 `.env`가 제공됐으며 값을 변경하지 않았다. 공개 `.env.example`에는 안전한 설정 예시만 있다. 실제 모델 POST 1회 시도는 실패했고 크레딧 조회는 total credits 0/usage 0이었다. 이것을 무과금 확정으로 간주하지 않으며 canonical `outcome_unknown`과 held reservation을 보존한다. 당시 보류 후 2026-11-09 충전·재연결을 확인했으며 현재 live 상태와 누적 비용은 SERVICE-MODEL-20261109를 따른다. 키를 채팅·MD·Git·로그에 복사하지 않는다. DEC-H29의 새 승인 예산과 과거 예산 이력을 분리하고 재시작·환경 전환으로 사용액이나 예약을 초기화하지 않는다.
 
 ### 현재 검증 범위와 보존된 증거
 
@@ -30,7 +30,7 @@ DEC-H27의 제한된 자연어 CQ 읽기는 PR #3으로 main `848fe79`에 병합
 | 전체 온톨로지 | 클래스52·관계74·shape79 보존. INITIAL18노드/11관계 증거와 후속 BOM 전체 행/출처 연결 증거를 분리하며 전체 후속 업무·의미 검증은 잔여 |
 | 실제 BOM | Mac 제한 Runner로 전체 74행 보존, 선택 5품목 조건부 결정의 독립 검토·정확 버전 승인·반영 확인. 나머지 69행 UNRESOLVED, PARTIAL/제조 가능성 UNKNOWN. 원장/그래프 v2, 176노드/252관계. 최신 체크는 SERVICE-BOM-MAC 참조. 구성 충돌·기술검수·현장 재고 미확인은 유지 |
 | 선행 자연어 CQ 읽기 | `aecd23a` 당시 제한된 읽기 slice VERIFIED. 당시 Python 223 PASS·Node 11 PASS·읽기 API 9 PASS, 수동 UI·8870 재시작·보존 PASS. 원장/투영 v2·모델 호출0·업무 snapshot 불변. 납기 PARTIAL/실제 가능성 UNKNOWN, 명시 가정 What-if는 읽기 전용. SERVICE-CQ-NL 참조 |
-| Agent·실제 업무 | 로컬 Agent 브랜치의 제한된 T04~T07 Fake/읽기 경로 VERIFIED: 280 Python/12 Node, 실제 LangGraph 전문 조회·PostgreSQL checkpoint/질문 확인 재개·로컬 Langfuse metadata. 실제 모델 POST 1회 실패 후 호출 중단, outcome_unknown 예약 보존. 부모 Task는 IN_PROGRESS, 업무 쓰기 승인 HITL·PR/PO/입하/IQC·실제 AI 품질은 미완료 |
+| Agent·실제 업무 | 로컬 Agent 브랜치의 제한된 T04~T07 Fake/읽기 경로 VERIFIED: 280 Python/12 Node, 실제 LangGraph 전문 조회·PostgreSQL checkpoint/질문 확인 재개·로컬 Langfuse metadata. 후속 실제 모델 연결1회 성공은 SERVICE-MODEL-20261109에 별도 기록. 이전 실패2건의 outcome_unknown 예약 보존. 부모 Task는 IN_PROGRESS, 업무 쓰기 승인 HITL·PR/PO/입하/IQC·실제 AI 품질은 미완료 |
 | 전체 인수와 실행 환경 | T00~T23 부모 집계는 IN_PROGRESS 14 / NOT_STARTED 10 / VERIFIED 0. Mac BOM·CQ·Agent의 부분 검증과 전체 잔여 범위를 구분. 전체 CQ20·Agent·전체 인수는 미완료. Cloud localhost와 Mac 접속 주소를 구분 |
 
 현재 브랜치는 이전 환경의 미커밋 서비스/DB 복원본이 아니다. 사용자는 이전 환경 복구 대신 새 환경에서 진행하기로 결정했다. 과거 실행 기록을 현재 코드의 성공 증거로 이월하지 않는다.
@@ -50,7 +50,7 @@ DEC-H27의 제한된 자연어 CQ 읽기는 PR #3으로 main `848fe79`에 병합
 - 사용자의 최신 명시적 결정 → 공식 v1.7의 기능·도메인·아키텍처 → MK-S2의 화면·동선과 참고 규약 → 인계 작업표 순서로 읽는다. 최신 결정은 화면 기준과 구현 우선순위를 조정하며 공식 업무 요구를 폐기하지 않는다.
 - 공식 문서에 남아 있는 과거 v2.6 UI 배치·메뉴 고정 지시는 MK-S2 우선 결정으로 대체됐다. 공식 화면 ID의 업무 의미·수용 기준은 보존하고 화면 대응표로 재배치한다.
 - 이전 GitHub 구현은 재사용 후보 조사 자료다. 코드가 있거나 과거 테스트가 통과했다는 사실만으로 새 서비스에서 완료 처리하지 않는다.
-- 과거 계획 문서에 적힌 ‘이번에는 코드 변경하지 않음’, ‘구현 보류’, ‘T00~T01만 수행’은 당시의 제한이다. 후속 사용자 요청으로 1차 구현과 제한된 실제 모델 호출이 승인됐다. 최신 승인·제외 범위는 `AGENTS.md`와 결정 문서 DEC-H13/18~29 및 실제 호출 중단 요청을 따른다. 문서에 언급된 기능만으로 승인 범위를 넓히지는 않는다.
+- 과거 계획 문서에 적힌 ‘이번에는 코드 변경하지 않음’, ‘구현 보류’, ‘T00~T01만 수행’은 당시의 제한이다. 후속 사용자 요청으로 1차 구현과 제한된 실제 모델 호출이 승인됐다. 최신 승인·제외 범위는 `AGENTS.md`와 결정 문서 DEC-H13/18~30 및 최신 충전 후 재연결 요청을 따른다. 문서에 언급된 기능만으로 승인 범위를 넓히지는 않는다.
 
 ## 단계별 완료 명칭
 
@@ -72,7 +72,7 @@ DEC-H27의 제한된 자연어 CQ 읽기는 PR #3으로 main `848fe79`에 병합
 ## 다음 실행
 
 1. 작업 트리·원본 접근·기존 실행 증거를 확인한다. 버전이 같은 결과는 재사용하고, 원본 부재는 해당 단계의 BLOCKED로 남긴다. 독립적인 환경 조사·계약 작성은 계속할 수 있다.
-   현재 Agent 브랜치의 검증과 과거 CQ/BOM 증거를 각 대상 코드가 같을 때 재사용한다. Fake 8870과 같은 서버 버전·출처·UNKNOWN 경계를 유지하며 실제 호출은 사용자 충전 후 확인까지 중단한다. 전체 Agent·범용 자연어·전체 CQ20 및 부모 Task의 잔여 수용은 별도로 진행한다.
+   현재 Agent 브랜치의 검증과 과거 CQ/BOM 증거를 각 대상 코드가 같을 때 재사용한다. 현재 live 8870과 같은 서버 버전·출처·UNKNOWN 경계를 유지하며 실제 호출은 DEC-H30의 제한 범위·기존 예산으로만 진행한다. 전체 Agent·범용 자연어·전체 CQ20 및 부모 Task의 잔여 수용은 별도로 진행한다.
 2. T00~T02의 기준·실행 골격·신원 선행부터 확인하고 공통 기반 T00~T08 → BOM·온톨로지 T09.1~T12.1 → 자재 확보 T13.1~T14.1 순으로 준비된 작업을 이어간다. T19.1/T22.1은 각 묶음에 적용한다. Task 하나가 끝날 때마다 후속 지시를 기다리지 않는다.
 3. 전체 온톨로지 카탈로그와 INITIAL allowlist 변환·PostgreSQL opening balance의 현재 증거를 재사용한다. COMMANDS/EXPECTED의 업무별 변환·재생과 원본 BOM 검수는 별도로 남아 있다. 원본 버전과 서버 원장 버전을 구분하고 비공개 분석 스크립트를 그대로 실행하지 않는다.
 4. 현재의 Domain/outbox → RDF/Neo4j → SHACL·동일 버전 Graph/query → MK-S2 경로를 보존하면서 공식 선행 조건에 따라 확장한다. 이 준비 slice는 T09.1을 건너뛴 T10.1 완료가 아니다. 오프라인 전체 A-Box와 미래 사건·기대값을 현재 원장에 섞지 않는다.

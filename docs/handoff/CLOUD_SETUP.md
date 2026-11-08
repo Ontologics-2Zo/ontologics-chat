@@ -1,9 +1,9 @@
 # 로컬 실행과 Codex Cloud 환경 안내
 
-> 현재 인계: PR #3은 main `848fe79`로 병합·Mac 검증을 마쳤다. 후속 Agent 코드는 로컬 `codex/agent-foundation` 작업 트리에 있으며 main에는 병합하지 않았다. 정확한 로컬 커밋은 Git으로 확인한다. 앱은 8870의 Fake 모드로 실행 중이다. 기존 `.env`·DB runtime을 보존하고 실제 모델 호출은 사용자 충전 후 재확인할 때까지 중단한다. [SERVICE-AGENT-20261108](SERVICE-AGENT-20261108.md)을 먼저 읽는다.
+> 현재 인계: PR #3 main `848fe79` 이후 로컬 `codex/agent-foundation`에서 작업 중이며 main 미병합이다. 2026-11-09 충전 후 승인 모델의 Azure ZDR 단일 경로를 검증했고 앱은8870/live다. 기존 `.env`·DB runtime·예산 이력을 보존한다. 최신 연결 결과는 [SERVICE-MODEL-20261109](SERVICE-MODEL-20261109.md)을 따른다.
 
 
-2026-11-08 갱신. 초기 원장·실제 BOM·자연어 CQ는 PR #1~#3으로 `main`에 병합됐다. PR #2 기준은 `2e6f24c`, PR #3 기준은 `848fe79`이며 CQ의 병합·Mac main 재시작 증거는 [CQ 실행 기록](SERVICE-CQ-NL-20261108.md)에 보존한다. 현재 Agent 브랜치에서는 제한된 T04~T07 Fake/읽기 경로의 280 Python·12 Node 검사와 로컬 Langfuse metadata 수집을 확인했다. T04~T07 부모는 모두 IN_PROGRESS이며 T00~T23 전체 집계는 IN_PROGRESS 14 / NOT_STARTED 10 / VERIFIED 0이다. 과거 초기화·환경 Publish 절차를 현재 재시작에 적용하지 않는다.
+2026-11-09 갱신. 초기 원장·실제 BOM·자연어 CQ는 PR #1~#3으로 `main`에 병합됐다. PR #2 기준은 `2e6f24c`, PR #3 기준은 `848fe79`이며 CQ의 병합·Mac main 재시작 증거는 [CQ 실행 기록](SERVICE-CQ-NL-20261108.md)에 보존한다. Agent의 선행 280 Python·12 Node/Fake 관측 증거를 보존하며, 최신 연결 수정의 286 Python 검사와 실제 모델1회·원장 조회를 확인했다. T04~T07 부모는 모두 IN_PROGRESS이며 T00~T23 전체 집계는 IN_PROGRESS 14 / NOT_STARTED 10 / VERIFIED 0이다. 과거 초기화·환경 Publish 절차를 현재 재시작에 적용하지 않는다.
 
 Linux Cloud의 초기 조회 검증은 [INITIAL 실행 기록](SERVICE-INITIAL-20261108.md), 과거 Cloud BOM 차단은 [BOM 실행 기록](SERVICE-BOM-20261108.md)을 따른다. 후속 Mac arm64에서는 실제 Runner 강제 검사와 원본 74행·선택 5품목 조건부 검토/승인/반영을 확인했다. 최신 UI·보존·재시작 검증 결과는 [Mac BOM 실행 기록](SERVICE-BOM-MAC-20261108.md)을 따른다. 구매·Agent·모델·전체 CQ 완료를 의미하지 않는다.
 
@@ -57,9 +57,9 @@ uv sync --locked --python 3.12
 
 `runtime.json`은 로컬 DB 접속 자격증명을 자동 생성해 저장한다. Git 밖 영속 폴더에 보관하고 **삭제하거나 공유하지 않는다**. `/tmp`는 재부팅·정리 시 없어질 수 있어 지속 사용 경로로 쓰지 않는다. DB는 별도 Docker 볼륨에 남으므로 runtime 파일만 잃어버리면 자격증명이 맞지 않게 된다. 기존 runtime 파일이 있으면 새로 만들지 말고 그 파일을 계속 지정한다.
 
-Agent 설정은 `--agent-env-file .env`로 기존 파일을 명시적으로 읽는다. `.env.example`은 키가 없는 공개 예시이며 기존 `.env`를 덮어쓰는 용도가 아니다. 로더는 쉘 실행·변수 확장 없이 허용된 Agent 설정만 읽고 DB·Neo4j·비공개 입력 설정은 반입하지 않는다. DB 자격증명은 계속 `--runtime-file`이 기준이다. 현재는 실행 환경의 `ONTO_MODEL_MODE=fake`로 실제 호출을 중단하며 `.env` 원본을 수정하지 않는다.
+Agent 설정은 `--agent-env-file .env`로 기존 파일을 명시적으로 읽는다. `.env.example`은 키가 없는 공개 예시이며 기존 `.env`를 덮어쓰는 용도가 아니다. 로더는 쉘 실행·변수 확장 없이 허용된 Agent 설정만 읽고 DB·Neo4j·비공개 입력 설정은 반입하지 않는다. DB 자격증명은 계속 `--runtime-file`이 기준이다. 공개 예제 기본값은 Fake다. 현재는 사용자 충전·재개 요청에 따라 실행 환경의 `ONTO_MODEL_MODE=live`로 연결했으며 `.env` 원본은 수정하지 않았다.
 
-실제 모델 POST 1회 시도는 실패했고 크레딧 조회의 total credits/usage는 모두 0이었다. canonical 결과는 `outcome_unknown`이며 held reservation은 보존한다. 사용자가 추후 충전하기로 했으므로 자동 재시도·예약 환급·예산 초기화를 하지 않는다. 충전 후에도 미확정 결과와 승인 예산·가격·전송 범위를 확인한 뒤 실제 호출을 별도로 재개한다.
+실제 모델 POST 1회 시도는 실패했고 크레딧 조회의 total credits/usage는 모두 0이었다. canonical 결과는 `outcome_unknown`이며 held reservation은 보존한다. 이 기록은 당시 보류 사유다. 이후 충전·재개 결과는 SERVICE-MODEL-20261109에 기록했다. 미확정 예약·과거 비용을 환급/초기화하지 않으며 자동 공급사/model fallback OFF를 유지한다.
 
 ## 4. PostgreSQL·Neo4j 시작
 
@@ -101,7 +101,7 @@ export ONTO_BOM_DOCKER_SOCKET="$ONTO_DOCKER_SOCKET"
 
 ## 5. 앱 시작·접속
 
-기존 DB를 사용하는 현재 Agent 브랜치의 재시작 명령이다. 저장된 runtime과 기존 입력·Runner 환경을 지정하며 `--import-initial`을 추가하지 않는다.
+아래는 기존 DB를 사용하는 Fake 재시작 명령이다. 현재 승인된 live 재시작은 이미 검증한 같은 Agent 예산 환경을 유지하고 `ONTO_MODEL_MODE=live`로 바꾼다. 예산ID `mks2-agent-20261108`, 승인참조 `DEC-H29`, 해당 scope 최초 이전사용액0은 `.env.example`의 필드명을 따른다. 이 설정으로 기존 예산 행이나 사용액을 초기화하지 않는다. 저장된 runtime과 기존 입력·Runner 환경을 지정하며 `--import-initial`을 추가하지 않는다.
 
 ```bash
 ONTO_MODEL_MODE=fake .venv/bin/python -m service \
@@ -153,7 +153,7 @@ docker --host="unix://$ONTO_DOCKER_SOCKET" stop ontologics-pg ontologics-neo4j
 | `LOCAL_ORIGIN_REQUIRED` | `http://127.0.0.1:8870/`로 접속 |
 | `LEDGER_NOT_INITIALIZED` | 초기 개발 회사 계정 및 최초 `--import-initial` 확인 |
 | `PROJECTION_NOT_READY` / `PROJECTION_READ_UNAVAILABLE` | Neo4j 상태 확인. fixture나 오래된 결과로 대체하지 않음 |
-| 모델 잔액 부족·실제 호출 실패 | 현재는 Fake 유지. 사용자 충전 후 승인 범위·예산·미확정 attempt를 확인하며 기존 reservation을 임의 해제하지 않음 |
+| 모델 잔액 부족·실제 호출 실패 | 반복 호출을 중단하고 원인·기존 예산·미확정 attempt를 확인. reservation을 임의 해제하지 않음. 2026-11-09 성공한 현재 설정과 과거 실패를 구분 |
 | Agent `WAITING` / 재개 시 버전·권한 오류 | 질문과 업무를 확인해 같은 실행을 재개. 현재 세션·소유자·원장/정책 버전을 서버가 다시 검사하며 오래된 권한·승인을 우회하지 않음 |
 | 포트 사용 중 | 앱 `8870`과 DB 기본 포트 충돌 확인. 앱 포트를 바꾸면 URL도 같은 포트 사용 |
 
@@ -165,7 +165,7 @@ Cloud 내부 `127.0.0.1`은 사용자 Mac의 주소가 아니다. 로컬 실행�
 
 ## 과거 안내 갱신의 검증 — LOCAL-SETUP-20261108
 
-아래는 기준 커밋 `03c640c` 당시 문서와 `dev/service_stack.py`의 로컬 소켓 선택 검증이다. 현재 Agent 코드의 검증 수나 Mac 실행 상태를 뜻하지 않는다. 최신 280 Python/12 Node·Fake·로컬 Langfuse 검증은 [Agent 실행 기록](SERVICE-AGENT-20261108.md)을 따른다.
+아래는 기준 커밋 `03c640c` 당시 문서와 `dev/service_stack.py`의 로컬 소켓 선택 검증이다. 현재 Agent 코드의 검증 수나 Mac 실행 상태를 뜻하지 않는다. 선행 280 Python/12 Node·Fake 검증은 [Agent 기록](SERVICE-AGENT-20261108.md), 최신 286 Python·실제 연결은 [재연결 기록](SERVICE-MODEL-20261109.md)을 따른다.
 
 - `.venv/bin/python -m unittest discover -s tests -p test_service_stack.py -v`: 3 PASS. 실제 Unix 소켓/심볼릭 링크, 잘못된 경로·원격 URL 차단, 원격 Docker 환경변수 배제를 확인했다.
 - 기본 소켓의 기존 스택 `status`: PostgreSQL/Neo4j 모두 `true`, DB reset 없음.

@@ -650,6 +650,12 @@
             "AGENT-OBS-BLOCKED"
           ],
           "actual_model_verification": "BLOCKED"
+        },
+        {
+          "record": "docs/handoff/SERVICE-MODEL-20261109.md",
+          "scope": "승인 모델의 고정 Azure ZDR 경로 실제 기능 선택1회·원장 조회·재요청 중복0. 전체 실제 AI 의미 품질 인수 아님.",
+          "status": "VERIFIED",
+          "parent_complete": false
         }
       ],
       "actual_implementation_paths": [
@@ -727,6 +733,12 @@
             "AGENT-UI-MAC"
           ],
           "actual_model_verification": "BLOCKED"
+        },
+        {
+          "record": "docs/handoff/SERVICE-MODEL-20261109.md",
+          "scope": "승인 모델의 고정 Azure ZDR 경로 실제 기능 선택1회·원장 조회·재요청 중복0. 전체 실제 AI 의미 품질 인수 아님.",
+          "status": "VERIFIED",
+          "parent_complete": false
         }
       ],
       "actual_implementation_paths": [
@@ -2136,18 +2148,22 @@
     "budget_scope": "mks2-agent-20261108",
     "historical_spend": "PRESERVED_UNKNOWN",
     "approved_new_budget_usd": "10",
-    "actual_model_verification": "BLOCKED",
+    "actual_model_verification": "VERIFIED",
     "merge": {
       "automatic_authorization": false,
       "status": "NOT_STARTED"
     },
-    "current_runtime_mode": "fake",
-    "live_dispatched_attempts": 1,
-    "live_successful_responses": 0,
-    "live_hold_reason": "User deferred live use until recharge; unknown attempt cost and reserved budget preserved.",
+    "current_runtime_mode": "live",
+    "live_dispatched_attempts": 3,
+    "live_successful_responses": 1,
+    "live_hold_reason": null,
     "bounded_fake_read_verification": "VERIFIED",
-    "python_tests_passed": 280,
-    "node_tests_passed": 12
+    "python_tests_passed": 286,
+    "node_tests_passed": 12,
+    "actual_model_scope": "Single approved live fulfillment routing + deterministic ledger read; general semantic quality and full Agent acceptance remain incomplete.",
+    "live_unknown_attempts": 2,
+    "latest_connection_record": "docs/handoff/SERVICE-MODEL-20261109.md",
+    "latest_connection_decision": "DEC-H30"
   },
   "retained_foundation_batch": [
     "T00",
