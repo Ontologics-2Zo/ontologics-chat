@@ -39,6 +39,8 @@ cd ontologics-chat
 
 ## 로컬 서비스 실행
 
+Mac의 Docker Desktop 소켓 선택, 비공개 입력 연결, 재시작·문제 해결까지의 순서는 [로컬 실행 안내](docs/handoff/CLOUD_SETUP.md)를 따른다.
+
 Python 3.12 이상, `uv`, Docker 및 최신 브라우저를 사용한다. Python 의존성은 `pyproject.toml`/`uv.lock`, DB 변경은 `migrations/`에 있다. 로컬 개발 신원은 명시적인 `--dev-mode`에서만 활성화하고 서버는 loopback에 바인딩한다. 운영 인증·배포 구성이 아니다.
 
 `PRIVATE_INPUT_ROOT`는 공식 문서·기초 데이터·전체 온톨로지가 있는 기존 비공개 입력 루트를 가리킨다. 원본과 runtime 파일·DB·평가 산출물은 Git 밖에 둔다. 모델 키는 이 초기 원장 조회 실행에 필요하지 않다.
@@ -46,13 +48,16 @@ Python 3.12 이상, `uv`, Docker 및 최신 브라우저를 사용한다. Python
 ```bash
 # 실제 보호된 입력 위치와 Git 밖 runtime 파일 위치를 사용한다.
 export PRIVATE_INPUT_ROOT="$HOME/Private/ontologics/private_inputs"
+export ONTO_RUNTIME_DIR="$HOME/.local/share/ontologics"
 uv sync --locked
-mkdir -p -m 700 /tmp/ontologics-local
-.venv/bin/python dev/service_stack.py up --runtime-file /tmp/ontologics-local/runtime.json
-.venv/bin/python -m service --runtime-file /tmp/ontologics-local/runtime.json --dev-mode --reference-preview --import-initial --port 8870
+mkdir -p -m 700 "$ONTO_RUNTIME_DIR"
+.venv/bin/python dev/service_stack.py up --runtime-file "$ONTO_RUNTIME_DIR/runtime.json"
+.venv/bin/python -m service --runtime-file "$ONTO_RUNTIME_DIR/runtime.json" --dev-mode --reference-preview --import-initial --port 8870
 ```
 
-Cloud에서는 이미 제공된 `PRIVATE_INPUT_ROOT`를 유지한다. 필요하면 `UV_CACHE_DIR`를 쓰기 가능한 별도 캐시 경로로 지정한다. 실행한 머신의 브라우저에서 `http://127.0.0.1:8870/`을 연다. Cloud 내부 localhost는 사용자 Mac의 접속 주소가 아니다. Apple Silicon Mac 실기 실행은 **NOT_RUN**이다.
+위 요약 명령은 기본 `/var/run/docker.sock`을 사용한다. Docker Desktop이 사용자 소켓만 제공하면 `service_stack.py`에 `--docker-socket "$HOME/.docker/run/docker.sock"`을 추가한다. runtime 파일은 DB 자격증명을 담으므로 Git 밖 영속 위치에 보관한다. 기존 파일이 있으면 그 파일을 계속 사용한다.
+
+Cloud에서는 이미 제공된 `PRIVATE_INPUT_ROOT`와 runtime 파일을 유지한다. 필요하면 `UV_CACHE_DIR`를 쓰기 가능한 별도 캐시 경로로 지정한다. 실행한 머신의 브라우저에서 `http://127.0.0.1:8870/`을 연다. Cloud 내부 localhost는 사용자 Mac의 접속 주소가 아니다. Apple Silicon Mac 실기 실행은 **NOT_RUN**이다.
 
 MK-S2 확인 동선:
 
@@ -94,7 +99,7 @@ node dev/check_service_ui.mjs --cdp=http://127.0.0.1:9233 --url=http://127.0.0.1
 - 화면 연결: [화면별 수용 기준](docs/handoff/SCREEN_ACCEPTANCE_MAP.md)
 - 구조: [아키텍처 기준](docs/handoff/ARCHITECTURE_BASELINE.md)
 - 원본 전달: [비공개 자료 전달 방법](docs/handoff/PRIVATE_INPUT_DELIVERY.md), [준비만 진행하는 요청문](docs/handoff/PREPARATION_ONLY_REQUEST.md)
-- 실행 참고: [Cloud 준비 절차](docs/handoff/CLOUD_SETUP.md), [과거 첫 개발 요청문](docs/handoff/FIRST_CLOUD_TASK.md). 최신 승인 범위는 `AGENTS.md`와 결정 문서를 우선한다.
+- 실행 참고: [로컬·Cloud 실행 절차](docs/handoff/CLOUD_SETUP.md), [과거 첫 개발 요청문](docs/handoff/FIRST_CLOUD_TASK.md). 최신 승인 범위는 `AGENTS.md`와 결정 문서를 우선한다.
 - 원본: [자료 인덱스](docs/handoff/SOURCE_INDEX.md), [데이터 반입 계약](docs/handoff/DATA_IMPORT_CONTRACT.md)
 
 저장소는 공개 유지한다. 새로 작성한 화면 코드·일반 실행 도구·인계 요약만 배치한다. 원본 HTML/스크립트를 통째로 복사하지 않았으며, 공식 원문·공유 목업·실제 BOM·원본 파생 시연 데이터는 별도의 비공개 입력으로 공급한다. 공개 배포 허용이 확인되지 않은 원본은 공개 산출물에 포함하지 않는다.

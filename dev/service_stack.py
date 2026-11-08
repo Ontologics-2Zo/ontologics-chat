@@ -30,6 +30,19 @@ class StackError(Exception):
     """Fixed public-safe code; Docker diagnostics may contain credentials."""
 
 
+def local_docker_command(socket_path):
+    """Select only an explicit local Unix socket, never a saved remote context."""
+    path = Path(socket_path).expanduser()
+    if not path.is_absolute() or "://" in str(socket_path):
+        raise StackError("DOCKER_SOCKET_MUST_BE_LOCAL_ABSOLUTE_PATH")
+    try:
+        if not stat.S_ISSOCK(path.stat().st_mode):
+            raise StackError("LOCAL_DOCKER_SOCKET_UNAVAILABLE")
+    except OSError:
+        raise StackError("LOCAL_DOCKER_SOCKET_UNAVAILABLE") from None
+    return ["docker", "--host=unix://" + str(path)]
+
+
 def docker(*args, allow_missing=False, timeout=60):
     environment = {k: v for k, v in os.environ.items() if k not in SELECTORS}
     try:
@@ -173,9 +186,12 @@ def readiness(config, ports):
 
 
 def main():
+    global DOCKER
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("up", "status"))
     parser.add_argument("--runtime-file", required=True, help="Private mode-0600 JSON outside the repository")
+    parser.add_argument("--docker-socket", default="/var/run/docker.sock",
+                        help="Absolute local Unix socket; Docker Desktop may use ~/.docker/run/docker.sock")
     parser.add_argument("--name", default="ontologics")
     parser.add_argument("--postgres-port", type=int, default=55432)
     parser.add_argument("--neo4j-http-port", type=int, default=57474)
@@ -186,6 +202,7 @@ def main():
         if not re.fullmatch(r"[a-z][a-z0-9-]{0,39}", args.name) or len(set(ports)) != 3 or not all(1024 <= p <= 65535 for p in ports):
             raise StackError("STACK_ARGUMENT_INVALID")
         path = runtime_path(args.runtime_file)
+        DOCKER = local_docker_command(args.docker_socket)
         docker("info", "--format", "{{.ServerVersion}}")
         actual = {name: inspect_container(name) for name in (args.name + "-pg", args.name + "-neo4j")}
         if not path.exists():
