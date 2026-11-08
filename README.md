@@ -18,6 +18,25 @@ MK-S2의 화면·핵심 동선을 유지하면서 제조 업무를 실제 서버
 
 최종 목표는 **MK-S2의 외형·동선만 유지하고, 내용은 모두 우리 온톨로지·원장·도구 결과로 바꾸는 것**이다. 이 브랜치는 그 이전의 화면 보존·작업 공간 분리 단계다. 미래 사건·기대값이 섞인 오프라인 전체 그래프를 현재 원장으로 바로 표시하거나 고정 답변을 실제 질의로 승격하지 않는다.
 
+## ZIP 없이 Git으로 받기
+
+화면 구현은 **`codex/mks2-ui-tabs` 브랜치**에 있다. `main`에서 `git pull`만 하면 이 화면을 받지 못한다. 기존 로컬 저장소에서 다음을 실행한다.
+
+```bash
+git fetch origin
+git switch codex/mks2-ui-tabs
+git pull --ff-only origin codex/mks2-ui-tabs
+```
+
+저장소가 처음이라면 다음으로 받는다.
+
+```bash
+git clone --branch codex/mks2-ui-tabs https://github.com/Ontologics-2Zo/ontologics-chat.git
+cd ontologics-chat
+```
+
+로컬 변경 때문에 전환이 중단되면 해당 변경을 보존하고 해결한다. 위 절차는 강제 초기화나 덮어쓰기를 하지 않는다. Git에는 코드·검사 도구·인계 문서가 들어 있고, 비공개 원본/fixtures·키·실제 환경 설정·DB·상세 검증 산출물은 들어 있지 않다. 현재 화면에 데이터를 표시하려면 아래의 `PRIVATE_INPUT_ROOT` 연결도 필요하다.
+
 ## 화면 실행 — Cloud / Apple Silicon Mac
 
 Python 3.10 이상과 최신 브라우저를 사용한다. 이 화면에는 외부 Python/npm 의존성, 설치 과정, DB migration, Docker가 없다. 의존성 lock과 migration은 해당 없음이며 전체 서비스 패키지를 뜻하지 않는다.
@@ -62,13 +81,14 @@ node dev/check_tabs.mjs --cdp=http://127.0.0.1:9233 --url=http://127.0.0.1:8765/
 ## 개발 인계
 
 - 시작: [개발 인계 안내](docs/handoff/START_HERE.md)
+- 새 채팅: [이어가기 절차와 붙여넣을 요청문](docs/handoff/START_HERE.md#새-채팅에서-이어가기)
 - 작업 순서: [구현 작업표](docs/handoff/IMPLEMENTATION_TASKS.md)
 - 화면 연결: [화면별 수용 기준](docs/handoff/SCREEN_ACCEPTANCE_MAP.md)
 - 구조: [아키텍처 기준](docs/handoff/ARCHITECTURE_BASELINE.md)
 - 원본 전달: [비공개 자료 전달 방법](docs/handoff/PRIVATE_INPUT_DELIVERY.md), [준비만 진행하는 요청문](docs/handoff/PREPARATION_ONLY_REQUEST.md)
-- 이후 개발 승인 시 실행: [Cloud 준비 절차](docs/handoff/CLOUD_SETUP.md), [첫 개발 요청문](docs/handoff/FIRST_CLOUD_TASK.md)
+- 실행 참고: [Cloud 준비 절차](docs/handoff/CLOUD_SETUP.md), [과거 첫 개발 요청문](docs/handoff/FIRST_CLOUD_TASK.md). 최신 승인 범위는 `AGENTS.md`와 결정 문서를 우선한다.
 - 원본: [자료 인덱스](docs/handoff/SOURCE_INDEX.md), [데이터 반입 계약](docs/handoff/DATA_IMPORT_CONTRACT.md)
 
 저장소는 공개 유지한다. 새로 작성한 화면 코드·일반 실행 도구·인계 요약만 배치한다. 원본 HTML/스크립트를 통째로 복사하지 않았으며, 공식 원문·공유 목업·실제 BOM·원본 파생 시연 데이터는 별도의 비공개 입력으로 공급한다. 공개 배포 허용이 확인되지 않은 원본은 공개 산출물에 포함하지 않는다.
 
-첫 구현은 T00 기준 확인과 T01 실행 골격부터 진행한다. 원본이 아직 제공되지 않은 환경에서는 자료 점검을 완료로 처리하지 않는다. 없는 원본을 가짜 파일로 대체해 화면·BOM 검증을 통과시키지 않는다.
+서비스 구현은 T00~T02의 기준·서버/DB·신원 선행부터 확인하고 승인된 1차 범위의 준비된 다음 Task로 이어간다. 과거의 구현 보류/T00~T01 한정은 후속 사용자 요청으로 갱신됐다. 원본이 아직 제공되지 않은 환경에서는 자료 점검을 완료로 처리하지 않는다. 없는 원본을 가짜 파일로 대체해 화면·BOM 검증을 통과시키지 않는다.
