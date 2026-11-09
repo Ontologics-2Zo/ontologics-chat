@@ -1,5 +1,8 @@
 # 로컬 실행과 Codex Cloud 환경 안내
 
+> 최신 실행 기준: DEC-H43과 [PR #5 검토 기록](SERVICE-PR5-REVIEW-20261110.md). 최신 main을 확인한 뒤 기존 runtime/DB/예산을 그대로 재사용하며 import/reset 없이 재시작한다. 로컬 질문·답변 관측은 별도 실행 override에서 `ONTO_LANGFUSE_CONTENT_ENABLED=true`, `ONTO_OBSERVABILITY_PURPOSE=interactive`로 활성화한다. 평가 host는 `evaluation` 또는 content=false를 사용한다. 기존 `.env`를 예시 파일로 덮어쓰지 않는다.
+
+
 > 최신 인계(2026-11-10): DEC-H38은 PR #4 최종 검토·검증 후 main 병합과 기존 설정의 Mac 앱 확인 범위다. [검토 기록](SERVICE-PR4-REVIEW-20261110.md)과 [GitHub PR #4](https://github.com/Ontologics-2Zo/ontologics-chat/pull/4)의 실제 병합 결과를 먼저 확인한다. 병합 완료 후 main으로 이어가며 `.env`·DB runtime·예산 이력을 보존한다. 아래 이전 실행 수치는 당시 증거다.
 
 
@@ -34,9 +37,7 @@ git log -1 --oneline
 
 PR #4가 병합됐다면 기존 변경을 보존한 상태에서 main과 origin/main을 대조하고 fast-forward 가능한 경우에만 갱신한다. 병합 전이라면 PR의 실제 head 브랜치에서 이어간다. 과거 `codex/agent-foundation`으로 돌아가거나 기존 DB를 초기화하지 않는다. 앱 재시작은 현재 runtime·환경 파일과 영속 예산을 그대로 사용한다.
 
-```bash
-git switch codex/agent-foundation
-```
+과거 브랜치로 전환하는 명령은 현재 재시작 절차에 포함하지 않는다.
 
 이하 명령은 선택한 저장소 루트에서 실행한다.
 
@@ -78,7 +79,7 @@ docker --host="unix://$ONTO_DOCKER_SOCKET" info --format '{{.ServerVersion}}'
 
 첫 실행은 PostgreSQL 17·Neo4j 5.26 이미지를 내려받는다. 기존 컨테이너·볼륨·자격증명은 확인 후 재사용하며 초기화하지 않는다. 두 서비스가 `true`이면 앱을 실행한다.
 
-기본 포트는 PostgreSQL `55432`, Neo4j HTTP `57474`, Neo4j Bolt `57687`이다. 앱 실행기도 이 기본 DB 포트를 사용하므로 이 안내에서는 변경하지 않는다.
+기본 포트는 PostgreSQL `55432`, Neo4j HTTP `57474`, Neo4j Bolt `57687`이다. 앱 실행기도 같은 기본값을 사용한다. 기존 환경에서는 변경하지 않으며, 별도 INITIAL 시연의 명시적 포트 설정은 아래 5-1절을 따른다.
 
 ## 4-1. 실제 BOM용 제한 Runner 준비
 
@@ -120,6 +121,58 @@ ONTO_MODEL_MODE=fake .venv/bin/python -m service \
 
 `--import-initial`은 빈 개발 원장을 처음 설치할 때만 별도로 사용하는 옵션이다. 현재 DB의 재시작·검증에는 사용하지 않는다. `--reference-preview`는 보존 탭용이다. MK-S2는 참조 fixture를 원장으로 사용하지 않으며 위 명령은 유료 모델을 호출하지 않는다. 이 실행 모드와 과거 실패한 실제 호출 1회의 누적 기록은 구분한다.
 
+## 5-1. BOM 등록 전 별도 영속 INITIAL 시연
+
+원래 `http://127.0.0.1:8870/` 앱과 DB는 그대로 유지한다. BOM 등록 전 흐름은 **다른 PostgreSQL·Neo4j 컨테이너와 볼륨, 다른 영속 runtime 디렉터리**에서 실행한다. 초기 이관만 있는 시연에 기존 BOM 문서·승인·후속 사건을 복사하지 않는다. 기존 DB를 초기화하거나 이미 등록된 원장을 되돌리는 절차가 아니다.
+
+브라우저 주소는 `http://localhost:8872/`로 고정한다. 쿠키는 포트별로 분리되지 않으므로 원래 앱과 같은 `127.0.0.1`을 사용하면 로그인 쿠키가 서로 바뀔 수 있다. `--origin-host localhost`는 허용할 정확한 Host/Origin만 바꾸며 서버의 실제 bind는 계속 `127.0.0.1`이다. 허용 Host는 `127.0.0.1`과 `localhost`뿐이며 외부 주소나 `127.0.0.2`는 허용하지 않는다.
+
+이미 준비된 시연은 비공개 복구 기록의 스택 이름과 runtime 경로를 재사용한다. 다음 변수 설정은 **별도 시연을 처음 준비하는 환경의 예시**다. 기존 `ONTO_RUNTIME_DIR`를 바꾸거나 기존 runtime을 이 경로로 복사하지 않는다.
+
+```bash
+export ONTO_INITIAL_STACK_NAME="ontologics-initial-demo"
+export ONTO_INITIAL_RUNTIME_DIR="$HOME/.local/share/ontologics-initial-demo"
+mkdir -p -m 700 "$ONTO_INITIAL_RUNTIME_DIR"
+.venv/bin/python dev/service_stack.py up \
+  --name "$ONTO_INITIAL_STACK_NAME" \
+  --docker-socket "$ONTO_DOCKER_SOCKET" \
+  --runtime-file "$ONTO_INITIAL_RUNTIME_DIR/runtime.json" \
+  --postgres-port 55434 --neo4j-http-port 57476 --neo4j-bolt-port 57689
+```
+
+스택과 앱 양쪽에 동일한 세 DB 포트를 전달한다. 앱은 같은 `load_runtime` 검사로 PostgreSQL의 loopback 주소·포트·자격증명 형식과 Neo4j Bolt URI를 확인한다. runtime은 저장소 밖의 비공개 파일이어야 하며 기존 파일을 덮어쓰지 않는다. 허용 범위 밖·중복 포트와 허용되지 않은 origin-host는 DB 연결·마이그레이션 전에 거부된다. Neo4j HTTP 포트는 스택에서 사용하며 앱에도 같은 값을 전달해 포트 충돌 검사를 유지한다.
+
+이 시연은 **Agent disabled + 결정적 CQ**만 사용한다. 원래 `.env`·live 키·모델 예산·비용 예약·관측 설정을 새 DB로 복사하거나 새 예산을 만들지 않는다. 아래 실행 함수는 `.env`를 읽지 않고, 상속될 수 있는 모델 키·예산·관측 자격증명을 해당 프로세스에서 제거한다. 기존 터미널과 원래 앱의 환경은 바뀌지 않는다. 비공개 입력과 검증된 Runner 이미지·로컬 소켓은 3절과 4-1절의 기존 값을 재사용한다.
+
+```bash
+onto_initial_app() {
+  env -u ONTO_OPENROUTER_API_KEY -u ONTO_OPENAI_API_KEY \
+    -u ONTO_LANGSMITH_API_KEY -u LANGFUSE_PUBLIC_KEY -u LANGFUSE_SECRET_KEY \
+    -u ONTO_MODEL_BUDGET_ID -u ONTO_MODEL_BUDGET_AUTHORIZATION \
+    -u ONTO_MODEL_PRIOR_SPEND_USD \
+    ONTO_MODEL_MODE=disabled ONTO_LANGFUSE_ENABLED=false \
+    .venv/bin/python -m service \
+      --runtime-file "$ONTO_INITIAL_RUNTIME_DIR/runtime.json" \
+      --origin-host localhost --port 8872 \
+      --postgres-port 55434 --neo4j-http-port 57476 --neo4j-bolt-port 57689 \
+      --dev-mode --reference-preview "$@"
+}
+```
+
+**새 별도 DB가 비어 있음을 확인한 최초 설치에만 한 번** 실행한다. 이미 초기 이관이나 BOM 등록을 마친 DB에는 실행하지 않는다. 준비된 시연의 복구 기록에 최초 설치가 완료됐으면 다음 명령을 건너뛴다.
+
+```bash
+onto_initial_app --import-initial
+```
+
+이후 일반 재시작은 같은 스택·runtime·입력·Runner 설정을 유지하고 **import 옵션 없이** 실행한다. 재시작 전에 필요한 경우 위의 동일 스택 `up` 명령을 다시 사용한다. 새 터미널에서는 기록된 변수와 실행 함수를 다시 설정한다.
+
+```bash
+onto_initial_app
+```
+
+다른 터미널에서 `curl --fail http://localhost:8872/health`를 확인하고 [별도 INITIAL 시연](http://localhost:8872/#mks2)을 연다. 작성자 A로 로그인해 납기 CQ의 미확인 상태와 기존 BOM 원본 접수 동선을 확인한다. 원본 접수는 사용자의 명시적 버튼 동작이며, 파일 목록 조회만으로 BOM 문서·승인·원장 사건을 만들지 않는다. 목록 조회의 최초 Runner 상태 검사는 제한된 임시 Docker probe를 실행할 수 있다. 원본 등록과 제조 기술검수는 계속 구분하며 기존 8870의 데이터·세션·모델 예산은 보존한다.
+
 ## 6. 상태 확인·종료·재시작
 
 다른 터미널에서는 필요한 변수들을 다시 지정한 뒤:
@@ -150,7 +203,7 @@ docker --host="unix://$ONTO_DOCKER_SOCKET" stop ontologics-pg ontologics-neo4j
 | `EXISTING_CONTAINER_REQUIRES_ORIGINAL_RUNTIME_FILE` / `EXISTING_VOLUME_REQUIRES_ORIGINAL_RUNTIME_FILE` | 기존 DB에 사용한 원래 runtime 파일 지정. 삭제·새 비밀번호로 덮어쓰기 금지 |
 | `EXISTING_CONTAINER_*_MISMATCH` | 같은 이름의 기존 컨테이너가 다른 구성인지 확인. 자동 삭제하지 않음 |
 | DB 준비 상태 `false` | 초기 시작을 기다린 뒤 같은 설정의 `status`/`up` 재실행 |
-| `LOCAL_ORIGIN_REQUIRED` | `http://127.0.0.1:8870/`로 접속 |
+| `LOCAL_ORIGIN_REQUIRED` | 실행한 정확한 origin으로 접속: 기존 앱은 `http://127.0.0.1:8870/`, 5-1절 별도 시연은 `http://localhost:8872/` |
 | `LEDGER_NOT_INITIALIZED` | 초기 개발 회사 계정 및 최초 `--import-initial` 확인 |
 | `PROJECTION_NOT_READY` / `PROJECTION_READ_UNAVAILABLE` | Neo4j 상태 확인. fixture나 오래된 결과로 대체하지 않음 |
 | 모델 잔액 부족·실제 호출 실패 | 반복 호출을 중단하고 원인·기존 예산·미확정 attempt를 확인. reservation을 임의 해제하지 않음. 2026-11-09 성공한 현재 설정과 과거 실패를 구분 |

@@ -350,6 +350,12 @@ class ModelGatewayIntegrationTests(unittest.TestCase):
         self.assertTrue(second.replayed)
         self.assertEqual(second_provider.calls, 0)
         self.assertEqual(len(observer.spans), 1)
+        span = observer.spans[0]
+        self.assertEqual(span["input"].features.materials, True)
+        self.assertEqual(span["input"].execution_mode, "fake")
+        self.assertEqual(span["output"].capability, first.capability)
+        self.assertTrue(span["output"].dispatched)
+        self.assertIsNone(span["output"].usage.cost_usd)
         self.assertIsNone(first.usage.cost_usd)
         self.assertEqual(self.store.execution_summary(), {"live_calls": 0, "fake_calls": 1, "known_cost_usd": "0", "held_usd": "0", "usage_unknown": 0})
 
@@ -422,6 +428,12 @@ class ModelGatewayIntegrationTests(unittest.TestCase):
         self.assertEqual(self.store.execution_summary()["usage_unknown"], 1)
         self.assertEqual(observer.invalid, 0)
         self.assertEqual(observer.receipts.records()[0]["span"]["status"], "unknown")
+        output = observer.receipts.records()[0]["span"]["output"]
+        self.assertEqual(output["status"], "outcome_unknown")
+        self.assertTrue(output["dispatched"])
+        self.assertIsNone(output["capability"])
+        self.assertIsNone(output["usage"]["cost_usd"])
+        self.assertEqual(output["error_code"], "MODEL_PROVIDER_TIMEOUT")
         self.assertEqual(self.rows()[0]["status"], "outcome_unknown")
 
     def test_success_without_cost_keeps_a_reservation_not_fabricated_zero(self):

@@ -49,7 +49,7 @@
 .mks-edge text { font: 10.5px var(--sans, sans-serif); fill: var(--fg3, #64748b); opacity: 0; paint-order: stroke; stroke: var(--bg, #f4f6fa); stroke-width: 4px; stroke-linejoin: round; pointer-events: none; }
 .mks-edge:hover text, .mks-edge:focus-within text { opacity: 1; }
 .mks-edge.mks-hit > path:not(.mks-edge-hit-area) { stroke: var(--accent, #4f46e5); stroke-width: 2.6px; }
-.mks-replaying .mks-edge.mks-hit > path:not(.mks-edge-hit-area) { stroke-dasharray:8 6; animation:mks-edge-flow .9s linear infinite; }
+.mks-replaying .mks-edge.mks-active-step > path:not(.mks-edge-hit-area) { stroke-dasharray:8 6; animation:mks-edge-flow .9s linear infinite; }
 .mks-edge.mks-hit text { opacity: 1; fill: var(--accent, #4f46e5); font-weight: 600; }
 .mks-node { cursor: pointer; }
 .mks-node-shape { fill: var(--node, #fff); stroke: var(--node-line, #94a3b8); stroke-width: 1.6px; }
@@ -68,8 +68,9 @@
 .mks-node.mks-draft .mks-node-shape { stroke-dasharray: 4 3; }
 .mks-node.mks-selected .mks-node-shape, .mks-node.mks-hit .mks-node-shape { stroke: var(--accent, #4f46e5); stroke-width: 3px; }
 .mks-node-ring { fill: none; stroke: var(--accent, #4f46e5); stroke-width: 2px; opacity: 0; transform-box: fill-box; transform-origin: center; }
-.mks-replaying .mks-node.mks-hit .mks-node-ring { animation: mks-node-pulse 1.2s ease-out infinite; }
+.mks-replaying .mks-node.mks-active-step .mks-node-ring { animation: mks-node-pulse 1.2s ease-out infinite; }
 .mks-dimming .mks-node:not(.mks-hit), .mks-dimming .mks-edge:not(.mks-hit) { opacity: .15; transition: opacity .2s; }
+.mks-node.mks-type-muted, .mks-edge.mks-type-muted { opacity:.24; }
 .mks-graph-detail { position: absolute; left: 14px; bottom: 14px; width: min(340px, calc(100% - 28px)); box-sizing: border-box; padding: 12px 14px; border: 1px solid var(--line, #d7dee8); border-radius: 10px; background: var(--surface, #fff); box-shadow: 0 6px 20px rgb(15 23 42 / 10%); color: var(--fg, #0f172a); font-size: 12.5px; line-height: 1.55; }
 .mks-detail-kind { color: var(--fg3, #64748b); font-size: 11px; font-weight: 600; letter-spacing: .04em; }
 .mks-graph-detail h4 { margin: 0 0 2px; font: 600 14px/1.55 var(--mono, ui-monospace, monospace); }
@@ -82,21 +83,18 @@
 .mks-detail-note { margin-top: 8px; font-size: 11px; color: var(--fg3, #64748b); }
 @keyframes mks-edge-flow { to { stroke-dashoffset: -28; } }
 @keyframes mks-node-pulse { from { opacity: .65; transform: scale(1); } to { opacity: 0; transform: scale(1.8); } }
-@media (prefers-reduced-motion: reduce) { .mks-replaying .mks-edge.mks-hit > path:not(.mks-edge-hit-area), .mks-replaying .mks-node.mks-hit .mks-node-ring { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .mks-replaying .mks-edge.mks-active-step > path:not(.mks-edge-hit-area), .mks-replaying .mks-node.mks-active-step .mks-node-ring { animation: none; } }
 @media (max-width: 700px) { .mks-graph-legend { max-width: calc(100% - 28px); top: 50px; } }
 @media (max-width: 520px) { .mks-graph-legend { display: none; } }
 
 .mks-graph-search{width:130px;min-width:0;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--fg);padding:3px 8px;font-size:12px}
 
 .mks-graph-guide { position:absolute; left:14px; bottom:43px; max-width:calc(100% - 28px); padding:4px 8px; border-radius:6px; background:color-mix(in srgb, var(--surface, #fff) 92%, transparent); color:var(--fg3, #64748b); font-size:11px; pointer-events:none; }
-.mks-planes { pointer-events:none; }
-.mks-plane-face { fill:color-mix(in srgb, var(--surface, #fff) 88%, var(--accent, #4f46e5) 12%); stroke:color-mix(in srgb, var(--line, #d7dee8) 80%, var(--accent, #4f46e5) 20%); stroke-width:1; }
-.mks-plane-side { fill:color-mix(in srgb, var(--line, #d7dee8) 70%, var(--accent, #4f46e5) 30%); opacity:.48; }
-.mks-plane-title { fill:var(--fg2, #475569); font:600 14px var(--sans, sans-serif); }
-.mks-plane-material .mks-plane-face, .mks-plane-supply .mks-plane-face { fill:color-mix(in srgb, var(--surface, #fff) 91%, var(--info, #0e7490) 9%); }
-.mks-plane-context .mks-plane-face, .mks-plane-source-rows .mks-plane-face { fill:var(--raised, #f8fafc); }
 .mks-node-shadow { fill:var(--node-line, #94a3b8); opacity:.16; pointer-events:none; }
-.mks-edge.mks-row-evidence { opacity:.15; }
+.mks-source-row .mks-node-id { font-size:10px; }
+.mks-source-row .mks-node-label { font-size:9.5px; }
+.mks-edge.mks-row-evidence { opacity:.22; }
+.mks-edge.mks-row-evidence.mks-hit { opacity:.5; }
 .mks-graph-svg .mks-edge.mks-row-evidence > path.mks-edge-line { stroke-width:1px; stroke-dasharray:none; animation:none; }
 .mks-edge.mks-row-evidence text { opacity:0; }
 .mks-edge.mks-row-evidence:hover, .mks-edge.mks-row-evidence:focus-within { opacity:1; }

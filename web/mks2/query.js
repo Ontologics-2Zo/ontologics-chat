@@ -143,33 +143,121 @@ function evidenceFlow(answer, suppliedEdges, labelFor, onEvidence, onReplay) {
   return result;
 }
 
+function answerParagraphs(answer, sections) {
+  const main = text(answer.answer) || text(answer.answer?.text) || '확인된 답변이 없습니다.';
+  // Split only after sentence punctuation followed by whitespace, or explicit
+  // line breaks. Decimal points and identifier contents are not interpreted.
+  const paragraphs = main.split(/(?<=[.!?。！？])(?=\s+[^\s])|\n{2,}/u).filter(value => value.trim());
+  // These strings are already labelled, same-snapshot server results. Do not
+  // infer quantities from the question or calculate from reference fixtures.
+  for (const section of sections) {
+    if (!['materials', 'inventory'].includes(section.id)) continue;
+    for (const item of Array.isArray(section.items) ? section.items : []) {
+      if (!item || !text(item.value)) continue;
+      const origin = text(item.origin || section.origin);
+      const provenance = Object.hasOwn(origins, origin.toLowerCase()) ? origins[origin.toLowerCase()][0] : '';
+      paragraphs.push(`${text(item.label) ? item.label + ': ' : ''}${item.value}${text(item.detail) ? '. ' + item.detail : ''}${provenance ? ' (' + provenance + ')' : ''}`);
+    }
+  }
+  return [...new Set(paragraphs)];
+}
+
+function quantityRuns(paragraph, value, runs, segmenter) {
+  // Bold literal quantity tokens; never interpret server markup or convert a
+  // decimal string to Number. IDs such as PART-0012 remain ordinary text.
+  const quantities = /(?<![\p{L}\p{N}_-])[+−-]?\d+(?:,\d{3})*(?:\.\d+)?(?:\s*(?:EA(?![A-Za-z])|개|대|행|%)|(?![\p{L}\p{N}_-]))/gu;
+  const boundaries = segmenter ? new Set([0, value.length, ...[...segmenter.segment(value)].map(item => item.index)]) : null;
+  const append = (part, bold) => {
+    if (!part) return;
+    const span = node(bold ? 'strong' : 'span', bold ? 'query-quantity' : '');
+    paragraph.append(span);
+    runs.push({ span, full: part, shown: -1,
+      characters: segmenter ? [...segmenter.segment(part)].map(item => item.segment) : [part] });
+  };
+  let offset = 0;
+  for (const match of value.matchAll(quantities)) {
+    if (boundaries && (!boundaries.has(match.index) || !boundaries.has(match.index + match[0].length))) continue;
+    append(value.slice(offset, match.index), false); append(match[0], true); offset = match.index + match[0].length;
+  }
+  append(value.slice(offset), false);
+}
+
 export function renderQueryAnswer(message, answer, {
   evidenceIds = [], evidenceEdges = [], labelFor = id => id, onEvidence = () => {},
-  onReplay = () => {}, onCancel = () => {},
+  onReplay = () => {}, onCancel = () => {}, onOpenBom = () => {}, animate = false,
 } = {}) {
+  let disposed = false, typingComplete = false, frame = null, startedAt = null, settled = false;
+  let resolveFinished;
+  const finished = new Promise(resolve => { resolveFinished = resolve; });
+  const settle = value => { if (!settled) { settled = true; resolveFinished(value); } };
+  const guard = callback => (...args) => { if (!disposed) return callback(...args); };
+  onEvidence = guard(onEvidence); onReplay = guard(onReplay); onCancel = guard(onCancel); onOpenBom = guard(onOpenBom);
   message.replaceChildren();
   const sectionData = (Array.isArray(answer.sections) ? answer.sections : []).filter(section => section && typeof section === 'object');
   const delivery = Array.isArray(answer.intent) && answer.intent.includes('delivery') && answer.status !== 'NEEDS_CLARIFICATION';
   message.dataset.queryPresentation = delivery ? 'delivery' : 'standard';
-  const verdict = delivery ? node('section', 'query-verdict') : message;
+  const steps = node('ol', 'trace-steps');
+  steps.setAttribute('aria-label', '완료된 원장 조회 과정');
+  for (const step of Array.isArray(answer.steps) ? answer.steps : []) if (text(step)) steps.append(node('li', 'done', step));
+  if (steps.children.length) message.append(steps);
+  const verdict = node('div', delivery ? 'query-verdict' : 'query-body');
   const summary = node('div', 'query-summary');
   if (text(answer.intent_label)) summary.append(node('span', 'query-intent', answer.intent_label));
   const status = statusBadge(answer.status);
   if (status) summary.append(status);
   if (delivery && answer.calculation?.actual_delivery_feasibility === 'UNKNOWN') summary.append(node('span', 'query-delivery-status', '납기 판단 보류'));
-  if (summary.children.length) verdict.append(summary);
-  if (text(answer.conclusion)) verdict.append(node('p', 'query-conclusion', answer.conclusion));
-  verdict.append(node('p', 'answer', text(answer.answer) || text(answer.answer?.text) || '확인된 답변이 없습니다.'));
+  const provenance = new Set();
+  for (const section of sectionData) for (const value of [section.origin, ...(Array.isArray(section.items) ? section.items.map(item => item?.origin) : [])]) {
+    const origin = text(value).toLowerCase();
+    if (Object.hasOwn(origins, origin)) provenance.add(origins[origin][0]);
+  }
+  const paragraphs = answerParagraphs(answer, sectionData), runs = [];
+  const segmenter = typeof Intl.Segmenter === 'function' ? new Intl.Segmenter('ko', { granularity: 'grapheme' }) : null;
+  const reduced = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    || globalThis.window?.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  const typing = animate === true && !reduced && segmenter && typeof requestAnimationFrame === 'function' && typeof cancelAnimationFrame === 'function';
+  message.dataset.answerDisplayState = typing ? 'typing' : 'complete';
+  const visibleBody = node('div', 'query-prose');
+  if (typing) {
+    visibleBody.setAttribute('aria-hidden', 'true');
+    verdict.append(node('div', 'query-accessible-answer', paragraphs.join('\n\n')));
+  }
+  paragraphs.forEach((value, index) => {
+    const paragraph = node('p', index ? 'query-paragraph' : 'answer');
+    quantityRuns(paragraph, value, runs, segmenter); visibleBody.append(paragraph);
+  });
+  verdict.append(visibleBody);
+  const typingControls = node('div', 'query-typing-controls'), typingStatus = node('span', 'query-typing-status');
+  typingStatus.setAttribute('role', 'status'); typingStatus.setAttribute('aria-live', 'polite'); typingStatus.setAttribute('aria-atomic', 'true');
+  const showAll = action('모두 보기', () => finish());
+  typingControls.append(typingStatus, showAll); typingControls.hidden = !typing;
+  verdict.append(typingControls);
+  const requirements = answer.calculation?.material_requirements;
+  if (requirements?.state === 'BLOCKED_BOM' && requirements.bom_id == null) {
+    const register = action('BOM 원본 등록', onOpenBom, 'btn pri sm');
+    register.dataset.queryAction = 'bom-register';
+    verdict.append(register);
+  }
+  const scope = [];
+  if (status) scope.push(status.textContent);
+  if (delivery && answer.calculation?.actual_delivery_feasibility === 'UNKNOWN') scope.push('납기 판단 보류');
+  scope.push(...provenance);
+  if (answer.status === 'UNKNOWN' || answer.status === 'PARTIAL') scope.push('미확인은 부족 0이나 제조·납기 확정을 뜻하지 않습니다.');
+  if (scope.length) verdict.append(node('p', 'note query-scope-note', [...new Set(scope)].join(' · ')));
+  message.append(verdict);
+  const details = node('details', 'query-details');
+  details.append(node('summary', '', '상세 근거·조건·조회 기준'));
+  if (summary.children.length) details.append(summary);
+  if (text(answer.conclusion)) details.append(node('p', 'query-conclusion', answer.conclusion));
   if (delivery) {
-    message.append(verdict);
     const metrics = deliveryMetrics(sectionData);
-    if (metrics) message.append(metrics);
+    if (metrics) details.append(metrics);
     const flow = evidenceFlow(answer, evidenceEdges, labelFor, onEvidence, onReplay);
-    if (flow) message.append(flow);
+    if (flow) details.append(flow);
   }
   const sections = delivery ? deliverySections(sectionData) : node('div', 'query-sections');
   if (!delivery) for (const section of sectionData) sections.append(sectionCard(section));
-  if (sections.children.length) message.append(sections);
+  if (sections.children.length) details.append(sections);
 
   const meta = answer.meta || {};
   const basis = node('div', 'query-basis');
@@ -185,25 +273,14 @@ export function renderQueryAnswer(message, answer, {
   if (text(meta.known_as_of)) basis.append(node('p', '', `확인 시점 · ${meta.known_as_of}`));
   const snapshot = text(meta.snapshot_id) || text(meta.read_snapshot_id);
   if (snapshot) basis.append(node('p', 'query-snapshot', `스냅샷 · ${snapshot}`));
-  message.append(basis);
-
-  const trace = node('details', 'query-trace');
-  trace.append(node('summary', '', '조회 과정과 근거'));
-  const steps = node('ol', 'trace-steps');
-  for (const step of Array.isArray(answer.steps) ? answer.steps : []) {
-    if (text(step)) steps.append(node('li', '', step));
-  }
-  if (steps.children.length) trace.append(steps);
-  message.append(trace);
+  details.append(basis);
   const evidence = node('div', 'evidence-path');
   const ids = [...new Set(evidenceIds.filter(id => typeof id === 'string'))];
-  const extra = node('details', 'query-more-evidence');
-  extra.append(node('summary', '', `근거 전체 ${ids.length}개 보기`));
-  ids.forEach((id, index) => {
+  if (ids.length) evidence.append(node('span', 'query-evidence-count', `거친 노드 ${ids.length}개`));
+  ids.forEach(id => {
     const chip = action(labelFor(id), () => onEvidence(id), 'chip');
-    (index < 6 ? evidence : extra).append(chip);
+    evidence.append(chip);
   });
-  if (ids.length > 6) evidence.append(extra);
   message.append(evidence);
 
   const footer = node('div', 'answer-footer');
@@ -211,23 +288,69 @@ export function renderQueryAnswer(message, answer, {
   footer.append(node('span', '', `원장 v${meta.ledger_version ?? '미확인'} · 그래프 v${meta.projection_version ?? '미확인'} · 모델 호출 ${liveCalls}회`));
   const replayStatus = node('span', 'query-replay-status');
   replayStatus.setAttribute('aria-live', 'polite');
-  const cancel = action('재생 중단', () => { playVersion++; onCancel(); setReplayState('cancelled'); });
+  const cancel = action('재생 중단', guard(() => { playVersion++; onCancel(); setReplayState('cancelled'); }));
   cancel.hidden = true;
   if (ids.length) footer.append(action('근거 다시 보기', onReplay));
   footer.append(cancel, replayStatus); message.append(footer);
+  message.append(details);
   let playVersion = 0;
 
+  const total = runs.reduce((sum, run) => sum + run.characters.length, 0);
+  const duration = Math.min(8000, Math.max(300, total * 18));
+  function draw(count) {
+    if (disposed) return;
+    for (const run of runs) {
+      const shown = Math.min(run.characters.length, Math.max(0, count));
+      if (shown !== run.shown) { run.span.textContent = shown === run.characters.length ? run.full : run.characters.slice(0, shown).join(''); run.shown = shown; }
+      count -= run.characters.length;
+    }
+  }
+  function clearFrame() {
+    if (frame !== null) { const pending = frame; frame = null; try { cancelAnimationFrame(pending); } catch { /* Finish/dispose still release our callback ownership. */ } }
+  }
+  function finish() {
+    if (disposed || typingComplete) return;
+    clearFrame();
+    try { draw(total); }
+    catch { visibleBody.replaceChildren(...paragraphs.map((value, index) => node('p', index ? 'query-paragraph' : 'answer', value))); }
+    typingComplete = true; showAll.hidden = true;
+    message.dataset.answerDisplayState = 'complete';
+    if (typing) typingStatus.textContent = '답변 표시 완료';
+    settle({ completed: true });
+  }
+  function dispose() {
+    if (disposed) return;
+    clearFrame(); disposed = true; playVersion++; settle({ completed: false, disposed: true });
+  }
+  function tick(time) {
+    frame = null;
+    if (disposed || typingComplete) return;
+    try {
+      if (!Number.isFinite(time)) { finish(); return; }
+      if (startedAt === null) startedAt = time;
+      const count = Math.floor(total * Math.min(1, Math.max(0, (time - startedAt) / duration)));
+      draw(count);
+      if (count >= total) finish(); else frame = requestAnimationFrame(tick);
+    } catch { finish(); }
+  }
+  if (typing && total) {
+    try { draw(0); typingStatus.textContent = '서버에서 확인된 답변 표시 중'; frame = requestAnimationFrame(tick); }
+    catch { finish(); }
+  } else finish();
+
   function setReplayState(state) {
+    if (disposed) return;
     cancel.hidden = state !== 'playing';
     replayStatus.textContent = {
-      playing: '답변 표시 완료 · 근거 경로 재생 중', complete: '근거 경로 재생 완료',
+      playing: `${typingComplete ? '답변 표시 완료 · ' : ''}근거 경로 재생 중`, complete: '근거 경로 재생 완료',
       cancelled: '근거 재생 중단 · 답변과 기준 버전은 유지됩니다.',
       unavailable: '근거를 재생하지 못했습니다. 답변은 표시된 조회 기준을 유지합니다.',
     }[state] || '';
-    for (const step of steps.children) step.className = state === 'complete' ? 'done' : '';
   }
   return {
+    finish, dispose, finished,
     async play(replay, isCurrent = () => true) {
+      if (disposed) return;
       const version = ++playVersion;
       setReplayState('playing');
       try {

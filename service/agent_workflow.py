@@ -26,6 +26,8 @@ from service.contracts import content_hash
 from service.errors import ServiceError
 from service.query_intents import interpret_question
 from service.product_contracts import ProductReviewInput
+from service.observability import (EXECUTION_ROOT_SPAN, WorkflowObservationInput,
+                                   WorkflowObservationOutput)
 
 
 CAPABILITIES = {"fulfillment_read": FulfillmentRead, "material_analysis": MaterialAnalysis,
@@ -133,6 +135,12 @@ class AgentWorkflow:
     def cancel(self, principal, execution_id, expected_revision):
         row = self._owner(principal, execution_id)
         self.store.cancel(str(row["execution_id"]), expected_revision)
+        if row["status"] not in TERMINAL:
+            # RUNNING cancellation is summarized by run() after its lease exits.
+            # CREATED/WAITING cancellation has no further segment to emit it.
+            choice = row.get("pending_resume") or (row["request"] if row["segment_count"] <= 1 else None)
+            self._observe_snapshot(str(row["execution_id"]), "execution", EXECUTION_ROOT_SPAN,
+                                   None, row["created_at"], choice=choice, terminal=True)
         return self.status(principal, execution_id)
 
     def resume(self, principal, execution_id, request):
@@ -153,6 +161,58 @@ class AgentWorkflow:
             except Exception:
                 # Observability never changes a completed domain result.
                 pass
+
+    def _observe_snapshot(self, execution_id, stage, span_id, parent_span_id, started_at,
+                          *, choice=None, state=None, status=None, error_code=None,
+                          terminal=False):
+        """Capture selected actual values only; never export an artifact wholesale."""
+        if self.observer is None:
+            return
+        try:
+            row = self.store.get(execution_id)
+            if terminal and row["status"] not in TERMINAL:
+                return
+            state = state or {}
+            ref = state.get("result_ref", row.get("result_ref"))
+            try:
+                result = self.store.result(execution_id, ref) if ref else None
+            except Exception:
+                result = None
+            result_available = isinstance(result, dict)
+            result = result if isinstance(result, dict) else {}
+            selected = choice or {}
+            pinned = row["pinned_context"]
+            status = status or row["status"].lower()
+            clarification = row.get("interrupt") or {}
+            # A terminal execution root is immutable and exported once by its
+            # stable receipt ID. WAITING remains on the segment observation.
+            self._observe({"execution_id": execution_id, "segment_id": str(row["segment_id"]) if row.get("segment_id") else None,
+                "span_id": span_id, "parent_span_id": parent_span_id,
+                "name": "agent_execution_summary" if terminal else ("agent_segment" if stage == "segment" else stage),
+                "kind": "agent" if terminal else "chain", "status": status,
+                "started_at": row["created_at"] if terminal else started_at,
+                "ended_at": datetime.now(timezone.utc),
+                "terminal_summary": terminal,
+                "input": WorkflowObservationInput(stage=stage,
+                    requested_capability=selected.get("capability"),
+                    ledger_version=pinned["ledger_version"], projection_version=pinned["projection_version"],
+                    question_scope="current_segment" if choice else "unavailable",
+                    question=selected.get("question"),
+                    initial_question=row["request"].get("question") if terminal else None),
+                "output": WorkflowObservationOutput(stage=stage, status=status,
+                    capability=state.get("capability", row.get("capability")),
+                    tool_calls=row["tool_calls"], segment_count=row["segment_count"], result_available=result_available,
+                    result_status=result.get("status"), error_code=error_code or row.get("error_code"),
+                    answer=result.get("answer") if isinstance(result.get("answer"), str) else None,
+                    conclusion=result.get("conclusion") if isinstance(result.get("conclusion"), str) else None,
+                    clarification=clarification.get("message") if isinstance(clarification.get("message"), str) else None),
+                "metadata": {"workflow_version": WORKFLOW_VERSION,
+                    "ledger_version": pinned["ledger_version"], "projection_version": pinned["projection_version"],
+                    "tool_calls": row["tool_calls"]}})
+        except Exception:
+            # Neither an unavailable optional artifact nor tracing may change
+            # canonical execution/result/usage or recover a failed provider call.
+            pass
 
     def _build(self, principal, row, context, budget, saver):
         execution_id, segment_id, lease = str(row["execution_id"]), row["segment_id"], row["lease_token"]
@@ -175,19 +235,14 @@ class AgentWorkflow:
                 self.store.event(execution_id, lease, segment_id, name, "RUNNING")
                 try:
                     result = fn(state)
-                except Exception:
-                    self._observe({"execution_id": execution_id, "segment_id": segment_id,
-                                   "span_id": span_id, "parent_span_id": segment_id,
-                                   "name": name, "kind": "chain", "status": "failed",
-                                   "started_at": start, "ended_at": datetime.now(timezone.utc),
-                                   "metadata": {"workflow_version": WORKFLOW_VERSION}})
+                except Exception as error:
+                    code = error.code if isinstance(error, ServiceError) and re.fullmatch(r"[A-Z][A-Z0-9_]{0,79}", error.code) else "AGENT_EXECUTION_FAILED"
+                    self._observe_snapshot(execution_id, name, span_id, segment_id, start,
+                        choice=row.get("pending_resume") or row["request"], state=state, status="failed", error_code=code)
                     raise
                 self.store.event(execution_id, lease, segment_id, name, "COMPLETED")
-                self._observe({"execution_id": execution_id, "segment_id": segment_id,
-                               "span_id": span_id, "parent_span_id": segment_id,
-                               "name": name, "kind": "chain", "status": "completed",
-                               "started_at": start, "ended_at": datetime.now(timezone.utc),
-                               "metadata": {"workflow_version": WORKFLOW_VERSION}})
+                self._observe_snapshot(execution_id, name, span_id, segment_id, start,
+                    choice=row.get("pending_resume") or row["request"], state={**state, **result}, status="completed")
                 return result
             return call
 
@@ -313,10 +368,9 @@ class AgentWorkflow:
                 code = error.code if isinstance(error, ServiceError) and re.fullmatch(r"[A-Z][A-Z0-9_]{0,79}", error.code) else "AGENT_EXECUTION_FAILED"
                 self.store.finish(execution_id, lease, segment_id, "CANCELLED" if code == "AGENT_CANCELLED" else "FAILED", error_code=code)
             finally:
-                self._observe({"execution_id": execution_id, "segment_id": segment_id,
-                               "span_id": segment_id, "parent_span_id": None,
-                               "name": "agent_segment", "kind": "chain",
-                               "status": self.store.get(execution_id)["status"].lower(),
-                               "started_at": start, "ended_at": datetime.now(timezone.utc),
-                               "metadata": {"workflow_version": WORKFLOW_VERSION}})
+                choice = claimed.get("pending_resume") or claimed["request"]
+                self._observe_snapshot(execution_id, "segment", segment_id, EXECUTION_ROOT_SPAN,
+                                       start, choice=choice)
+                self._observe_snapshot(execution_id, "execution", EXECUTION_ROOT_SPAN,
+                                       None, start, choice=choice, terminal=True)
         return self.status(principal, execution_id)

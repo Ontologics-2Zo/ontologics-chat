@@ -176,12 +176,15 @@ class AgentWorkflowTests(unittest.TestCase):
         self.assert_code("IDENTITY_INACTIVE", lambda: self.workflow.resume(fresh, pending["execution_id"], payload))
 
     def test_concurrent_run_is_exclusive_and_cancel_preserves_consumed_call(self):
+        from service.observability import MetadataObserver
+        observer = MetadataObserver(content_enabled=True)
+        self.addCleanup(observer.close)
         entered, release = Event(), Event()
         def pause():
             entered.set()
             if not release.wait(10):
                 raise RuntimeError("synthetic timeout")
-        host, _ = build_host(self.db, handler_hook=pause)
+        host, _ = build_host(self.db, handler_hook=pause, observer=observer)
         created = host.create(self.actor, self.request())
         with ThreadPoolExecutor(max_workers=1) as pool:
             future = pool.submit(host.run, self.actor, created["execution_id"])
@@ -189,12 +192,17 @@ class AgentWorkflowTests(unittest.TestCase):
                 self.assertTrue(entered.wait(10))
                 self.assert_code("AGENT_EXECUTION_BUSY", lambda: self.workflow.run(self.actor, created["execution_id"]))
                 current = self.workflow.status(self.actor, created["execution_id"])
-                self.workflow.cancel(self.actor, created["execution_id"], current["revision"])
+                host.cancel(self.actor, created["execution_id"], current["revision"])
+                self.assertFalse(any(r["span"]["terminal_summary"] for r in observer.receipts.records()))
             finally:
                 release.set()
             result = future.result(timeout=10)
         self.assertEqual(result["status"], "CANCELLED")
         self.assertEqual(result["tool_calls"], 1)
+        roots = [r["span"] for r in observer.receipts.records() if r["span"]["terminal_summary"]]
+        self.assertEqual(len(roots), 1)
+        self.assertEqual(roots[0]["output"]["status"], "cancelled")
+        self.assertEqual(roots[0]["output"]["tool_calls"], 1)
 
     def test_process_kill_after_artifact_commit_recovers_without_reexecuting_tool(self):
         created = self.workflow.create(self.actor, self.request(capability="fulfillment_read"))
@@ -288,6 +296,77 @@ host.run(actor,os.environ['AGENT_TEST_EXECUTION'])
         self.assertEqual(result["status"], "COMPLETED")
         self.assertEqual(observer.invalid, 0)
         self.assertEqual(observer.failed, 0)
+        spans = [r["span"] for r in observer.receipts.records()]
+        roots = [s for s in spans if s["terminal_summary"]]
+        self.assertEqual(len(roots), 1)
+        root = roots[0]
+        self.assertEqual(root["output"]["status"], "completed")
+        self.assertEqual(root["output"]["result_status"], "PARTIAL")
+        self.assertNotIn("question", root["input"])
+        ids = {s["span_id"] for s in spans}
+        self.assertTrue(all(s["parent_span_id"] in ids for s in spans if s is not root))
+        self.assertEqual({s["trace_id"] for s in spans}, {root["trace_id"]})
+
+    def test_observed_wait_resume_has_actual_selected_content_and_one_terminal_summary(self):
+        from service.observability import MetadataObserver
+        observer = MetadataObserver(content_enabled=True)
+        self.addCleanup(observer.close)
+        host, _ = build_host(self.db, observer=observer)
+        pending = host.run(self.actor, host.create(self.actor, self.request("무슨 질문?"))["execution_id"])
+        before = [r["span"] for r in observer.receipts.records()]
+        self.assertFalse(any(s["terminal_summary"] for s in before))
+        waiting = next(s for s in before if s["name"] == "agent_segment")
+        self.assertEqual(waiting["input"]["question"], "무슨 질문?")
+        self.assertEqual(waiting["output"]["status"], "waiting")
+        self.assertEqual(waiting["output"]["clarification"], pending["interrupt"]["message"])
+        payload = {"expected_revision": pending["revision"], "idempotency_key": "resume-observed",
+                   "capability": "material_analysis", "question": "가용 재고 알려줘"}
+        result = host.resume(self.actor, pending["execution_id"], payload)
+        self.assertEqual(result["status"], "COMPLETED")
+        spans = [r["span"] for r in observer.receipts.records()]
+        root = next(s for s in spans if s["terminal_summary"])
+        self.assertEqual(root["input"]["initial_question"], "무슨 질문?")
+        self.assertEqual(root["input"]["question"], payload["question"])
+        self.assertEqual(root["output"]["answer"], result["result"]["answer"])
+        self.assertEqual(root["output"]["segment_count"], 2)
+        self.assertEqual(root["output"]["tool_calls"], 1)
+        self.assertNotIn("sections", root["output"])
+        self.assertNotIn("graph_path", root["output"])
+        self.assertNotIn("result", root["output"])
+        host.run(self.actor, pending["execution_id"])
+        self.assertEqual(len(observer.receipts.records()), len(spans))
+        self.assertEqual(observer.invalid, 0)
+
+    def test_failed_and_cancelled_execution_roots_preserve_actual_outcome(self):
+        from service.observability import MetadataObserver
+        observer = MetadataObserver(content_enabled=True)
+        self.addCleanup(observer.close)
+        host, _ = build_host(self.db, observer=observer, route_model=lambda *args: "forbidden")
+        failed = host.run(self.actor, host.create(self.actor, self.request())["execution_id"])
+        created = host.create(self.actor, self.request("가용 재고"))
+        cancelled = host.cancel(self.actor, created["execution_id"], created["revision"])
+        roots = [r["span"] for r in observer.receipts.records() if r["span"]["terminal_summary"]]
+        self.assertEqual({r["output"]["status"] for r in roots}, {"failed", "cancelled"})
+        self.assertEqual(failed["status"], "FAILED")
+        self.assertEqual(cancelled["status"], "CANCELLED")
+        self.assertTrue(all(r["output"]["tool_calls"] == 0 for r in roots))
+        self.assertTrue(all(r["output"]["result_available"] is False for r in roots))
+        self.assertFalse(any(r["output"].get("answer") for r in roots))
+        self.assertEqual(observer.invalid, 0)
+
+    def test_waiting_cancellation_keeps_clarification_and_does_not_rewrite_terminal_root(self):
+        from service.observability import MetadataObserver
+        observer = MetadataObserver(content_enabled=True)
+        self.addCleanup(observer.close)
+        host, _ = build_host(self.db, observer=observer)
+        pending = host.run(self.actor, host.create(self.actor, self.request("무슨 질문?"))["execution_id"])
+        cancelled = host.cancel(self.actor, pending["execution_id"], pending["revision"])
+        root = next(r["span"] for r in observer.receipts.records() if r["span"]["terminal_summary"])
+        self.assertEqual(root["output"]["status"], "cancelled")
+        self.assertEqual(root["output"]["clarification"], pending["interrupt"]["message"])
+        count = len(observer.receipts.records())
+        host.cancel(self.actor, pending["execution_id"], cancelled["revision"])
+        self.assertEqual(len(observer.receipts.records()), count)
 
     def test_checkpoint_contains_references_not_question_result_or_credentials(self):
         question = "납품 현황 SYNTHETIC_PRIVATE_QUESTION_SENTINEL"

@@ -146,6 +146,27 @@ class PreviewBoundaryTests(unittest.TestCase):
                     self.assertIn("frame-ancestors 'self'", directives)
                     self.assertEqual(self.request(server, path, headers={"Sec-Fetch-Site": "cross-site", "Sec-Fetch-Dest": "iframe"})[0], 403)
 
+    def test_twin_assets_are_individually_allowlisted_without_exposing_vendor_directory(self):
+        files = {"twin.js": "text/javascript", "twin.css": "text/css",
+                 "vendor/three/three.module.min.js": "text/javascript",
+                 "vendor/three/OrbitControls.js": "text/javascript",
+                 "vendor/three/CSS2DRenderer.js": "text/javascript"}
+        for filename in files:
+            asset = self.web / "mks2" / filename
+            asset.parent.mkdir(parents=True, exist_ok=True)
+            asset.write_text("/* independent synthetic asset */")
+        (self.web / "mks2/vendor/three/unlisted.js").write_text("MUST_NOT_BE_SERVED")
+        with self.running() as server:
+            for filename, mime in files.items():
+                with self.subTest(filename=filename):
+                    status, headers, content = self.request(server, "/mks2/" + filename)
+                    self.assertEqual(status, 200)
+                    self.assertTrue(headers["Content-Type"].startswith(mime))
+                    self.assertEqual(content, (self.web / "mks2" / filename).read_bytes())
+            for path in ("/mks2/vendor/", "/mks2/vendor/three/", "/mks2/vendor/three/unlisted.js",
+                         "/mks2/twin.js?file=private.txt", "/mks2/vendor/three/%2e%2e/twin.js"):
+                self.assertEqual(self.request(server, path)[0], 404)
+
     def test_writes_rejected_and_cross_origin_cannot_read_private_data(self):
         with self.running() as server:
             for method in ("POST", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE"):

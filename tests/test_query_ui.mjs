@@ -61,6 +61,35 @@ test('sections distinguish source, synthetic ledger, assumptions and unknowns', 
   } finally { restore(); }
 });
 
+test('an explicitly missing BOM offers only the existing registration entry after a click', () => {
+  const { message, restore } = setup();
+  try {
+    const data = response(); data.intent = ['delivery'];
+    data.calculation = { actual_delivery_feasibility: 'UNKNOWN',
+      material_requirements: { state: 'BLOCKED_BOM', bom_id: null } };
+    const before = JSON.stringify(data); let opens = 0;
+    renderQueryAnswer(message, data, { onOpenBom: () => { opens++; } });
+    const controls = descendants(message).filter(item => item.dataset.queryAction === 'bom-register');
+    assert.equal(controls.length, 1); assert.equal(controls[0].textContent, 'BOM 원본 등록');
+    assert.equal(controls[0].className, 'btn pri sm'); assert.equal(controls[0].type, 'button');
+    assert.equal(opens, 0); controls[0].click(); assert.equal(opens, 1);
+    assert.equal(JSON.stringify(data), before);
+  } finally { restore(); }
+});
+
+test('registered, partial, unknown and absent BOM calculations do not offer registration from an answer', () => {
+  const { message, restore } = setup();
+  try {
+    for (const requirements of [undefined, {}, { state: 'UNKNOWN', bom_id: null },
+      { state: 'PARTIAL', bom_id: 'synthetic-bom' }, { state: 'CALCULATED', bom_id: 'synthetic-bom' },
+      { state: 'BLOCKED_BOM', bom_id: 'synthetic-bom' }]) {
+      const data = response(); data.calculation = { material_requirements: requirements };
+      renderQueryAnswer(message, data);
+      assert.equal(descendants(message).filter(item => item.dataset.queryAction === 'bom-register').length, 0);
+    }
+  } finally { restore(); }
+});
+
 test('untrusted server strings stay literal text without HTML or unsafe classes', () => {
   const { message, restore } = setup();
   try {
@@ -137,7 +166,9 @@ test('all evidence stays accessible and past answer metadata does not change', (
     const ids = Array.from({ length: 10 }, (_, index) => `synthetic-evidence-${index}`);
     renderQueryAnswer(message, data, { evidenceIds: [...ids, ids[0]], onEvidence: id => selected.push(id) });
     assert.equal(withClass(message, 'chip').length, 10);
-    assert.equal(withClass(message, 'query-more-evidence').length, 1);
+    assert.equal(withClass(message, 'query-more-evidence').length, 0);
+    assert.equal(withClass(message, 'evidence-path')[0].children.filter(item => item.tagName === 'BUTTON').length, 10);
+    assert.equal(withClass(message, 'query-evidence-count')[0].textContent, '거친 노드 10개');
     withClass(message, 'chip')[9].click();
     assert.deepEqual(selected, [ids[9]]);
     const original = message.textContent;
@@ -206,7 +237,7 @@ function deliveryResponse() {
   };
 }
 
-test('delivery answer leads with server conclusion and distinct remaining-promise and production metrics', () => {
+test('delivery answer preserves server conclusion and distinct remaining-promise and production metrics in details', () => {
   const { message, restore } = setup();
   try {
     const data = deliveryResponse(), before = JSON.stringify(data);
@@ -216,7 +247,11 @@ test('delivery answer leads with server conclusion and distinct remaining-promis
     assert.equal(withClass(message, 'query-flow-step').length, 4);
     assert.deepEqual(withClass(message, 'query-flow-number').map(value => value.textContent), ['1', '2', '3', '4']);
     assert.equal(withClass(message, 'query-section').length, data.sections.length);
-    assert.ok(message.children.indexOf(withClass(message, 'query-verdict')[0]) < message.children.indexOf(withClass(message, 'query-delivery-metrics')[0]));
+    const details = withClass(message, 'query-details')[0];
+    assert.notEqual(details.open, true);
+    assert.ok(descendants(details).includes(withClass(message, 'query-delivery-metrics')[0]));
+    assert.ok(message.children.indexOf(withClass(message, 'query-verdict')[0]) < message.children.indexOf(details));
+    assert.ok(withClass(message, 'query-prose')[0].textContent.includes(data.answer));
     assert.ok(message.textContent.includes('납기 판단 보류'));
     assert.ok(message.textContent.includes('합성 초기 원장') && message.textContent.includes('질문에서 지정한 가정'));
     assert.equal(JSON.stringify(data), before);
@@ -338,4 +373,172 @@ test('delivery clarification does not pretend a numbered calculation or receipt 
     assert.equal(withClass(message, 'query-evidence-flow').length, 0);
     assert.equal(message.dataset.queryPresentation, 'standard');
   } finally { restore(); }
+});
+
+test('reference order is confirmed steps, prose, every evidence chip, footer and collapsed details', () => {
+  const { message, restore } = setup();
+  try {
+    const data = response(); renderQueryAnswer(message, data, { evidenceIds: ['one', 'two'] });
+    assert.equal(message.children[0].className, 'trace-steps');
+    assert.equal(withClass(message, 'done').length, data.steps.length);
+    const order = ['query-body', 'evidence-path', 'answer-footer', 'query-details'].map(name => message.children.indexOf(withClass(message, name)[0]));
+    assert.ok(order.every((value, index) => value >= 0 && (!index || value > order[index - 1])));
+    assert.notEqual(withClass(message, 'query-details')[0].open, true);
+    assert.match(withClass(message, 'query-body')[0].textContent, /합성 초기 원장.*실제 원문.*시연 가정/);
+  } finally { restore(); }
+});
+
+test('lookup steps lead directly into prose while compact visible scope follows the answer', () => {
+  const { message, restore } = setup();
+  try {
+    const data = deliveryResponse(); renderQueryAnswer(message, data, { evidenceIds: ['synthetic-node'] });
+    const verdict = withClass(message, 'query-verdict')[0], details = withClass(message, 'query-details')[0];
+    assert.equal(message.children[0].className, 'trace-steps');
+    assert.equal(message.children[1], verdict);
+    assert.equal(verdict.children[0].className, 'query-prose');
+    assert.equal(withClass(verdict, 'query-summary').length, 0);
+    assert.equal(withClass(verdict, 'query-conclusion').length, 0);
+    assert.equal(withClass(verdict, 'query-scope-note').length, 1);
+    const scope = withClass(verdict, 'query-scope-note')[0];
+    assert.equal(verdict.children.at(-1), scope);
+    for (const value of ['일부 확인', '납기 판단 보류', '합성 초기 원장', '실제 원문', '질문에서 지정한 가정', '미확인', '미확인은 부족 0이나 제조·납기 확정을 뜻하지 않습니다.']) {
+      assert.ok(scope.textContent.includes(value), value);
+    }
+    assert.equal(details.children[1].className, 'query-summary');
+    assert.equal(details.children[2].className, 'query-conclusion');
+    assert.equal(details.children[2].textContent, data.conclusion);
+    assert.notEqual(details.open, true);
+    assert.ok(details.textContent.includes(data.meta.snapshot_id));
+  } finally { restore(); }
+});
+
+test('material and inventory quantities stay in main prose verbatim with exact decimal emphasis', () => {
+  const { message, restore } = setup();
+  try {
+    const data = response();
+    data.sections = [{ id: 'materials', origin: 'conditional_demo', items: [{ label: 'PART-0012',
+      value: '소요 13 / 14 EA · 가용 12.999999999 EA · 부족 0.000000001 / 1.000000001 EA', detail: '계획과 원장 재고를 구분합니다.' }] },
+      { id: 'inventory', origin: 'synthetic_opening_balance', items: [{ label: '합성 LOT', value: '12.999999999 EA', detail: '합성 재고입니다.' }] }];
+    renderQueryAnswer(message, data);
+    const prose = withClass(message, 'query-prose')[0];
+    for (const section of data.sections) for (const item of section.items) {
+      assert.ok(prose.textContent.includes(item.label)); assert.ok(prose.textContent.includes(item.value)); assert.ok(prose.textContent.includes(item.detail));
+    }
+    assert.ok(withClass(prose, 'query-quantity').some(item => item.textContent.includes('0.000000001')));
+    assert.ok(!withClass(prose, 'query-quantity').some(item => item.textContent.includes('0012')));
+  } finally { restore(); }
+});
+
+test('Korean quantity suffixes are emphasized without splitting IDs or rounding decimals', () => {
+  const { message, restore } = setup();
+  try {
+    const data = response();
+    data.sections = [];
+    data.answer = 'PART-0012는 19개중 7개가 예약되어 12개입니다. 추가 목표는 9대이고 계획은 11대이며 수율 91.234567890123456789%입니다.';
+    renderQueryAnswer(message, data);
+    const prose = withClass(message, 'query-prose')[0], bold = withClass(prose, 'query-quantity').map(item => item.textContent);
+    assert.deepEqual(bold, ['19개', '7개', '12개', '9대', '11대', '91.234567890123456789%']);
+    assert.equal(prose.textContent, data.answer);
+    assert.equal(prose.children.length, 2);
+  } finally { restore(); }
+});
+
+test('ledger and production details do not duplicate quantities already present in the main answer', () => {
+  const { message, restore } = setup();
+  try {
+    const data = deliveryResponse();
+    data.answer = '남은 약속은 17대이고 추가 양품 목표는 9대입니다. 계획 투입은 12대입니다.';
+    renderQueryAnswer(message, data);
+    const prose = withClass(message, 'query-prose')[0].textContent;
+    for (const value of ['17대', '9대', '12대']) assert.equal(prose.split(value).length - 1, 1);
+    assert.ok(prose.includes('선택 품목 소요·부족: 미확인'));
+  } finally { restore(); }
+});
+
+function animationSetup({ reduced = false } = {}) {
+  const base = setup(), keys = ['requestAnimationFrame', 'cancelAnimationFrame', 'matchMedia'];
+  const previous = Object.fromEntries(keys.map(key => [key, globalThis[key]]));
+  const frames = new Map(); let serial = 0;
+  globalThis.requestAnimationFrame = callback => { frames.set(++serial, callback); return serial; };
+  globalThis.cancelAnimationFrame = id => { frames.delete(id); };
+  globalThis.matchMedia = () => ({ matches: reduced });
+  return { ...base, frames, advance(time) {
+    const pending = [...frames.values()]; frames.clear(); pending.forEach(callback => callback(time));
+  }, restore() {
+    for (const key of keys) { if (previous[key] === undefined) delete globalThis[key]; else globalThis[key] = previous[key]; }
+    base.restore();
+  } };
+}
+
+test('explicit animation reveals whole graphemes with one accessible answer and completes within eight seconds', async () => {
+  const fixture = animationSetup();
+  try {
+    const data = { ...response(), sections: [], answer: '가👨‍👩‍👧‍👦나 e\u0301 1️⃣ 수량 0.000000001대' };
+    const view = renderQueryAnswer(fixture.message, data, { animate: true });
+    const prose = withClass(fixture.message, 'query-prose')[0], accessible = withClass(fixture.message, 'query-accessible-answer')[0];
+    assert.equal(prose.attributes['aria-hidden'], 'true'); assert.equal(accessible.textContent, data.answer);
+    assert.equal(fixture.message.dataset.answerDisplayState, 'typing'); assert.equal(prose.textContent, '');
+    const characters = [...new Intl.Segmenter('ko', { granularity: 'grapheme' }).segment(data.answer)].map(item => item.segment);
+    const validPrefixes = new Set(characters.map((_, index) => characters.slice(0, index + 1).join(''))); validPrefixes.add('');
+    for (const time of [0, 30, 75, 130, 220]) { fixture.advance(time); assert.ok(validPrefixes.has(prose.textContent)); assert.equal(accessible.textContent, data.answer); }
+    fixture.advance(8000);
+    assert.deepEqual(await view.finished, { completed: true });
+    assert.equal(prose.textContent, data.answer); assert.equal(fixture.message.dataset.answerDisplayState, 'complete');
+    assert.equal(fixture.frames.size, 0);
+  } finally { fixture.restore(); }
+});
+
+test('show all and finish are idempotent, preserve the complete answer and release animation work', async () => {
+  const fixture = animationSetup();
+  try {
+    const data = response(), view = renderQueryAnswer(fixture.message, data, { animate: true });
+    descendants(fixture.message).find(item => item.tagName === 'BUTTON' && item.textContent === '모두 보기').click();
+    const complete = fixture.message.textContent; view.finish(); view.finish();
+    assert.equal(fixture.message.textContent, complete); assert.equal(fixture.frames.size, 0);
+    assert.deepEqual(await view.finished, { completed: true });
+    assert.equal(withClass(fixture.message, 'answer')[0].textContent, data.answer);
+  } finally { fixture.restore(); }
+});
+
+test('dispose cancels typing and prevents stale frames, replay results and later finish from changing DOM', async () => {
+  const fixture = animationSetup();
+  try {
+    const view = renderQueryAnswer(fixture.message, response(), { animate: true }), pending = deferred();
+    const playback = view.play(() => pending.promise), late = [...fixture.frames.values()][0];
+    fixture.advance(0); fixture.advance(70); view.dispose();
+    const before = fixture.message.textContent;
+    view.dispose(); view.finish(); late(8000); pending.resolve({ completed: true }); await playback;
+    await view.play(() => { throw Error('disposed playback must not run'); });
+    assert.deepEqual(await view.finished, { completed: false, disposed: true });
+    assert.equal(fixture.message.textContent, before); assert.equal(fixture.frames.size, 0);
+  } finally { fixture.restore(); }
+});
+
+test('reduced motion and default rendering show the full confirmed answer without scheduling frames', async () => {
+  for (const reduced of [false, true]) {
+    const fixture = animationSetup({ reduced });
+    try {
+      const data = response(), view = renderQueryAnswer(fixture.message, data, reduced ? { animate: true } : {});
+      assert.equal(fixture.frames.size, 0); assert.equal(fixture.message.dataset.answerDisplayState, 'complete');
+      assert.equal(withClass(fixture.message, 'answer')[0].textContent, data.answer);
+      assert.equal(withClass(fixture.message, 'query-accessible-answer').length, 0);
+      assert.deepEqual(await view.finished, { completed: true });
+    } finally { fixture.restore(); }
+  }
+});
+
+test('frame scheduling failure restores the complete confirmed body instead of leaving partial text', async () => {
+  for (const during of [false, true]) {
+    const fixture = animationSetup();
+    try {
+      if (!during) globalThis.requestAnimationFrame = () => { throw Error('synthetic scheduler failure'); };
+      const data = response(), view = renderQueryAnswer(fixture.message, data, { animate: true });
+      if (during) {
+        fixture.advance(0); globalThis.requestAnimationFrame = () => { throw Error('synthetic scheduler failure'); }; fixture.advance(30);
+      }
+      assert.deepEqual(await view.finished, { completed: true });
+      assert.equal(withClass(fixture.message, 'answer')[0].textContent, data.answer);
+      assert.equal(fixture.message.dataset.answerDisplayState, 'complete'); assert.equal(fixture.frames.size, 0);
+    } finally { fixture.restore(); }
+  }
 });

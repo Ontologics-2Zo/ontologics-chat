@@ -1,8 +1,9 @@
-"""Metadata-only local observability, separate from domain and cost accounting.
+"""Allowlisted local observability, separate from domain and cost accounting.
 
-Langfuse receives completed OTLP/HTTP JSON spans, never prompts, answers, source
-documents, exceptions or credentials. The ModelStore remains the sole canonical
-usage ledger; this module only mirrors its already-known attempt metadata.
+Model I/O contains only actual bounded routing features/results. Optional local
+workflow text is separately authorized and redacted; source documents, arbitrary
+result dictionaries, exceptions and credentials are never observation fields.
+The ModelStore remains the sole canonical usage ledger.
 """
 from __future__ import annotations
 
@@ -17,10 +18,11 @@ from pathlib import Path
 import re
 import sqlite3
 from threading import Lock
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping
 from urllib.parse import urlsplit
 
 import httpx
+from pydantic import BaseModel, ConfigDict, Field
 
 
 _LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:/-]{0,159}\Z")
@@ -38,6 +40,120 @@ _KINDS = frozenset({"span", "generation", "event", "agent", "tool", "chain",
                     "retriever", "guardrail", "evaluator"})
 _STATES = frozenset({"completed", "failed", "needs_review", "cancelled", "ok",
                      "success", "error", "interrupted", "waiting", "unknown"})
+
+EXECUTION_ROOT_SPAN = "agent-execution-summary-v1"
+FEATURE_NAMES = ("fulfillment", "production", "materials", "inventory", "delivery", "ontology", "unknown")
+ObservedCapability = Literal["fulfillment_read", "material_analysis", "product_review", "procurement_review"]
+ObservedStage = Literal["execution", "segment", "route", "validate", "fulfillment_read", "material_analysis", "product_review", "procurement_review"]
+
+
+class _SafeIO(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True, revalidate_instances="always")
+
+
+class RouteFeatures(_SafeIO):
+    fulfillment: bool
+    production: bool
+    materials: bool
+    inventory: bool
+    delivery: bool
+    ontology: bool
+    unknown: bool
+
+    @classmethod
+    def from_features(cls, features):
+        if not features or any(value not in FEATURE_NAMES for value in features):
+            raise ValueError("OBSERVABILITY_FEATURES_INVALID")
+        return cls(**{name: name in features for name in FEATURE_NAMES})
+
+
+class ModelObservationInput(_SafeIO):
+    io_schema: Literal["model-route-input/1"] = "model-route-input/1"
+    features: RouteFeatures
+    execution_mode: Literal["fake", "live"]
+    profile_id: Literal["route-v1"] = "route-v1"
+    max_output_tokens: int = Field(ge=16, le=256)
+    retry: bool
+
+
+class ObservedUsage(_SafeIO):
+    input_tokens: int | None = Field(default=None, ge=0, le=2**53 - 1)
+    output_tokens: int | None = Field(default=None, ge=0, le=2**53 - 1)
+    total_tokens: int | None = Field(default=None, ge=0, le=2**53 - 1)
+    cost_usd: Decimal | None = Field(default=None, ge=0, le=Decimal("1000000"), allow_inf_nan=False)
+    source: Literal["fake", "provider", "unavailable"]
+    unknown_reason: str | None = Field(default=None, pattern=r"^[A-Z][A-Z0-9_]{0,79}$")
+
+
+class ModelObservationOutput(_SafeIO):
+    io_schema: Literal["model-route-output/1"] = "model-route-output/1"
+    status: Literal["completed", "failed", "outcome_unknown"]
+    capability: Literal["fulfillment_read", "material_analysis", "needs_clarification"] | None
+    dispatched: bool
+    usage: ObservedUsage
+    error_code: str | None = Field(default=None, pattern=r"^[A-Z][A-Z0-9_]{0,79}$")
+
+
+class WorkflowObservationInput(_SafeIO):
+    io_schema: Literal["workflow-input/1"] = "workflow-input/1"
+    stage: ObservedStage
+    requested_capability: ObservedCapability | None
+    ledger_version: int = Field(ge=1, le=2**53 - 1)
+    projection_version: int = Field(ge=1, le=2**53 - 1)
+    question_scope: Literal["current_segment", "initial_request", "unavailable"] = "current_segment"
+    question: str | None = None
+    initial_question: str | None = None
+
+
+class WorkflowObservationOutput(_SafeIO):
+    io_schema: Literal["workflow-output/1"] = "workflow-output/1"
+    stage: ObservedStage
+    status: Literal["completed", "failed", "cancelled", "waiting"]
+    capability: ObservedCapability | None
+    tool_calls: int = Field(ge=0, le=2**53 - 1)
+    segment_count: int = Field(ge=0, le=2**53 - 1)
+    result_available: bool = False
+    result_status: Literal["ANSWERED", "PARTIAL", "UNKNOWN", "NEEDS_CLARIFICATION"] | None = None
+    error_code: str | None = Field(default=None, pattern=r"^[A-Z][A-Z0-9_]{0,79}$")
+    answer: str | None = None
+    conclusion: str | None = None
+    clarification: str | None = None
+
+
+_IO_TYPES = (ModelObservationInput, ModelObservationOutput, WorkflowObservationInput, WorkflowObservationOutput)
+_CONTENT_LIMITS = {"question": 2000, "initial_question": 2000, "answer": 6000, "conclusion": 2000, "clarification": 2000}
+
+
+def _redacted_text(value: str, limit: int, secrets: tuple[str, ...]) -> str:
+    # Select fields before this boundary; never run a generic serializer over a
+    # request, tool result, exception, source document or attachment.
+    for secret in sorted((s for s in secrets if s), key=len, reverse=True):
+        value = value.replace(secret, "[REDACTED]")
+    value = re.sub(r"-----BEGIN [^-]*PRIVATE KEY-----.*?(?:-----END [^-]*PRIVATE KEY-----|$)", "[REDACTED]", value, flags=re.S)
+    value = re.sub(r"(?i)\b(?:sk-|pk-)[a-z0-9_-]{6,}|\bBearer\s+\S+", "[REDACTED]", value)
+    value = re.sub(r"(?i)\b[A-Za-z0-9_]*(?:api[_ -]?key|access[_ -]?key|private[_ -]?key|secret|password|passwd|token|authorization|credential)[A-Za-z0-9_]*[\"']?\s*[:=]\s*(?:\"[^\"]*\"|'[^']*'|\S+)", "[REDACTED]", value)
+    value = re.sub(r"[A-Za-z][A-Za-z0-9+.-]*://[^\s/@]*:[^\s/@]*@[^\s]+", "[REDACTED]", value)
+    value = re.sub(r"\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b", "[REDACTED]", value)
+    value = re.sub(r"/(?:Users|home|private|tmp|var)/[^\s]+", "[LOCAL_PATH]", value)
+    value = "".join(c for c in value if c in "\n\t" or ord(c) >= 32)
+    return value if len(value) <= limit else value[:limit] + "\n[TRUNCATED]"
+
+
+def safe_io(value, *, content_enabled=False, secrets=()):
+    """Only exact typed schemas enter I/O; untyped mappings are never accepted."""
+    if value is None:
+        return None
+    if type(value) not in _IO_TYPES:
+        raise ValueError("OBSERVABILITY_IO_SCHEMA_REQUIRED")
+    # Revalidate even model_construct/model_copy and mutated nested instances.
+    clean = type(value).model_validate(value.model_dump()).model_dump(mode="json")
+    for field_name, limit in _CONTENT_LIMITS.items():
+        if field_name in clean:
+            text = clean.pop(field_name)
+            if content_enabled and text is not None:
+                clean[field_name] = _redacted_text(text, limit, secrets)
+    clean["content_scope"] = "local_redacted" if content_enabled and isinstance(value, (WorkflowObservationInput, WorkflowObservationOutput)) else "structured_only"
+    return clean
 
 
 def _label(value: Any) -> str | None:
@@ -144,6 +260,14 @@ class LangfuseExporter:
         ]
         for key, value in span["metadata"].items():
             attributes.append(_attribute("langfuse.observation.metadata." + key, value))
+        for direction in ("input", "output"):
+            if span.get(direction) is not None:
+                encoded = json.dumps(span[direction], ensure_ascii=False, separators=(",", ":"))
+                attributes.append(_attribute("langfuse.observation." + direction, encoded))
+                # Compatibility for the installed v3 trace detail UI. Only the
+                # immutable terminal root writes these legacy fields, once.
+                if span.get("terminal_summary"):
+                    attributes.append(_attribute("langfuse.trace." + direction, encoded))
         # Do not set a model billing attribute: Langfuse must not infer prices
         # that differ from (or fill in UNKNOWN in) the canonical ModelStore.
         body = {
@@ -248,7 +372,12 @@ def otel_span_id(execution_id: str, identity: str) -> str:
 
 class MetadataObserver:
     """Best-effort sink: observability errors never change a domain outcome."""
-    def __init__(self, exporter=None, *, receipt_path: str | Path | None = None):
+    def __init__(self, exporter=None, *, receipt_path: str | Path | None = None,
+                 content_enabled=False, purpose="interactive", redact_values=()):
+        if type(content_enabled) is not bool or purpose not in {"interactive", "evaluation"}:
+            raise ValueError("OBSERVABILITY_CONTENT_POLICY_INVALID")
+        self.content_enabled = content_enabled and purpose == "interactive"
+        self._redact_values = tuple(value for value in redact_values if isinstance(value, str) and value)
         self.exporter = exporter
         self.receipts = SpanReceipts(receipt_path)
         self.exported = 0
@@ -258,7 +387,8 @@ class MetadataObserver:
         self.langsmith_enabled = False
 
     def emit_span(self, execution_id, span_id, parent_span_id, name, kind, status,
-                  metadata, started_at, ended_at):
+                  metadata, started_at, ended_at, *, input=None, output=None,
+                  terminal_summary=False):
         try:
             if (not _label(execution_id) or not _label(span_id)
                     or (parent_span_id is not None and not _label(parent_span_id))
@@ -267,6 +397,14 @@ class MetadataObserver:
                 return False
             clean = metadata_only(metadata if isinstance(metadata, Mapping) else {})
             clean["execution_id"] = execution_id
+            safe_input = safe_io(input, content_enabled=self.content_enabled, secrets=self._redact_values)
+            safe_output = safe_io(output, content_enabled=self.content_enabled, secrets=self._redact_values)
+            if terminal_summary and (span_id != EXECUTION_ROOT_SPAN or parent_span_id is not None
+                    or status not in {"completed", "failed", "cancelled"}
+                    or type(input) is not WorkflowObservationInput or input.stage != "execution"
+                    or type(output) is not WorkflowObservationOutput or output.stage != "execution"
+                    or output.status != status):
+                raise ValueError("OBSERVABILITY_TERMINAL_SUMMARY_INVALID")
             start, end = _time_ns(started_at), _time_ns(ended_at)
             if end < start:
                 self.invalid += 1
@@ -276,7 +414,9 @@ class MetadataObserver:
                     "parent_span_id": otel_span_id(execution_id, parent_span_id)
                     if parent_span_id else None,
                     "name": name, "kind": kind, "status": status,
-                    "metadata": clean, "start_ns": start, "end_ns": end}
+                    "metadata": clean, "start_ns": start, "end_ns": end,
+                    "input": safe_input, "output": safe_output,
+                    "terminal_summary": bool(terminal_summary)}
             if not self.receipts.claim(span):
                 self.duplicates += 1
                 return False
@@ -308,6 +448,8 @@ class MetadataObserver:
             event.get("parent_span_id"), event.get("name", "workflow.node"),
             event.get("kind", "span"), event.get("status", "completed"), values,
             event.get("started_at"), event.get("ended_at"),
+            input=event.get("input"), output=event.get("output"),
+            terminal_summary=event.get("terminal_summary", False),
         )
 
     def close(self):

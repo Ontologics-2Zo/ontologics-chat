@@ -1,5 +1,5 @@
 /** Read-only A-Box view. Data, identities and evidence arrive through the view API. */
-import { layoutGraph, routeEdges, fitGraphBounds, interpolateView } from './graph-layout.js';
+import { layoutGraph, routeEdges, graphBounds, planEvidenceReplay, isSourceRow, fitGraphBounds, interpolateView } from './graph-layout.js';
 
 const NS = 'http://www.w3.org/2000/svg';
 const STAGE = { x: 0, y: 0, width: 1400, height: 840 };
@@ -67,12 +67,12 @@ export function mountGraph(container, { bundle, onSelect = () => {}, onAsk = () 
     };
   });
   const originalEdges = (Array.isArray(graph.edges) ? graph.edges : []).map(edge => edge.edge_id ? edge : { ...edge, edge_id: edge.id, source_node_id: edge.source, target_node_id: edge.target, relation_type: edge.predicate, evidence_refs: edge.evidence ? [edge.evidence] : [] });
-  let layout = layoutGraph(originalNodes, { schema: meta.scope === 'full_schema' });
-  let positions = layout.nodes;
-  let nodeById = new Map(positions.map(node => [node.node_id, node]));
+  const layout = layoutGraph(originalNodes, { edges: originalEdges, schema: meta.scope === 'full_schema' });
+  const positions = layout.nodes;
+  const nodeById = new Map(positions.map(node => [node.node_id, node]));
   const edges = originalEdges.filter(edge => nodeById.has(edge.source_node_id) && nodeById.has(edge.target_node_id));
   const edgeById = new Map(edges.map(edge => [edge.edge_id, edge]));
-  let routes = routeEdges(edges, positions);
+  const routes = routeEdges(edges, positions);
   let evidenceFocus = [];
   let evidenceRelations = [];
   let fitTarget = null;
@@ -85,22 +85,25 @@ export function mountGraph(container, { bundle, onSelect = () => {}, onAsk = () 
   let destroyed = false;
   let replayToken = 0;
   let replaying = false;
+  let cameraToken = 0, delayTimer = null, releaseDelay = null;
+  let activeNodes = new Set(), activeEdges = new Set();
 
   const canvas = html('section', 'mks-graph');
-  canvas.setAttribute('aria-label', '2.5D 업무 관계 그래프');
-  canvas.dataset.layout = 'layered-25d';
+  canvas.setAttribute('aria-label', '연결형 업무 관계 그래프');
+  canvas.dataset.layout = 'connected-network';
   const svg = svgNode('svg', { class: 'mks-graph-svg', viewBox: '0 0 1400 840', role: 'group', 'aria-label': '업무 객체와 관계. 노드를 선택하면 상세 근거를 봅니다.' });
   const legend = html('div', 'mks-graph-legend');
-  legend.setAttribute('aria-label', '노드 종류 필터');
+  legend.setAttribute('aria-label', '노드 종류 강조. 모든 객체와 관계는 계속 표시됩니다.');
   for (const [type, label] of TYPES) {
     const filter = button('', () => {
       selectedTypes.has(type) ? selectedTypes.delete(type) : selectedTypes.add(type);
+      stopReplay();
       filter.setAttribute('aria-pressed', String(selectedTypes.has(type)));
       render();
     }, 'mks-legend-filter');
     filter.dataset.nodeType = type;
     filter.setAttribute('aria-pressed', 'true');
-    filter.title = `${label} 표시 전환`;
+    filter.title = `${label} 강조 전환 · 객체와 관계는 숨기지 않습니다`;
     filter.append(html('i', `mks-legend-${type}`), document.createTextNode(label));
     legend.append(filter);
   }
@@ -119,17 +122,19 @@ export function mountGraph(container, { bundle, onSelect = () => {}, onAsk = () 
   });
   const restoreEvidence = all => {
     if (!evidenceFocus.length) return;
-    replayToken++;
-    replaying = false;
+    stopReplay();
     for (const type of ['design', 'doc', 'event', 'phys', 'party']) selectedTypes.add(type);
     highlightedNodes = new Set(evidenceFocus); highlightedEdges = new Set(evidenceRelations);
-    setLayout(evidenceFocus); fitBounds(all ? layout.evidenceBounds : layout.focusBounds); render();
+    const core = evidenceFocus.filter(id => !isSourceRow(nodeById.get(id)));
+    fit(all ? evidenceFocus : core.length ? core : evidenceFocus); render();
   };
   const evidenceButton = button('핵심 흐름', () => restoreEvidence(false), 'mks-graph-button');
   const allEvidenceButton = button('전체 근거', () => restoreEvidence(true), 'mks-graph-button');
   evidenceButton.hidden = true;
   allEvidenceButton.hidden = true;
-  tools.append(search, evidenceButton, allEvidenceButton, button('BOM 등록', onBom, 'mks-graph-button'), button('전체 보기', reset, 'mks-graph-button'));
+  const bomButton = button('전체 BOM', () => { stopReplay(); fit(layout.bomIds); render(); }, 'mks-graph-button');
+  bomButton.hidden = !layout.bomIds.length;
+  tools.append(search, evidenceButton, allEvidenceButton, bomButton, button('BOM 등록', onBom, 'mks-graph-button'), button('전체 보기', reset, 'mks-graph-button'));
   const detail = html('aside', 'mks-graph-detail');
   detail.setAttribute('aria-label', '선택 객체 상세');
   detail.hidden = true;
@@ -144,22 +149,24 @@ export function mountGraph(container, { bundle, onSelect = () => {}, onAsk = () 
   scope.dataset.nodeCount = String(originalNodes.length);
   scope.dataset.edgeCount = String(originalEdges.length);
   scope.setAttribute('role', 'note');
-  const guide = html('div', 'mks-graph-guide', '2.5D 업무별 배치 · 화살표는 서버 관계 방향');
+  const guide = html('div', 'mks-graph-guide', '연결 배치 · BOM 원문·행은 한 묶음 · 종류 버튼은 강조만 전환');
   canvas.append(svg, legend, status, tools, detail, scope, guide);
   container.replaceChildren(canvas);
 
   function updateView(next, animate = false) {
+    if (destroyed) return;
     if (!['x', 'y', 'width', 'height'].every(key => Number.isFinite(next[key])) || next.width <= 0 || next.height <= 0) return;
     cancelAnimationFrame(frame);
+    const token = ++cameraToken;
     const start = { ...view };
     const startAt = performance.now();
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const tick = now => {
-      if (destroyed) return;
+      if (destroyed || token !== cameraToken) return;
       const progress = !animate || reduceMotion ? 1 : Math.max(0, Math.min(1, (now - startAt) / 420));
       view = interpolateView(start, next, progress);
       svg.setAttribute('viewBox', `${view.x} ${view.y} ${view.width} ${view.height}`);
-      if (progress < 1) frame = requestAnimationFrame(tick);
+      if (progress < 1) frame = requestAnimationFrame(tick); else frame = 0;
     };
     frame = requestAnimationFrame(tick);
   }
@@ -169,15 +176,21 @@ export function mountGraph(container, { bundle, onSelect = () => {}, onAsk = () 
     return rect.width > 0 && rect.height > 0 ? rect.width / rect.height : STAGE.width / STAGE.height;
   }
 
-  function setLayout(ids = []) {
-    layout = layoutGraph(originalNodes, { evidenceIds: ids, schema: meta.scope === 'full_schema' });
-    positions = layout.nodes;
-    nodeById = new Map(positions.map(node => [node.node_id, node]));
-    routes = routeEdges(edges, positions);
-    guide.textContent = layout.focusing
-      ? `핵심 ${layout.coreCount}개 · 행 근거 ${layout.rowCount}개 객체 (아래층) · 전체 ${originalNodes.length}개 유지`
-      : '2.5D 업무별 배치 · 화살표는 서버 관계 방향';
-    canvas.dataset.evidenceFocus = String(layout.focusing);
+  function stopReplay() {
+    replayToken++; replaying = false; cameraToken++;
+    cancelAnimationFrame(frame); frame = 0; fitTarget = null;
+    if (delayTimer !== null) { clearTimeout(delayTimer); delayTimer = null; }
+    const release = releaseDelay; releaseDelay = null; release?.();
+    activeNodes.clear(); activeEdges.clear();
+    svg.classList.remove('mks-replaying');
+  }
+
+  function waitStep() {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return Promise.resolve();
+    return new Promise(resolve => {
+      releaseDelay = resolve;
+      delayTimer = setTimeout(() => { delayTimer = null; releaseDelay = null; resolve(); }, 520);
+    });
   }
 
   function fitBounds(bounds) {
@@ -185,16 +198,8 @@ export function mountGraph(container, { bundle, onSelect = () => {}, onAsk = () 
     updateView(fitGraphBounds(bounds, aspect()), true);
   }
 
-  function fitEvidence() { fitBounds(layout.focusBounds); }
-
   function fit(ids) {
-    const found = ids.map(id => nodeById.get(id)).filter(Boolean);
-    if (!found.length) return;
-    const left = Math.min(...found.map(node => node.x)) - 135;
-    const right = Math.max(...found.map(node => node.x)) + 135;
-    const top = Math.min(...found.map(node => node.y)) - 100;
-    const bottom = Math.max(...found.map(node => node.y)) + 100;
-    fitBounds({ x: left, y: top, width: right - left, height: bottom - top });
+    if (ids.some(id => nodeById.has(id))) fitBounds(graphBounds(positions, ids));
   }
 
   function showDetail(id) {
@@ -228,9 +233,7 @@ export function mountGraph(container, { bundle, onSelect = () => {}, onAsk = () 
   }
 
   function showEdge(edge) {
-    replayToken++;
-    replaying = false;
-    svg.classList.remove('mks-replaying');
+    stopReplay();
     detail.replaceChildren(html('div', 'mks-detail-kind', '관계'), html('h4', '', edge.relation_type), html('div', 'mks-detail-description', edge.label || ''));
     detail.append(html('p', 'mks-detail-description', `${edge.source_node_id} → ${edge.target_node_id}`));
     const properties = html('dl', 'mks-detail-properties');
@@ -245,23 +248,15 @@ export function mountGraph(container, { bundle, onSelect = () => {}, onAsk = () 
     const defs = svgNode('defs');
     const arrow = svgNode('marker', { id: 'mks-relation-arrow', viewBox: '0 0 10 10', refX: 8, refY: 5, markerWidth: 5, markerHeight: 5, orient: 'auto-start-reverse' });
     arrow.append(svgNode('path', { d: 'M 0 1 L 9 5 L 0 9 z', fill: 'context-stroke' })); defs.append(arrow);
-    const planes = svgNode('g', { class: 'mks-planes', 'aria-hidden': 'true' });
-    for (const layer of layout.layers) {
-      const { x, y, width: w, height: h, depth: d } = layer;
-      const plane = svgNode('g', { class: `mks-plane mks-plane-${layer.id}`, 'data-layer-id': layer.id });
-      plane.append(svgNode('path', { class: 'mks-plane-side', d: `M ${x} ${y + h} l ${d} ${d} h ${w} v ${-h} l ${-d} ${-d} v ${h} Z` }),
-        svgNode('rect', { class: 'mks-plane-face', x, y, width: w, height: h, rx: 14 }),
-        svgNode('text', { class: 'mks-plane-title', x: x + 20, y: y + 29 }, `${layer.label} · ${layer.count}`));
-      planes.append(plane);
-    }
     const edgeLayer = svgNode('g', { class: 'mks-edges' });
     const nodeLayer = svgNode('g', { class: 'mks-nodes' });
     for (const edge of edges) {
       const source = nodeById.get(edge.source_node_id);
       const target = nodeById.get(edge.target_node_id);
-      if (!selectedTypes.has(source.node_type) || !selectedTypes.has(target.node_type)) continue;
       const group = svgNode('g', { class: `mks-edge${['candidate', 'draft'].includes(edge.state) ? ` mks-${edge.state}` : ''}${highlightedEdges.has(edge.edge_id) ? ' mks-hit' : ''}`, 'data-edge-id': edge.edge_id });
-      if (source.layoutLayer === 'source-rows' || target.layoutLayer === 'source-rows') group.classList.add('mks-row-evidence');
+      if (!selectedTypes.has(source.node_type) || !selectedTypes.has(target.node_type)) group.classList.add('mks-type-muted');
+      if (activeEdges.has(edge.edge_id)) group.classList.add('mks-active-step');
+      if (isSourceRow(source) || isSourceRow(target)) group.classList.add('mks-row-evidence');
       const title = svgNode('title', {}, `${source.node_id} → ${target.node_id}: ${edge.relation_type} (${edge.label || ''})`);
       const route = routes.get(edge.edge_id);
       const line = svgNode('path', { class: 'mks-edge-line', d: route.d, 'marker-end': 'url(#mks-relation-arrow)' });
@@ -273,10 +268,12 @@ export function mountGraph(container, { bundle, onSelect = () => {}, onAsk = () 
       edgeLayer.append(group);
     }
     for (const node of positions) {
-      if (!selectedTypes.has(node.node_type)) continue;
       const attributes = node.attributes || {};
       const tone = ['bad', 'warn', 'ok', 'info'].includes(node.state_tone) ? node.state_tone : null;
       const group = svgNode('g', { class: `mks-node${tone ? ` mks-tone-${tone}` : ''}${node.state === 'candidate' || node.state === 'draft' ? ' mks-draft' : ''}${highlightedNodes.has(node.node_id) ? ' mks-hit' : ''}${selected === node.node_id ? ' mks-selected' : ''}`, transform: `translate(${node.x},${node.y})`, tabindex: 0, role: 'button', 'aria-label': `${attributes.kind_label || node.node_type} ${node.node_id}`, 'data-node-id': node.node_id });
+      if (!selectedTypes.has(node.node_type)) group.classList.add('mks-type-muted');
+      if (activeNodes.has(node.node_id)) group.classList.add('mks-active-step');
+      if (isSourceRow(node)) group.classList.add('mks-source-row');
       const title = svgNode('title', {}, `${node.display_id || node.node_id} · ${node.label || ''}`);
       const ring = node.node_type === 'party' ? svgNode('rect', { class: 'mks-node-ring', x: -30, y: -14, width: 60, height: 28, rx: 14 }) : svgNode('circle', { class: 'mks-node-ring', r: 22 });
       const labelY = node.node_type === 'party' ? 28 : 36;
@@ -287,7 +284,7 @@ export function mountGraph(container, { bundle, onSelect = () => {}, onAsk = () 
       group.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); select(node.node_id); } });
       nodeLayer.append(group);
     }
-    fragment.append(defs, planes, edgeLayer, nodeLayer);
+    fragment.append(defs, edgeLayer, nodeLayer);
     svg.replaceChildren(fragment);
     svg.classList.toggle('mks-dimming', highlightedNodes.size > 0);
     svg.classList.toggle('mks-replaying', replaying);
@@ -295,9 +292,8 @@ export function mountGraph(container, { bundle, onSelect = () => {}, onAsk = () 
   }
 
   function select(id) {
-    if (!nodeById.has(id)) return;
-    replayToken++;
-    replaying = false;
+    if (destroyed || !nodeById.has(id)) return;
+    stopReplay();
     selected = id;
     render();
     onSelect(nodeById.get(id));
@@ -311,72 +307,49 @@ export function mountGraph(container, { bundle, onSelect = () => {}, onAsk = () 
   }
 
   function reset() {
-    replayToken++;
-    replaying = false;
+    if (destroyed) return;
+    stopReplay();
     selected = null;
     highlightedNodes.clear();
     highlightedEdges.clear();
     for (const type of ['design', 'doc', 'event', 'phys', 'party']) selectedTypes.add(type);
     for (const filter of legend.querySelectorAll('button')) filter.setAttribute('aria-pressed', 'true');
     detail.hidden = true;
-    setLayout();
-    if (positions.length) fitEvidence();
+    if (positions.length) fitBounds(layout.bounds);
     else updateView({ ...STAGE }, true);
     render();
   }
 
   /** Replay only explicitly supplied evidence; this never fetches, infers or writes. */
   async function replay(evidence = {}) {
-    const token = ++replayToken;
+    if (destroyed) return {completed:false};
+    stopReplay();
+    const token = replayToken;
     replaying = true;
-    const ids = evidence.nodeIds || evidence.evidence_node_ids || [];
-    const suppliedEdges = evidence.edgeIds || [];
-    const hops = evidence.hops || evidence.graph_path || [];
-    const resolved = suppliedEdges.filter(id => edgeById.has(id));
-    for (const hop of hops) {
-      if (!Array.isArray(hop) || hop.length < 2) continue;
-      // Preserve identity, direction and predicate: ambiguous parallel hops need an edge ID.
-      const matching = edges.filter(edge => edge.source_node_id === hop[0] && edge.target_node_id === hop[1]);
-      if (matching.length === 1) resolved.push(matching[0].edge_id);
-    }
-    const requestedNodes = new Set(ids.filter(id => nodeById.has(id)));
+    const plan = planEvidenceReplay(positions, edges, evidence);
+    const requestedNodes = new Set(plan.nodeIds);
     highlightedNodes = new Set();
     highlightedEdges = new Set();
-    for (const hop of hops) for (const id of hop) if (nodeById.has(id)) requestedNodes.add(id);
-    for (const id of resolved) {
-      const edge = edgeById.get(id);
-      requestedNodes.add(edge.source_node_id);
-      requestedNodes.add(edge.target_node_id);
-    }
     for (const id of requestedNodes) selectedTypes.add(nodeById.get(id).node_type);
     evidenceFocus = [...requestedNodes];
-    evidenceRelations = [...new Set(resolved)];
+    evidenceRelations = plan.edgeIds;
     evidenceButton.hidden = !evidenceFocus.length;
     allEvidenceButton.hidden = !evidenceFocus.length;
-    if (evidenceFocus.length) { setLayout(evidenceFocus); fitEvidence(); }
-    // Establish the complete camera frame once; reveal evidence without camera jumps.
-    const firstEdge = edgeById.get(resolved[0]);
-    if (firstEdge) highlightedNodes.add(firstEdge.source_node_id);
+    canvas.dataset.evidenceFocus = String(evidenceFocus.length > 0);
     render();
-    const animated = evidenceRelations.filter(id => {
-      const edge = edgeById.get(id);
-      return nodeById.get(edge.source_node_id).layoutLayer !== 'source-rows'
-        && nodeById.get(edge.target_node_id).layoutLayer !== 'source-rows';
-    }).slice(0, 16);
-    for (const id of animated) {
+    for (const step of plan.steps) {
       if (destroyed || token !== replayToken) return {completed:false};
-      if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) await new Promise(resolve => setTimeout(resolve, 240));
-      if (destroyed || token !== replayToken) return {completed:false};
-      const edge = edgeById.get(id);
-      highlightedEdges.add(id);
-      highlightedNodes.add(edge.source_node_id);
-      highlightedNodes.add(edge.target_node_id);
+      step.edgeIds.forEach(id => highlightedEdges.add(id)); step.nodeIds.forEach(id => highlightedNodes.add(id));
+      activeEdges = new Set(step.kind === 'relation' ? step.edgeIds : []);
+      activeNodes = new Set(step.kind === 'relation' ? step.nodeIds : []);
+      fit(step.nodeIds);
       render();
+      await waitStep();
     }
     if (destroyed || token !== replayToken) return {completed:false};
     highlightedNodes = requestedNodes;
     highlightedEdges = new Set(evidenceRelations);
-    replaying = false;
+    replaying = false; activeNodes.clear(); activeEdges.clear();
     render();
     return {completed:true};
   }
@@ -393,6 +366,7 @@ export function mountGraph(container, { bundle, onSelect = () => {}, onAsk = () 
     const dx = event.clientX - drag.x;
     const dy = event.clientY - drag.y;
     if (Math.abs(dx) + Math.abs(dy) < 5 && !dragMoved) return;
+    if (!dragMoved) stopReplay();
     dragMoved = true;
     const rect = svg.getBoundingClientRect();
     const scale = Math.min(rect.width / drag.view.width, rect.height / drag.view.height);
@@ -405,9 +379,7 @@ export function mountGraph(container, { bundle, onSelect = () => {}, onAsk = () 
   window.addEventListener('pointerup', endPointer);
   svg.addEventListener('wheel', event => {
     event.preventDefault();
-    replayToken++;
-    replaying = false;
-    svg.classList.remove('mks-replaying');
+    stopReplay();
     const factor = event.deltaY > 0 ? 1.12 : 1 / 1.12;
     const width = Math.max(280, Math.min(Math.max(4200, positions.length * 220), view.width * factor));
     const height = width / aspect();
@@ -416,6 +388,7 @@ export function mountGraph(container, { bundle, onSelect = () => {}, onAsk = () 
   }, { passive: false });
   svg.addEventListener('click', event => {
     if (dragMoved || event.target !== svg) return;
+    stopReplay();
     selected = null;
     highlightedNodes.clear();
     highlightedEdges.clear();
@@ -427,17 +400,16 @@ export function mountGraph(container, { bundle, onSelect = () => {}, onAsk = () 
   const resizeObserver = new ResizeObserver(resize);
   resizeObserver.observe(canvas);
   render();
-  if (positions.length) fitEvidence();
+  if (positions.length) fitBounds(layout.bounds);
   return {
     focus,
     replay,
-    cancelReplay() { replayToken++; replaying = false; svg.classList.remove('mks-replaying'); },
+    cancelReplay() { if (!destroyed) { stopReplay(); render(); } },
     reset,
     resize,
     destroy() {
       destroyed = true;
-      replayToken++;
-      cancelAnimationFrame(frame);
+      stopReplay();
       resizeObserver.disconnect();
       window.removeEventListener('pointermove', movePointer);
       window.removeEventListener('pointerup', endPointer);
