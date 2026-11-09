@@ -58,3 +58,7 @@ DEC-H29는 MD 잔여 작업의 구현 지속과 T04~T07 읽기 Agent 기반·제
 - 파일 처리 Runner가 없으면 해당 검증은 RUNNER_UNAVAILABLE이다. 호스트에서 무제한 파싱해 우회하지 않는다. Codex Cloud 자체 격리는 서비스 Runner 구현을 대신하지 않는다.
 - 상태는 NOT_STARTED / IN_PROGRESS / BLOCKED / IMPLEMENTED_UNVERIFIED / VERIFIED로 기록한다. VERIFIED에는 실제 명령·환경·결과·대상 버전이 필요하다.
 - 공개 PR에는 비공개 원문 대신 검증 ID·비식별 요약·hash/opaque evidence ID만 남긴다. 배포·외부 공급사 송신·운영 원장 변경은 현재 작업에 명시된 권한 범위를 따른다.
+
+## 후속 그래프 표현 승인 · DEC-H36
+
+2026-11-10 사용자는 기존 DB·노드·관계를 보존하는 2.5D 그래프와 고객 도착 CQ의 공유 MK-S2 답변 흐름 구현·검증·PR #4 반영을 승인했다. 과거 그래프 논의만 승인한 제한은 이 표현 변경에 대해 갱신한다. 실제 수량·출처·UNKNOWN과 버전 계약은 유지하며, 새 main 병합·배포·업무 쓰기는 포함하지 않는다. [실행 기록](docs/handoff/SERVICE-GRAPH-25D-20261110.md)을 따른다.

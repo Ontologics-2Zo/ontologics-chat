@@ -428,3 +428,7 @@ DEC-H27의 최신 요청에 따라 `codex/cq68-natural-language`의 코드 `aecd
 ## 2026-11-09 자재 확보 연결 검증
 
 DEC-H31로 T11/T12/T14 부모를 IN_PROGRESS로 갱신했다. 로컬 근거 검색, 기존 BOM8단계 안의 품목 후보, 현재 재고와 내부 견적→PR/PO→모의 공급확인→입하/IQC 경로를 연결했다. 실제74행은 별도 복제DB/Neo4j에서 업무 사건을 검증했고 원래 Mac 원장v2·74행을 보존했다. 상세 명령·증거·남은 수용은 [자재 확보 실행 기록](SERVICE-MATERIAL-FLOW-20261109.md)을 따른다. 345 Python/18 Node 및 추가 targeted 검증은 해당 구현 범위의 증거이며 전체 부모/1차 완료가 아니다. 예약·불출·대체 승인, 영속 쓰기 HITL, 실시간 관련 대화 갱신, 실제 AI 품질·전체 CQ/규모 수용과 실제 기술검수는 남아 있다.
+
+## 2026-11-10 그래프·CQ 표현 검증
+
+DEC-H36의 [2.5D 그래프 기록](SERVICE-GRAPH-25D-20261110.md)은 UX-H02/H09와 T06/T10/T11/T19의 표현·동일 버전 근거 조회 slice다. Node90, 격리 API22, 실제 브라우저36 assertions 및 reduced-motion1, 독립 보존 대사를 통과했다. 전체 관계/원본과 납기 UNKNOWN을 보존한다. 부모 IN_PROGRESS와 전체 추적·역사비교·규모·실시간·Agent 인수 잔여를 유지한다.

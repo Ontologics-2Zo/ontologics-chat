@@ -790,6 +790,21 @@
           ],
           "scope": "DEC-H35 reference-style committed-event feed and allowlisted exact document evidence; no original business/model writes. Full realtime/recovery acceptance remains incomplete.",
           "parent_complete": false
+        },
+        {
+          "record": "docs/handoff/SERVICE-GRAPH-25D-20261110.md",
+          "status": "VERIFIED",
+          "verification_ids": [
+            "GRAPH-25D-LAYOUT",
+            "GRAPH-25D-ANSWER",
+            "GRAPH-25D-API",
+            "GRAPH-25D-BROWSER",
+            "GRAPH-25D-MOTION",
+            "GRAPH-25D-PRESERVE"
+          ],
+          "scope": "DEC-H36 2.5D presentation and same-version delivery CQ evidence; all nodes/edges and database preserved. Full trace/history/Agent/scale acceptance remains incomplete.",
+          "parent_complete": false,
+          "verified_code_commit": "451ec959209dcbb7686cb9921ad5cd61a0070037"
         }
       ],
       "actual_implementation_paths": [
@@ -1197,6 +1212,21 @@
           ],
           "scope": "DEC-H35 reference-style committed-event feed and allowlisted exact document evidence; no original business/model writes. Full realtime/recovery acceptance remains incomplete.",
           "parent_complete": false
+        },
+        {
+          "record": "docs/handoff/SERVICE-GRAPH-25D-20261110.md",
+          "status": "VERIFIED",
+          "verification_ids": [
+            "GRAPH-25D-LAYOUT",
+            "GRAPH-25D-ANSWER",
+            "GRAPH-25D-API",
+            "GRAPH-25D-BROWSER",
+            "GRAPH-25D-MOTION",
+            "GRAPH-25D-PRESERVE"
+          ],
+          "scope": "DEC-H36 2.5D presentation and same-version delivery CQ evidence; all nodes/edges and database preserved. Full trace/history/Agent/scale acceptance remains incomplete.",
+          "parent_complete": false,
+          "verified_code_commit": "451ec959209dcbb7686cb9921ad5cd61a0070037"
         }
       ],
       "actual_implementation_paths": [
@@ -1305,6 +1335,21 @@
           "verified_code_commit": "8ba67fd80b8adeed0bf82bdba05aaa4a91b6f25e",
           "scope": "권한·시점·버전의 R0/R1/R3 로컬 검색과 과거 근거 재열기. 광범위 검색 품질·전체 corpus와 R2/R4/R5 실험은 잔여.",
           "parent_complete": false
+        },
+        {
+          "record": "docs/handoff/SERVICE-GRAPH-25D-20261110.md",
+          "status": "VERIFIED",
+          "verification_ids": [
+            "GRAPH-25D-LAYOUT",
+            "GRAPH-25D-ANSWER",
+            "GRAPH-25D-API",
+            "GRAPH-25D-BROWSER",
+            "GRAPH-25D-MOTION",
+            "GRAPH-25D-PRESERVE"
+          ],
+          "scope": "DEC-H36 2.5D presentation and same-version delivery CQ evidence; all nodes/edges and database preserved. Full trace/history/Agent/scale acceptance remains incomplete.",
+          "parent_complete": false,
+          "verified_code_commit": "451ec959209dcbb7686cb9921ad5cd61a0070037"
         }
       ],
       "actual_implementation_paths": [
@@ -2008,6 +2053,21 @@
           "automated_server_scope": "Mac actual PostgreSQL/Neo4j/Runner suite223PASS in28.650s; live read-only API9PASS,ledger/projectionv2,model calls0,ledger mutations0,business snapshot unchanged,stale version409.",
           "verified_code_commit": "aecd23add18615c33a051b43686a75a426929d01",
           "screen_restart_preservation_scope": "Node11PASS; native Chrome authorA query/provenance/replay/What-if checks; final8870 health/API/UI; reference7files and fullontology preserved."
+        },
+        {
+          "record": "docs/handoff/SERVICE-GRAPH-25D-20261110.md",
+          "status": "VERIFIED",
+          "verification_ids": [
+            "GRAPH-25D-LAYOUT",
+            "GRAPH-25D-ANSWER",
+            "GRAPH-25D-API",
+            "GRAPH-25D-BROWSER",
+            "GRAPH-25D-MOTION",
+            "GRAPH-25D-PRESERVE"
+          ],
+          "scope": "DEC-H36 2.5D presentation and same-version delivery CQ evidence; all nodes/edges and database preserved. Full trace/history/Agent/scale acceptance remains incomplete.",
+          "parent_complete": false,
+          "verified_code_commit": "451ec959209dcbb7686cb9921ad5cd61a0070037"
         }
       ],
       "actual_implementation_paths": [
@@ -2435,6 +2495,14 @@
     "latest_ledger_feed": {
       "decision": "DEC-H35",
       "record": "docs/handoff/SERVICE-LEDGER-FEED-20261109.md",
+      "status": "VERIFIED",
+      "original_domain_writes": false,
+      "new_live_model_calls": 0,
+      "parent_complete": false
+    },
+    "latest_graph_25d": {
+      "decision": "DEC-H36",
+      "record": "docs/handoff/SERVICE-GRAPH-25D-20261110.md",
       "status": "VERIFIED",
       "original_domain_writes": false,
       "new_live_model_calls": 0,
