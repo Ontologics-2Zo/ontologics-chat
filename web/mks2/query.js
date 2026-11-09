@@ -206,15 +206,11 @@ export function renderQueryAnswer(message, answer, {
   const status = statusBadge(answer.status);
   if (status) summary.append(status);
   if (delivery && answer.calculation?.actual_delivery_feasibility === 'UNKNOWN') summary.append(node('span', 'query-delivery-status', '납기 판단 보류'));
-  if (summary.children.length) verdict.append(summary);
-  if (text(answer.conclusion)) verdict.append(node('p', 'query-conclusion', answer.conclusion));
   const provenance = new Set();
   for (const section of sectionData) for (const value of [section.origin, ...(Array.isArray(section.items) ? section.items.map(item => item?.origin) : [])]) {
     const origin = text(value).toLowerCase();
     if (Object.hasOwn(origins, origin)) provenance.add(origins[origin][0]);
   }
-  if (provenance.size) verdict.append(node('p', 'note query-scope-note', [...provenance].join(' · ')));
-  if (answer.status === 'UNKNOWN' || answer.status === 'PARTIAL') verdict.append(node('p', 'note query-scope-note', '미확인은 부족 0이나 제조·납기 확정을 뜻하지 않습니다.'));
   const paragraphs = answerParagraphs(answer, sectionData), runs = [];
   const segmenter = typeof Intl.Segmenter === 'function' ? new Intl.Segmenter('ko', { granularity: 'grapheme' }) : null;
   const reduced = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches
@@ -242,9 +238,17 @@ export function renderQueryAnswer(message, answer, {
     register.dataset.queryAction = 'bom-register';
     verdict.append(register);
   }
+  const scope = [];
+  if (status) scope.push(status.textContent);
+  if (delivery && answer.calculation?.actual_delivery_feasibility === 'UNKNOWN') scope.push('납기 판단 보류');
+  scope.push(...provenance);
+  if (answer.status === 'UNKNOWN' || answer.status === 'PARTIAL') scope.push('미확인은 부족 0이나 제조·납기 확정을 뜻하지 않습니다.');
+  if (scope.length) verdict.append(node('p', 'note query-scope-note', [...new Set(scope)].join(' · ')));
   message.append(verdict);
   const details = node('details', 'query-details');
   details.append(node('summary', '', '상세 근거·조건·조회 기준'));
+  if (summary.children.length) details.append(summary);
+  if (text(answer.conclusion)) details.append(node('p', 'query-conclusion', answer.conclusion));
   if (delivery) {
     const metrics = deliveryMetrics(sectionData);
     if (metrics) details.append(metrics);

@@ -113,6 +113,7 @@ select,.btn { border:1px solid var(--line); background:var(--surface); border-ra
 .query-prose { font-size:13px; line-height:1.65; overflow-wrap:anywhere; }
 .query-prose p { white-space:pre-wrap; }
 .query-quantity { font-weight:700; }
+.query-scope-note { margin:6px 0 0; font-size:11px; line-height:1.5; }
 .query-details { margin-top:8px; font-size:11.5px; color:var(--fg2); }
 .query-details>summary { cursor:pointer; }
 .query-accessible-answer { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:pre-wrap; border:0; }

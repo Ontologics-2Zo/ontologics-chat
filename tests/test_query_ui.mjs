@@ -237,7 +237,7 @@ function deliveryResponse() {
   };
 }
 
-test('delivery answer leads with server conclusion and distinct remaining-promise and production metrics', () => {
+test('delivery answer preserves server conclusion and distinct remaining-promise and production metrics in details', () => {
   const { message, restore } = setup();
   try {
     const data = deliveryResponse(), before = JSON.stringify(data);
@@ -385,6 +385,30 @@ test('reference order is confirmed steps, prose, every evidence chip, footer and
     assert.ok(order.every((value, index) => value >= 0 && (!index || value > order[index - 1])));
     assert.notEqual(withClass(message, 'query-details')[0].open, true);
     assert.match(withClass(message, 'query-body')[0].textContent, /합성 초기 원장.*실제 원문.*시연 가정/);
+  } finally { restore(); }
+});
+
+test('lookup steps lead directly into prose while compact visible scope follows the answer', () => {
+  const { message, restore } = setup();
+  try {
+    const data = deliveryResponse(); renderQueryAnswer(message, data, { evidenceIds: ['synthetic-node'] });
+    const verdict = withClass(message, 'query-verdict')[0], details = withClass(message, 'query-details')[0];
+    assert.equal(message.children[0].className, 'trace-steps');
+    assert.equal(message.children[1], verdict);
+    assert.equal(verdict.children[0].className, 'query-prose');
+    assert.equal(withClass(verdict, 'query-summary').length, 0);
+    assert.equal(withClass(verdict, 'query-conclusion').length, 0);
+    assert.equal(withClass(verdict, 'query-scope-note').length, 1);
+    const scope = withClass(verdict, 'query-scope-note')[0];
+    assert.equal(verdict.children.at(-1), scope);
+    for (const value of ['일부 확인', '납기 판단 보류', '합성 초기 원장', '실제 원문', '질문에서 지정한 가정', '미확인', '미확인은 부족 0이나 제조·납기 확정을 뜻하지 않습니다.']) {
+      assert.ok(scope.textContent.includes(value), value);
+    }
+    assert.equal(details.children[1].className, 'query-summary');
+    assert.equal(details.children[2].className, 'query-conclusion');
+    assert.equal(details.children[2].textContent, data.conclusion);
+    assert.notEqual(details.open, true);
+    assert.ok(details.textContent.includes(data.meta.snapshot_id));
   } finally { restore(); }
 });
 
