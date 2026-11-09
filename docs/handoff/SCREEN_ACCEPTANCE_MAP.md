@@ -8,6 +8,8 @@ MK-S2의 디자인·두 주화면·핵심 동선을 프론트엔드 기준으로
 
 DEC-H39는 제공된 디지털 트윈 화면을 유지하는 세 번째 `#twin` 조회 탭을 추가한다. 기존 UX-H01/02/05/08/09·G-03~05/08/09·AI-04~07·CM05/AT08의 T10/T19/T22 표현 범위이며 기존 두 화면이나 전체 부모 수용을 대체하지 않는다. 구현 경로는 `web/mks2/twin.js/css`와 최신 `app.js` 연결, 검증 ID는 TWIN-NODE/STATIC/HTTP/BROWSER/REFERENCE/RESTART다. 실제 코드·환경·결과는 [디지털 트윈 실행 기록](SERVICE-DIGITAL-TWIN-20261110.md)을 따른다.
 
+DEC-H41은 공유 원형의 답변 구성과 서버 확정 본문의 순차 표시를 연결한다. AI-04~07·G-09·UI-OBS17 / UX-H02/H09/H10 → T10/T19/T22의 표현 범위다. `web/mks2/query.js/styles.css`와 `app.js` 수명주기, ANSWER-HOST/RENDER/BROWSER/PRESERVE 검사를 [답변 표현 기록](SERVICE-ANSWER-PRESENTATION-20261110.md)에 연결한다. 원형 타이머·고정 답변을 도구 실행이나 모델 호출로 사용하지 않는다. 같은 화면의 대상별 대화·늦은 응답 분리 등 전체 AI 맥락 인수와 부모 Task 완료를 대신하지 않는다.
+
 ## 1. 기준과 변경 경계
 
 | 근거 | 적용 방법 |
