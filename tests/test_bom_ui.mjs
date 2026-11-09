@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { bomStageStates, decisionFromChoices, createBomComparison } from '../web/mks2/bom.js';
+import { bomStageStates, decisionFromChoices, createBomComparison, preferredBomSource,
+  bomPresentation, reviewFocusRows } from '../web/mks2/bom.js';
 
 const hash = digit => digit.repeat(64);
 function documentRecord(id = 'synthetic-current', version = 2, digest = hash('b')) {
@@ -15,6 +16,163 @@ function sourceRow(overrides = {}) {
       item_id: null, quantity_per_unit: null, unit: null, evidence_note: '' }, ...overrides };
 }
 const applied = { application_status: 'APPLICABLE', item_id: 'SYNTHETIC-PART', quantity_per_unit: '2.5', unit: 'EA' };
+
+const catalogSource = (source_id = 'synthetic-source', sha256 = hash('c')) => ({ source_id, sha256, filename: `${source_id}.ods` });
+function postedDocument(source, configuration_id = 'SYNTHETIC-CONFIG', ledger_version = 2) {
+  const doc = documentRecord(`synthetic-posted-${ledger_version}`);
+  return { ...doc, status: 'POSTED', ledger_version,
+    content: { ...doc.content, configuration_id, source: { ...source }, rows: [sourceRow({ decision: { ...applied } })] } };
+}
+
+test('preferred source follows the latest mapped posted document of the selected configuration, not catalog order', () => {
+  const first = catalogSource(), second = catalogSource('synthetic-second', hash('d'));
+  const documents = [postedDocument(first), postedDocument(second, 'SYNTHETIC-CONFIG', 3),
+    postedDocument(first, 'OTHER-CONFIG', 99)];
+  const before = JSON.stringify({ sources: [first, second], documents });
+  assert.equal(preferredBomSource([first, second], documents, 'SYNTHETIC-CONFIG'), second);
+  assert.equal(JSON.stringify({ sources: [first, second], documents }), before);
+});
+
+test('crossed source IDs, hashes and configurations do not authorize a preferred source', () => {
+  const first = catalogSource(), second = catalogSource('synthetic-second', hash('d'));
+  const crossed = postedDocument({ ...first, sha256: second.sha256 });
+  assert.equal(preferredBomSource([first, second], [crossed], 'SYNTHETIC-CONFIG'), null);
+  const wrongConfiguration = postedDocument(first, 'OTHER-CONFIG');
+  assert.equal(preferredBomSource([first, second], [wrongConfiguration], 'SYNTHETIC-CONFIG'), null);
+  const onlyHashMatches = postedDocument({ ...first, source_id: 'not-in-catalog' });
+  assert.equal(preferredBomSource([first, second], [onlyHashMatches], 'SYNTHETIC-CONFIG'), null);
+  assert.equal(preferredBomSource([first, { ...first }], [postedDocument(first)], 'SYNTHETIC-CONFIG'), null);
+});
+
+test('unposted or unmapped documents cannot choose among multiple catalog sources', () => {
+  const first = catalogSource(), second = catalogSource('synthetic-second', hash('d'));
+  for (const status of ['DRAFT', 'REVIEWED', 'APPROVED']) {
+    assert.equal(preferredBomSource([first, second], [{ ...postedDocument(first), status }], 'SYNTHETIC-CONFIG'), null);
+  }
+  const unresolved = postedDocument(first); unresolved.content.rows = [sourceRow()];
+  assert.equal(preferredBomSource([first, second], [unresolved], 'SYNTHETIC-CONFIG'), null);
+});
+
+test('source fallback requires a sole catalog entry and never guesses from a filename', () => {
+  const first = catalogSource(), second = { ...catalogSource('synthetic-second', hash('d')), filename: first.filename };
+  assert.equal(preferredBomSource([first], [], 'SYNTHETIC-CONFIG'), first);
+  assert.equal(preferredBomSource([first, second], [], 'SYNTHETIC-CONFIG'), null);
+  assert.equal(preferredBomSource([], [], 'SYNTHETIC-CONFIG'), null);
+});
+
+test('presentation counts rows, sheet-scoped positions and decimal quantities independently', () => {
+  const rows = [
+    sourceRow({ sheet: 'A', source_quantity: '2', designators: ['X1', 'X2'] }),
+    sourceRow({ sheet: 'A', source_quantity: '0.5', designators: ['X3'] }),
+    sourceRow({ sheet: 'A', source_quantity: '1', designators: ['X1'] }),
+    sourceRow({ sheet: 'A', source_quantity: null, designators: [] }),
+    sourceRow({ sheet: 'B', source_quantity: '1', designators: ['X1'], decision: { ...applied } }),
+  ];
+  const before = JSON.stringify(rows);
+  assert.deepEqual(bomPresentation(rows), { rows: 5, positions: 5, uniquePositions: 4,
+    linked: 1, positiveIntegers: 3, matchingPositions: 3, missingPositions: 1 });
+  assert.equal(JSON.stringify(rows), before);
+});
+
+test('quantity-position checks compare exact decimals and do not round near integers into successful checks', () => {
+  const rows = [
+    sourceRow({ source_quantity: '1.0000000000000001', designators: ['X1'] }),
+    sourceRow({ source_quantity: '0.99999999999999999', designators: ['X2'] }),
+    sourceRow({ source_quantity: '0002.000', designators: ['X3', 'X4'] }),
+    sourceRow({ source_quantity: '0.0', designators: [] }),
+    sourceRow({ source_quantity: '0.000001', designators: ['X5'] }),
+  ];
+  const result = bomPresentation(rows);
+  assert.equal(result.positiveIntegers, 1);
+  assert.equal(result.matchingPositions, 1);
+  assert.equal(rows[0].source_quantity, '1.0000000000000001');
+  assert.equal(rows[2].source_quantity, '0002.000');
+});
+
+test('local decision counts change the display without changing stored source or decisions', () => {
+  const rows = [sourceRow({ row_id: 'synthetic-one' }), sourceRow({ row_id: 'synthetic-two' })];
+  const drafts = new Map([['synthetic-one', { ...applied }]]), before = JSON.stringify(rows);
+  assert.equal(bomPresentation(rows).linked, 0);
+  assert.equal(bomPresentation(rows, row => drafts.get(row.row_id) || row.decision).linked, 1);
+  assert.equal(JSON.stringify(rows), before);
+});
+
+function documentWithRows(count = 74) {
+  const doc = documentRecord();
+  doc.content.rows = Array.from({ length: count }, (_, i) => sourceRow({ row_id: `synthetic-row-${i}`,
+    source_row: i + 2, locator: `Synthetic!row=${i + 2}`, cells: [`Synthetic source value ${i}`] }));
+  return doc;
+}
+function focusResponse(doc, row_ids) {
+  return { document: { document_id: doc.id, version: doc.version, payload_hash: doc.payload_hash }, row_ids,
+    read_only: true, selection_only: true, model_calls: 0, ledger_mutations: 0,
+    decisions_copied: false, approvals_copied: false };
+}
+
+test('a previous five-row review focus narrows a fresh draft display without copying decisions or losing the other sixty-nine rows', () => {
+  const doc = documentWithRows(), ids = [0, 4, 15, 26, 73].map(i => doc.content.rows[i].row_id);
+  const response = focusResponse(doc, ids), before = JSON.stringify({ doc, response });
+  const focused = reviewFocusRows(doc, response);
+  assert.deepEqual(focused.map(row => row.row_id), ids);
+  assert.ok(focused.every(row => row.decision.application_status === 'UNRESOLVED'));
+  assert.equal(doc.content.rows.length, 74);
+  assert.equal(doc.content.rows.filter(row => !ids.includes(row.row_id)).length, 69);
+  assert.equal(doc.content.rows.filter(row => row.decision.application_status === 'UNRESOLVED').length, 74);
+  assert.equal(bomPresentation(doc.content.rows).linked, 0);
+  assert.equal(JSON.stringify({ doc, response }), before);
+});
+
+test('stale focus is discarded while current and explicitly staged mapped rows remain visible', () => {
+  const doc = documentWithRows(4);
+  doc.content.rows[1].decision = { ...applied };
+  const drafts = new Map([[doc.content.rows[2].row_id, { ...applied }]]);
+  const response = focusResponse(doc, [doc.content.rows[0].row_id]); response.document.version++;
+  const before = JSON.stringify({ doc, drafts: [...drafts] });
+  assert.deepEqual(reviewFocusRows(doc, response, drafts).map(row => row.row_id),
+    [doc.content.rows[1].row_id, doc.content.rows[2].row_id]);
+  assert.equal(JSON.stringify({ doc, drafts: [...drafts] }), before);
+});
+
+test('focus only accepts the exact document identity, version and hash', () => {
+  const doc = documentWithRows(3); doc.content.rows[2].decision = { ...applied };
+  for (const [key, value] of [['document_id', 'different-document'], ['version', 99], ['payload_hash', hash('f')]]) {
+    const response = focusResponse(doc, [doc.content.rows[0].row_id]); response.document[key] = value;
+    assert.deepEqual(reviewFocusRows(doc, response).map(row => row.row_id), [doc.content.rows[2].row_id], key);
+  }
+  assert.deepEqual(reviewFocusRows(doc, null).map(row => row.row_id), [doc.content.rows[2].row_id]);
+});
+
+test('focus requires explicit selection-only, no-write, no-model and no-copy declarations', () => {
+  const doc = documentWithRows(3); doc.content.rows[2].decision = { ...applied };
+  const invalid = { read_only: false, selection_only: false, model_calls: 1, ledger_mutations: 1,
+    decisions_copied: true, approvals_copied: true };
+  for (const [key, value] of Object.entries(invalid)) {
+    const response = focusResponse(doc, [doc.content.rows[0].row_id]); response[key] = value;
+    assert.deepEqual(reviewFocusRows(doc, response).map(row => row.row_id), [doc.content.rows[2].row_id], key);
+    delete response[key];
+    assert.deepEqual(reviewFocusRows(doc, response).map(row => row.row_id), [doc.content.rows[2].row_id], `${key} absent`);
+  }
+});
+
+test('focus ignores injected row objects and outside IDs, deduplicates IDs, and preserves source ordering', () => {
+  const doc = documentWithRows(4), attack = '<img src=x onerror="attack()">';
+  doc.content.rows[1].cells = [attack];
+  const response = focusResponse(doc, [doc.content.rows[3].row_id, attack, '__proto__', doc.content.rows[1].row_id, doc.content.rows[3].row_id]);
+  response.rows = [{ row_id: doc.content.rows[1].row_id, decision: { ...applied, evidence_note: attack }, approved_by: 'injected' }];
+  const before = JSON.stringify(doc);
+  const focused = reviewFocusRows(doc, response);
+  assert.deepEqual(focused.map(row => row.row_id), [doc.content.rows[1].row_id, doc.content.rows[3].row_id]);
+  assert.ok(focused.every(row => row.decision.application_status === 'UNRESOLVED' && !('approved_by' in row)));
+  assert.equal(JSON.stringify(doc), before);
+});
+
+test('an explicitly staged unmapping removes the current-mapping fallback without restoring its prior decision', () => {
+  const doc = documentWithRows(3); doc.content.rows[0].decision = { ...applied };
+  const drafts = new Map([[doc.content.rows[0].row_id, { application_status: 'UNRESOLVED', item_id: null }]]);
+  assert.deepEqual(reviewFocusRows(doc, null, drafts), []);
+  assert.equal(doc.content.rows[0].decision.application_status, 'APPLICABLE');
+  assert.equal(drafts.get(doc.content.rows[0].row_id).application_status, 'UNRESOLVED');
+});
 
 test('visiting a later stage cannot fabricate missing source or row-decision evidence', () => {
   assert.ok(bomStageStates(null, { step: 7 }).every(state => state === 'pending'));

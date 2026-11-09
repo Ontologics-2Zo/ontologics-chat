@@ -1024,6 +1024,19 @@
           ],
           "scope": "DEC-H33 read-only exact-version BOM comparison, evidence-based progress and explicit select-based row review; no original business write or model call. Full manufacturing acceptance remains incomplete.",
           "parent_complete": false
+        },
+        {
+          "record": "docs/handoff/SERVICE-BOM-FOCUS-20261109.md",
+          "status": "VERIFIED",
+          "verification_ids": [
+            "BOM-FOCUS-SERVER",
+            "BOM-FOCUS-NODE",
+            "BOM-FOCUS-PENDING",
+            "BOM-FOCUS-BROWSER",
+            "BOM-FOCUS-PRESERVE"
+          ],
+          "scope": "DEC-H34 stored-source shortcut and reference-style summary/filter UI; same-source display-only row focus, whole source and decisions preserved; no original business/model writes or graph layout changes.",
+          "parent_complete": false
         }
       ],
       "actual_implementation_paths": [
@@ -1036,7 +1049,9 @@
         "tests/test_bom_api.py",
         "tests/test_bom_ui.mjs",
         "service/bom_compare.py",
-        "tests/test_bom_compare.py"
+        "tests/test_bom_compare.py",
+        "service/bom_focus.py",
+        "tests/test_bom_focus.py"
       ],
       "actual_api_or_tool_contract": "Typed BOM source/document routes under /api/mks2/bom; create, revise, review, approve, post; exact document version/hash and current ledger version; stored original source retrieval. The actual Mac source slice is verified; full technical review and overall service acceptance remain separate.",
       "blockers": [],
@@ -1336,6 +1351,19 @@
             "BOM-REVIEW-PRESERVE"
           ],
           "scope": "DEC-H33 read-only exact-version BOM comparison, evidence-based progress and explicit select-based row review; no original business write or model call. Full manufacturing acceptance remains incomplete.",
+          "parent_complete": false
+        },
+        {
+          "record": "docs/handoff/SERVICE-BOM-FOCUS-20261109.md",
+          "status": "VERIFIED",
+          "verification_ids": [
+            "BOM-FOCUS-SERVER",
+            "BOM-FOCUS-NODE",
+            "BOM-FOCUS-PENDING",
+            "BOM-FOCUS-BROWSER",
+            "BOM-FOCUS-PRESERVE"
+          ],
+          "scope": "DEC-H34 stored-source shortcut and reference-style summary/filter UI; same-source display-only row focus, whole source and decisions preserved; no original business/model writes or graph layout changes.",
           "parent_complete": false
         }
       ],
@@ -2339,6 +2367,14 @@
       "record": "docs/handoff/SERVICE-BOM-REVIEW-20261109.md",
       "status": "VERIFIED",
       "read_only_comparison": true,
+      "original_domain_writes": false,
+      "new_live_model_calls": 0,
+      "parent_complete": false
+    },
+    "latest_bom_focus": {
+      "decision": "DEC-H34",
+      "record": "docs/handoff/SERVICE-BOM-FOCUS-20261109.md",
+      "status": "VERIFIED",
       "original_domain_writes": false,
       "new_live_model_calls": 0,
       "parent_complete": false

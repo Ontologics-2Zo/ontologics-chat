@@ -17,8 +17,9 @@ from uuid import UUID, uuid4
 
 from psycopg.types.json import Jsonb
 
-from service.bom_contracts import BomCompare, BomCreate, BomDecision, BomReview, BomRevise
+from service.bom_contracts import BomCompare, BomCreate, BomDecision, BomReview, BomReviewFocus, BomRevise
 from service.bom_compare import compare_bom_documents
+from service.bom_focus import mapped_row_ids, review_focus
 from service.contracts import CANONICAL_VERSION, DocumentAction, canonical_bytes, content_hash
 from service.domain import DomainService, _public
 from service.errors import ServiceError
@@ -393,6 +394,31 @@ class BomService(DomainService):
                 self._exact(document, ref.expected_version, ref.payload_hash)
                 selected.append(document)
             result = compare_bom_documents(selected[0] if body.left else None, selected[-1])
+            result["meta"] = {"company_id": company_id, "identity_revision": principal.identity_revision}
+            return result
+
+    def review_focus(self, principal, company_id, body: BomReviewFocus):
+        body = BomReviewFocus.model_validate(body)
+        with self.db.connect() as conn:
+            self.identity.require(principal, "document.read", conn, company_id)
+            document = self._document(conn, company_id, body.document_id)
+            self._exact(document, body.expected_version, body.payload_hash)
+            reference = None
+            if not mapped_row_ids(document):
+                reference = conn.execute("""SELECT * FROM bom_documents
+                    WHERE company_id=%s AND source_hash=%s AND configuration_id=%s AND status='POSTED'
+                    AND EXISTS (SELECT 1 FROM jsonb_array_elements(content->'rows') AS source_row
+                        WHERE source_row->'decision'->>'application_status'='APPLICABLE'
+                          AND coalesce(source_row->'decision'->>'item_id','') <> '')
+                    ORDER BY ledger_version DESC, updated_at DESC, id DESC LIMIT 1""",
+                    (company_id, document["source_hash"], document["configuration_id"])).fetchone()
+                if reference is not None:
+                    self._exact(reference, reference["version"], reference["payload_hash"])
+            result = review_focus(document, reference)
+            # A concurrent edit must not leave a display hint attached to an
+            # obsolete target. POSTED references are immutable source records.
+            current = self._document(conn, company_id, body.document_id)
+            self._exact(current, body.expected_version, body.payload_hash)
             result["meta"] = {"company_id": company_id, "identity_revision": principal.identity_revision}
             return result
 

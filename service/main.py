@@ -15,7 +15,7 @@ import psycopg
 from dev.preview_server import CSP, REPO_ROOT, STATIC_FILES, PreviewServer, PreviewUnavailable
 from service.contracts import Contract, CreateDocument, DocumentAction, ReviseDocument
 from service.bom import BomService
-from service.bom_contracts import BomCompare, BomCreate, BomRevise, BomReview
+from service.bom_contracts import BomCompare, BomCreate, BomRevise, BomReview, BomReviewFocus
 from service.bom_runner import BomRunner
 from service.domain import DomainService
 from service.errors import ServiceError
@@ -218,6 +218,16 @@ def create_app(db, *, private_root: str, origin="http://127.0.0.1:8870", dev_mod
                           data=result, snapshot=ctx, evidence_refs=refs)
 
     gateway.register(ToolSpec("bom.compare", "document.read", False, BomCompare, compare_bom_handler))
+
+    def review_focus_handler(actor, args, ctx):
+        result = bom.review_focus(actor, actor.company_id, args)
+        refs = [EvidenceRef(evidence_id=ref["document_id"], source_version=str(ref["version"]),
+                            content_hash=ref["payload_hash"])
+                for ref in (result["document"], result["reference"]) if ref is not None]
+        return ToolOutput(status="needs_review" if result["status"] == "NEEDS_REVIEW" else "completed",
+                          data=result, snapshot=ctx, evidence_refs=refs)
+
+    gateway.register(ToolSpec("bom.review_focus", "document.read", False, BomReviewFocus, review_focus_handler))
     app.state.gateway=gateway
 
     from service.material_api import mount_material_api
@@ -364,6 +374,10 @@ def create_app(db, *, private_root: str, origin="http://127.0.0.1:8870", dev_mod
     @app.post("/api/mks2/bom/compare")
     def compare_bom(request:Request,body:BomCompare):
         return execute_bom(request,"compare",body)
+
+    @app.post("/api/mks2/bom/review-focus")
+    def bom_review_focus(request:Request,body:BomReviewFocus):
+        return execute_bom(request,"review_focus",body)
 
     @app.get("/api/mks2/bom/documents/{bom_id}")
     def get_bom(request:Request,bom_id:str):

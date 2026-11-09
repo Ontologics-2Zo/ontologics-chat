@@ -27,6 +27,10 @@ class BomCompare(Contract):
     right: BomCompareDocument
 
 
+class BomReviewFocus(BomCompareDocument):
+    """Exact target for a read-only display hint, with no decision values."""
+
+
 class BomDecision(Contract):
     row_id: str = Field(pattern=r"^[0-9a-f]{64}$")
     application_status: Literal["UNRESOLVED", "APPLICABLE", "NOT_MOUNTED", "SETTING"] = "UNRESOLVED"
