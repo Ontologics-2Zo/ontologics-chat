@@ -7,7 +7,7 @@
 - 디지털 트윈, BOM 최초 등록 동선, 서버 답변의 점진 표시와 정량·정성 기준선은 PR #5의 기존 변경으로 유지한다. `web/` 직속 보호7파일과 비공개 제공 화면은 수정하지 않는다.
 - `web/mks2/graph*`는 실제 관계 기반의 고정 연결 배치를 사용한다. 원문 행·BOMLine·문서/승인 이력은 한 BOM 군집으로 묶되 노드/관계 ID를 합치거나 삭제하지 않는다. 종류 버튼은 강조만 전환한다. 질문은 좌표를 바꾸지 않으며 근거의 핵심 관계마다 카메라를 이동하고 대량 BOM 관계는 한 번에 강조한다.
 - 현재 활성 BOM의 적용 품목이 미확인일 때 납기 결론이 부족을 확인했다고 쓰던 표현을 수정했다. 계산 가능한 부족값이 없으면 `자재 소요·부족 미확인 · 납기 판단 보류`로 요약한다. 알려진 부족0과 UNKNOWN을 구분한다. 과거 평가 점수/수치는 재작성하지 않는다.
-- 관측의 기본값은 metadata만이다. `ONTO_LANGFUSE_CONTENT_ENABLED=true`와 `ONTO_OBSERVABILITY_PURPOSE=interactive`를 명시한 로컬 실행에서만 질문·공개 답변·확인 요청을 기록한다. 질문/초기질문 각2,000자, 답변6,000자, 결론/확인요청 각2,000자로 제한하며 키·인증문자열·로컬 경로를 마스킹한다. BOM 파일/셀/첨부 원문·평가 gold는 기록 대상으로 추가하지 않는다.
+- 관측의 기본값은 metadata와 선택된 구조화 입출력이며 질문·답변 본문은 제외한다. `ONTO_LANGFUSE_CONTENT_ENABLED=true`와 `ONTO_OBSERVABILITY_PURPOSE=interactive`를 명시한 로컬 실행에서만 질문·최종 답변·확인 요청을 기록한다. 질문/초기질문 각2,000자, 답변6,000자, 결론/확인요청 각2,000자로 제한하며 키·인증문자열·로컬 경로를 마스킹한다. BOM 파일/셀/첨부 원문·평가 gold는 기록 대상으로 추가하지 않는다.
 - 모델 observation은 **실제 모델에 전달한7개 기능 플래그와 호출 설정, 선택 capability, 실제 canonical usage**를 기록한다. 사용자 질문/원장 답변이 모델 prompt/response였다고 표시하지 않는다. 외부 모델 전송 범위·동일 예산·Azure ZDR 단일 경로·fallback OFF는 그대로다.
 - Langfuse는 기존 로컬 loopback 수집기로만 보낸다. LangSmith/외부 trace 연결을 새로 활성화하지 않았다. 완료·실패·취소의 immutable terminal root에 trace input/output을 한 번 기록한다. **WAITING 중에는 개별 observation에서 질문/확인 요청을 확인하며, terminal 이전 trace 목록의 요약은 비어 있을 수 있다. 과거 빈 기록은 보충하거나 재작성하지 않는다.**
 - 평가 host는 `ONTO_OBSERVABILITY_PURPOSE=evaluation` 또는 content=false로 실행한다. 평가 목적은 본문 기록을 강제로 막는다. 현재 per-execution 평가 판별은 없으므로 content=true interactive host에 비공개 평가 질문을 보내지 않는다.
