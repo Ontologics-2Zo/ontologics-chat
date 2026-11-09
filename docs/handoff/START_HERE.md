@@ -1,5 +1,8 @@
 # MK-S2 개발 인계 안내
 
+> 최신 검토(2026-11-10): DEC-H43의 [PR #5 검토 기록](SERVICE-PR5-REVIEW-20261110.md)을 먼저 읽는다. 로컬 Langfuse 입출력, 연결형 그래프와 BOM 일괄 강조, 미확인 부족 요약을 수정하고 검증 후 main 병합·Mac 재시작이 승인됐다. 아래 DEC-H42의 병합 보류/비용/결함은 당시 기록이다. 최종 병합 상태는 GitHub PR #5를 확인한다.
+
+
 > 최신 평가(2026-11-10): DEC-H42의 [정량·정성 기준선](SERVICE-EVALUATION-20261110.md)을 추가했다. 직접 조회24사례/120회와 실제 기능 선택14회·복구6회는 기대 계약과 일치했고, 개발 협력 AI 리뷰8사례는 평균3.925/5이며 요약 확인 범위 과장1건과 설명 개선점이 남았다. 전체 CQ20/110·독립 사람 gold·B0~B5·10만 객체·업무 효과 완료가 아니다. 기존 두 앱/DB는 유지하며 같은 US$10 예산의 확정액0.01214·기존예약0.016414를 보존한다. 원시 평가 자료는 비공개, 공통 측정기와 집계만 PR #5에 반영하며 main 병합은 하지 않는다.
 
 > 최신 인계(2026-11-10): PR #4는 main `d61327b`에 병합하고 Mac 확인을 마쳤다([검토 기록](SERVICE-PR4-REVIEW-20261110.md), [병합·재시작 결과](https://github.com/Ontologics-2Zo/ontologics-chat/pull/4)). 후속 `codex/digital-twin-db` / PR #5 작업은 DEC-H39의 [디지털 트윈 조회 연결](SERVICE-DIGITAL-TWIN-20261110.md), DEC-H40의 [BOM 등록 전 별도 시작 시연](SERVICE-BOM-START-20261110.md), DEC-H41의 [원형 답변 구성·순차 표시](SERVICE-ANSWER-PRESENTATION-20261110.md)다. 기존 `127.0.0.1:8870`의 v4 DB를 보존하고, `localhost:8872`의 독립 영속 INITIAL v1에서 BOM 등록부터 시작한다. 새 시연은 Agent disabled·결정적 조회이며 예산을 복제하지 않는다. 순차 문자는 서버가 확정한 답변의 표시 효과이며 실제 provider streaming으로 보고하지 않는다. 실제 작업 트리·브랜치를 확인해 기존 변경·DB·원본·runtime·예산을 보존한다. 아래 이전 브랜치 설명과 수치는 당시 증거이며 최신 상태로 이월하지 않는다.

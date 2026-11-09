@@ -1,5 +1,8 @@
 # 로컬 실행과 Codex Cloud 환경 안내
 
+> 최신 실행 기준: DEC-H43과 [PR #5 검토 기록](SERVICE-PR5-REVIEW-20261110.md). 최신 main을 확인한 뒤 기존 runtime/DB/예산을 그대로 재사용하며 import/reset 없이 재시작한다. 로컬 질문·답변 관측은 별도 실행 override에서 `ONTO_LANGFUSE_CONTENT_ENABLED=true`, `ONTO_OBSERVABILITY_PURPOSE=interactive`로 활성화한다. 평가 host는 `evaluation` 또는 content=false를 사용한다. 기존 `.env`를 예시 파일로 덮어쓰지 않는다.
+
+
 > 최신 인계(2026-11-10): DEC-H38은 PR #4 최종 검토·검증 후 main 병합과 기존 설정의 Mac 앱 확인 범위다. [검토 기록](SERVICE-PR4-REVIEW-20261110.md)과 [GitHub PR #4](https://github.com/Ontologics-2Zo/ontologics-chat/pull/4)의 실제 병합 결과를 먼저 확인한다. 병합 완료 후 main으로 이어가며 `.env`·DB runtime·예산 이력을 보존한다. 아래 이전 실행 수치는 당시 증거다.
 
 
@@ -34,9 +37,7 @@ git log -1 --oneline
 
 PR #4가 병합됐다면 기존 변경을 보존한 상태에서 main과 origin/main을 대조하고 fast-forward 가능한 경우에만 갱신한다. 병합 전이라면 PR의 실제 head 브랜치에서 이어간다. 과거 `codex/agent-foundation`으로 돌아가거나 기존 DB를 초기화하지 않는다. 앱 재시작은 현재 runtime·환경 파일과 영속 예산을 그대로 사용한다.
 
-```bash
-git switch codex/agent-foundation
-```
+과거 브랜치로 전환하는 명령은 현재 재시작 절차에 포함하지 않는다.
 
 이하 명령은 선택한 저장소 루트에서 실행한다.
 

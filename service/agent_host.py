@@ -96,7 +96,12 @@ def build_agent_host(db, identity, gateway, context_provider, settings, *, recei
     exporter = (LangfuseExporter(LangfuseConfig(settings.langfuse_base_url,
                   settings.langfuse_public_key, settings.langfuse_secret_key))
                 if settings.langfuse_enabled else None)
-    observer = MetadataObserver(exporter, receipt_path=receipt_path)
+    observer = MetadataObserver(exporter, receipt_path=receipt_path,
+        content_enabled=settings.langfuse_enabled and settings.langfuse_content_enabled,
+        purpose=settings.observability_purpose,
+        redact_values=(settings.openrouter_api_key, settings.openai_api_key,
+                       settings.langsmith_api_key, settings.langfuse_public_key,
+                       settings.langfuse_secret_key))
     options = {"budget_id": settings.budget_id}
     if settings.mode == "live":
         if not settings.openrouter_api_key:

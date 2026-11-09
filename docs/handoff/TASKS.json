@@ -2744,5 +2744,23 @@
       "latest_connection_record": "docs/handoff/SERVICE-MODEL-20261109.md",
       "latest_connection_decision": "DEC-H30"
     }
-  ]
+  ],
+  "pr5_review_20261110": {
+    "decision": "DEC-H43",
+    "record": "docs/handoff/SERVICE-PR5-REVIEW-20261110.md",
+    "status": "VERIFIED",
+    "parent_complete": false,
+    "merge_authorized_after_validation": true,
+    "preserve_original_files_and_database": true,
+    "local_observability_content": "bounded explicit opt-in; evaluation disabled; no backfill",
+    "graph": "stable connected network; all nodes/relations retained; BOM batch replay",
+    "query_summary_regression": "24/24 PASS; unknown shortage not claimed confirmed",
+    "verification_scope": "pre-merge code and isolated validation; actual merge status is GitHub PR #5",
+    "python_tests_pass": 413,
+    "python_skipped": 0,
+    "node_tests_pass": 154,
+    "browser_assertions_pass": 17,
+    "runner_controls_pass": 16,
+    "langfuse_fake_readback": "6 observations with real stored IO and hierarchy; paid calls 0"
+  }
 }

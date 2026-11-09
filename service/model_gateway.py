@@ -25,6 +25,8 @@ from service.contracts import Contract, canonical_bytes, content_hash
 from service.errors import ServiceError
 from service.gateway import ToolContext
 from service.identity import Principal
+from service.observability import (ModelObservationInput, ModelObservationOutput,
+                                   ObservedUsage, RouteFeatures)
 
 
 RouteFeature = Literal["fulfillment", "production", "materials", "inventory", "delivery", "ontology", "unknown"]
@@ -388,7 +390,7 @@ class ModelGateway:
         if budget is not None:
             budget.check()
 
-    def _observe(self, context, attempt, usage, *, status, error_code, started_at):
+    def _observe(self, request, context, attempt, usage, *, status, error_code, started_at):
         if self._observer is None:
             return
         metadata = {"attempt_id": attempt["attempt_id"], "execution_mode": attempt["execution_mode"],
@@ -401,10 +403,18 @@ class ModelGateway:
                     "cost_usd": str(usage.cost_usd) if usage.cost_usd is not None else None,
                     "usage_source": usage.source, "usage_unknown_reason": usage.unknown_reason, "error_code": error_code}
         try:
+            accepted = attempt.get("result") if status == "completed" else None
             self._observer.emit_span(execution_id=context.execution_id, span_id=attempt["attempt_id"],
                 parent_span_id=context.parent_span_id, name="model.route", kind="generation",
                 status="unknown" if status == "outcome_unknown" else status,
-                metadata=metadata, started_at=started_at, ended_at=datetime.now(timezone.utc))
+                metadata=metadata, started_at=started_at, ended_at=datetime.now(timezone.utc),
+                input=ModelObservationInput(features=RouteFeatures.from_features(request.features),
+                    execution_mode=attempt["execution_mode"], profile_id=request.profile_id,
+                    max_output_tokens=request.max_output_tokens, retry=request.retry_of is not None),
+                output=ModelObservationOutput(status=status,
+                    capability=accepted.get("capability") if accepted else None,
+                    dispatched=attempt.get("dispatched_at") is not None,
+                    usage=ObservedUsage(**usage.model_dump()), error_code=error_code))
         except Exception:
             self.observation_failures += 1
 
@@ -465,8 +475,11 @@ class ModelGateway:
             if budget is not None:
                 budget.reserve(context.execution_id)
         except ServiceError as error:
-            self._account("finish", attempt["attempt_id"], status="failed", usage=ModelUsage().model_dump(),
-                               error_code=error.code, not_dispatched=True)
+            usage = ModelUsage()
+            finished = self._account("finish", attempt["attempt_id"], status="failed", usage=usage.model_dump(),
+                                     error_code=error.code, not_dispatched=True)
+            self._observe(request, context, finished, usage, status=finished["status"],
+                          error_code=finished["error_code"], started_at=started_at)
             raise ServiceError(error.code, error.status_code) from None
         self._account("mark_dispatched", attempt["attempt_id"])
         reply = None
@@ -503,9 +516,9 @@ class ModelGateway:
                 actual_provider=reply.actual_provider if isinstance(reply, ProviderReply) else None,
                 actual_model=reply.actual_model if isinstance(reply, ProviderReply) else None,
                 provider_request_id=reply.provider_request_id if isinstance(reply, ProviderReply) else None)
-            self._observe(context, finished, usage, status=finished["status"], error_code=finished["error_code"], started_at=started_at)
+            self._observe(request, context, finished, usage, status=finished["status"], error_code=finished["error_code"], started_at=started_at)
             raise ServiceError(finished["error_code"] or code, 503) from None
-        self._observe(context, finished, reply.usage, status=finished["status"], error_code=finished["error_code"], started_at=started_at)
+        self._observe(request, context, finished, reply.usage, status=finished["status"], error_code=finished["error_code"], started_at=started_at)
         if finished["status"] != "completed":
             raise ServiceError(finished["error_code"] or "MODEL_ATTEMPT_FAILED", 409)
         return result

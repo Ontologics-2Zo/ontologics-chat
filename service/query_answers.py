@@ -336,7 +336,11 @@ def answer_query(question, view, ontology, *, context_entity_id=None):
             item("시연 일정", "제안 가정은 아직 적용하지 않음", "문서의 일정 제안은 선택한 프로필·단위·시작점·달력과 함께 명시해야 합니다. 미래 시연 결말을 현재 원장으로 사용하지 않습니다.", "proposed_demo_assumption"),
         ], "UNKNOWN"))
         answers.insert(0, "현재 근거로는 남은 물량의 납기 내 고객 도착 가능 여부를 확정할 수 없습니다.")
-        status, conclusion = "PARTIAL", "현재 수량·조건부 부족은 확인 · 실제 납기는 판단 보류"
+        status = "PARTIAL"
+        scoped_materials = [row for row in req["items"] if not selected or row["item_id"] in selected]
+        known_shortages = [row for row in scoped_materials if row.get("shortage_qty") is not None]
+        conclusion = ("현재 수량·계산 가능한 품목의 부족 확인 · 실제 납기는 판단 보류"
+                      if known_shortages else "현재 수량 확인 · 자재 소요·부족 미확인 · 납기 판단 보류")
         if req["state"] == "BLOCKED_BOM" and req["bom_id"] is None:
             conclusion = "현재 수량 확인 · BOM 등록 후 소요·부족 계산 · 납기 판단 보류"
             answers.insert(1, "BOM 원본을 등록하고 검토·승인·원장 반영을 마친 뒤 소요·부족을 계산해야 합니다.")

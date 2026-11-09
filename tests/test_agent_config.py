@@ -24,6 +24,17 @@ class AgentConfigTests(unittest.TestCase):
         self.assertEqual(result.prior_spend_usd, Decimal('1.20'))
         self.assertEqual(result.mode, 'fake')
 
+    def test_local_content_is_explicit_and_evaluation_purpose_disables_it(self):
+        self.assertFalse(load_agent_settings().langfuse_content_enabled)
+        values = {"ONTO_LANGFUSE_ENABLED": "true", "LANGFUSE_PUBLIC_KEY": "synthetic-public",
+                  "LANGFUSE_SECRET_KEY": "synthetic-secret", "ONTO_LANGFUSE_CONTENT_ENABLED": "true"}
+        self.assertTrue(load_agent_settings(environ=values).public()["local_observability_content_enabled"])
+        evaluation = load_agent_settings(environ={**values, "ONTO_OBSERVABILITY_PURPOSE": "evaluation"})
+        self.assertFalse(evaluation.public()["local_observability_content_enabled"])
+        for overrides in ({"ONTO_LANGFUSE_CONTENT_ENABLED": "yes"}, {"ONTO_OBSERVABILITY_PURPOSE": "automatic"}):
+            with self.subTest(overrides=overrides), self.assertRaises(ServiceError):
+                load_agent_settings(environ=overrides)
+
     def test_invalid_spend_model_mode_and_remote_telemetry_rejected(self):
         for values in ({"ONTO_MODEL_PRIOR_SPEND_USD": "NaN"},
                        {"ONTO_MODEL_PRIOR_SPEND_USD": "-1"},

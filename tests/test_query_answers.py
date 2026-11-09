@@ -148,11 +148,38 @@ class QueryAnswerTests(unittest.TestCase):
         self.assertEqual(result["ledger_mutations"], 0)
         self.assertEqual(self.view, before)
 
-    def test_registered_bom_delivery_keeps_its_existing_conclusion(self):
+    def test_registered_bom_delivery_limits_conclusion_to_calculated_items(self):
         result = self.answer("남은 17대 납기 안에 도착할 수 있어?")
-        self.assertEqual(result["conclusion"], "현재 수량·조건부 부족은 확인 · 실제 납기는 판단 보류")
+        self.assertEqual(result["conclusion"], "현재 수량·계산 가능한 품목의 부족 확인 · 실제 납기는 판단 보류")
         self.assertNotIn("BOM 원본을 등록하고 검토·승인·원장 반영을 마친 뒤", result["answer"])
         self.assertEqual(result["calculation"]["material_requirements"]["bom_id"], "test-bom")
+
+    def test_registered_bom_with_no_known_shortages_does_not_claim_confirmation(self):
+        # Registration does not imply that any item application is resolved.
+        self.view["material_requirements"]["items"] = []
+        self.view["material_requirements"].update(applicable_count=0, unresolved_count=2,
+                                                  unknown_shortage_count=2)
+        before = deepcopy(self.view)
+        result = self.answer("남은 17대 납기 안에 도착할 수 있어?")
+        self.assertEqual(result["conclusion"], "현재 수량 확인 · 자재 소요·부족 미확인 · 납기 판단 보류")
+        self.assertEqual(result["calculation"]["actual_delivery_feasibility"], "UNKNOWN")
+        self.assertIn("17대", result["answer"])
+        self.assertEqual(self.view, before)
+
+    def test_mapped_bom_without_stock_evidence_still_has_unknown_shortage_summary(self):
+        self.view["inventory"] = []
+        result = self.answer("수율 90%로 자재 부족과 납기 가능성을 알려줘")
+        self.assertTrue(result["calculation"]["material_requirements"]["items"])
+        self.assertIsNone(result["calculation"]["material_requirements"]["items"][0]["shortage_qty"])
+        self.assertIn("소요·부족 미확인", result["conclusion"])
+        self.assertEqual(result["status"], "PARTIAL")
+
+    def test_calculated_zero_shortage_is_known_but_delivery_remains_unknown(self):
+        self.view["material_requirements"]["items"][0]["shortage_qty"] = "0"
+        result = self.answer("남은 17대 납기 안에 도착할 수 있어?")
+        self.assertIn("계산 가능한 품목의 부족 확인", result["conclusion"])
+        self.assertEqual(result["calculation"]["material_requirements"]["items"][0]["shortage_qty"], "0")
+        self.assertEqual(result["calculation"]["actual_delivery_feasibility"], "UNKNOWN")
 
     def test_missing_inventory_remains_unknown_not_zero(self):
         self.view["inventory"] = []

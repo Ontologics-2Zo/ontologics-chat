@@ -6,10 +6,14 @@ from tempfile import TemporaryDirectory
 import unittest
 
 import httpx
+from pydantic import ValidationError
 
 from service.observability import (LangfuseConfig, LangfuseExporter,
                                    MetadataObserver, ObservationExportError,
                                    metadata_only, otel_span_id, trace_id)
+from service.observability import (EXECUTION_ROOT_SPAN, ModelObservationInput,
+    ModelObservationOutput, ObservedUsage, RouteFeatures, WorkflowObservationInput,
+    WorkflowObservationOutput, safe_io)
 
 
 class RecordingExporter:
@@ -156,6 +160,119 @@ class ObservabilityTests(unittest.TestCase):
                                   "name": "workflow.node", "status": "completed", "metadata": "PRIVATE"}))
         self.assertNotIn("PRIVATE", json.dumps(observer.receipts.records()))
         observer.close()
+
+    def workflow_input(self, stage="execution", **updates):
+        return WorkflowObservationInput(stage=stage, requested_capability=None,
+            ledger_version=3, projection_version=3, **updates)
+
+    def workflow_output(self, stage="execution", **updates):
+        values = dict(stage=stage, status="completed", capability="material_analysis",
+                      tool_calls=1, segment_count=2, result_status="PARTIAL")
+        values.update(updates)
+        return WorkflowObservationOutput(**values)
+
+    def test_model_io_contains_actual_features_capability_and_nullable_usage(self):
+        observer = MetadataObserver(content_enabled=True)
+        self.addCleanup(observer.close)
+        model_input = ModelObservationInput(features=RouteFeatures.from_features(("materials", "inventory")),
+            execution_mode="fake", max_output_tokens=128, retry=False)
+        model_output = ModelObservationOutput(status="completed", capability="material_analysis",
+            dispatched=True, usage=ObservedUsage(source="fake", unknown_reason="FAKE_NOT_BILLABLE"))
+        self.assertTrue(self.emit(observer, input=model_input, output=model_output))
+        span = observer.receipts.records()[0]["span"]
+        self.assertEqual({k for k, v in span["input"]["features"].items() if v}, {"materials", "inventory"})
+        self.assertEqual(span["output"]["capability"], "material_analysis")
+        self.assertIsNone(span["output"]["usage"]["cost_usd"])
+        self.assertIsNone(span["output"]["usage"]["total_tokens"])
+        self.assertEqual(span["input"]["content_scope"], "structured_only")
+
+    def test_untyped_extra_nested_and_forged_io_are_rejected_not_serialized(self):
+        observer = MetadataObserver(content_enabled=True)
+        self.addCleanup(observer.close)
+        self.assertFalse(self.emit(observer, input={"question": "PRIVATE"}))
+        with self.assertRaises(ValidationError):
+            WorkflowObservationInput(stage="execution", requested_capability=None,
+                ledger_version=1, projection_version=1, source_document="PRIVATE")
+        with self.assertRaises(ValueError):
+            RouteFeatures.from_features(("PRIVATE",))
+        forged = self.workflow_input().model_copy(update={"ledger_version": True})
+        self.assertFalse(self.emit(observer, input=forged))
+        self.assertEqual(observer.receipts.records(), [])
+
+    def test_content_default_off_and_evaluation_override_even_explicit_true(self):
+        for options in ({}, {"content_enabled": True, "purpose": "evaluation"}):
+            observer = MetadataObserver(**options)
+            try:
+                self.assertTrue(self.emit(observer, input=self.workflow_input(question="PRIVATE_QUESTION"),
+                    output=self.workflow_output(answer="PRIVATE_ANSWER", conclusion="PRIVATE_GOLD")))
+                encoded = json.dumps(observer.receipts.records())
+                self.assertNotIn("PRIVATE_", encoded)
+                self.assertIn("structured_only", encoded)
+            finally:
+                observer.close()
+
+    def test_authorized_workflow_content_redacts_credentials_paths_and_bounds_length(self):
+        observer = MetadataObserver(content_enabled=True, redact_values=("synthetic-opaque-secret",))
+        self.addCleanup(observer.close)
+        question = "가용 재고? sk-test123456 api_key=hidden Bearer private-token /private/folder synthetic-opaque-secret"
+        self.assertTrue(self.emit(observer, input=self.workflow_input(question=question),
+            output=self.workflow_output(answer="확정 답변 " + "가" * 7000)))
+        span = observer.receipts.records()[0]["span"]
+        self.assertTrue(span["input"]["question"].startswith("가용 재고?"))
+        for secret in ("sk-test123456", "hidden", "private-token", "/private/folder", "synthetic-opaque-secret"):
+            self.assertNotIn(secret, json.dumps(span))
+        self.assertTrue(span["output"]["answer"].endswith("[TRUNCATED]"))
+        self.assertLessEqual(len(span["output"]["answer"]), 6020)
+
+    def test_only_terminal_root_sets_legacy_trace_io_child_cannot_overwrite(self):
+        bodies = []
+        def handler(request):
+            bodies.append(json.loads(request.content)["resourceSpans"][0]["scopeSpans"][0]["spans"][0])
+            return httpx.Response(200, json={})
+        observer = MetadataObserver(LangfuseExporter(LangfuseConfig("http://127.0.0.1:53000", "p", "s"),
+                                     transport=httpx.MockTransport(handler)), content_enabled=True)
+        self.addCleanup(observer.close)
+        self.assertTrue(self.emit(observer, "segment-1", EXECUTION_ROOT_SPAN, kind="chain", status="waiting",
+            input=self.workflow_input("segment", question="업무 질문"),
+            output=self.workflow_output("segment", status="waiting", clarification="확인해 주세요")))
+        self.assertTrue(self.emit(observer, EXECUTION_ROOT_SPAN, None, kind="agent", terminal_summary=True,
+            input=self.workflow_input(question="명확해진 질문"), output=self.workflow_output(answer="확정 응답")))
+        self.assertFalse(self.emit(observer, "segment-2", EXECUTION_ROOT_SPAN, terminal_summary=True,
+            input=self.workflow_input(), output=self.workflow_output()))
+        waiting, root = [{a["key"]: a["value"]["stringValue"] for a in body["attributes"]} for body in bodies]
+        self.assertNotIn("langfuse.trace.input", waiting)
+        self.assertEqual(json.loads(waiting["langfuse.observation.output"])["status"], "waiting")
+        self.assertEqual(root["langfuse.trace.input"], root["langfuse.observation.input"])
+        self.assertEqual(json.loads(root["langfuse.trace.output"])["answer"], "확정 응답")
+        self.assertEqual(bodies[0]["parentSpanId"], bodies[1]["spanId"])
+
+    def test_content_redacts_prefixed_assignments_generic_credential_uri_and_jwt(self):
+        sensitive = ["OTHER_API_KEY=opaque-secret-one", '"ONTO_OTHER_SECRET_KEY":"opaque-secret-two"',
+                     "DATABASE_URL=postgresql://synthetic:private-pass@localhost:1/db",
+                     "bolt://synthetic:private-pass@localhost:2", "redis://:private-pass@localhost:3",
+                     "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJwcml2YXRlIn0.synthetic_signature"]
+        value = safe_io(self.workflow_input(question="허용 질문 " + " ".join(sensitive)), content_enabled=True)
+        self.assertTrue(value["question"].startswith("허용 질문"))
+        for secret in ("opaque-secret-one", "opaque-secret-two", "private-pass", "synthetic_signature"):
+            self.assertNotIn(secret, value["question"])
+
+    def test_terminal_root_is_immutable_and_unknown_cost_is_not_zero(self):
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "receipts.sqlite3"
+            observer = MetadataObserver(receipt_path=path)
+            self.assertTrue(self.emit(observer, EXECUTION_ROOT_SPAN, None, terminal_summary=True,
+                input=self.workflow_input(), output=self.workflow_output()))
+            observer.close()
+            observer = MetadataObserver(receipt_path=path)
+            self.assertFalse(self.emit(observer, EXECUTION_ROOT_SPAN, None, terminal_summary=True,
+                input=self.workflow_input(), output=self.workflow_output(segment_count=3)))
+            self.assertEqual(observer.receipts.records()[0]["span"]["output"]["segment_count"], 2)
+            observer.close()
+        unknown = ModelObservationOutput(status="outcome_unknown", capability=None, dispatched=True,
+            error_code="MODEL_PROVIDER_TIMEOUT", usage=ObservedUsage(source="unavailable", unknown_reason="USAGE_NOT_RETURNED"))
+        self.assertIsNone(safe_io(unknown)["usage"]["cost_usd"])
+        exact = ObservedUsage(cost_usd=Decimal("0.0000000000000000000123456789"), source="provider")
+        self.assertEqual(Decimal(safe_io(unknown.model_copy(update={"usage": exact}))["usage"]["cost_usd"]), exact.cost_usd)
 
 
 if __name__ == "__main__":

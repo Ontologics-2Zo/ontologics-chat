@@ -23,6 +23,8 @@ class AgentSettings:
     langfuse_secret_key: str = field(default="", repr=False)
     langfuse_base_url: str = "http://127.0.0.1:53000"
     langfuse_enabled: bool = False
+    langfuse_content_enabled: bool = False
+    observability_purpose: str = "interactive"
     prior_spend_usd: Decimal | None = None
     budget_id: str = "dec-h18-original"
     budget_authorization_ref: str | None = None
@@ -33,7 +35,9 @@ class AgentSettings:
                 "provider_key_configured": bool(self.openrouter_api_key),
                 "prior_spend_known": self.prior_spend_usd is not None,
                 "budget_id": self.budget_id,
-                "local_observability_enabled": self.langfuse_enabled}
+                "local_observability_enabled": self.langfuse_enabled,
+                "local_observability_content_enabled": self.langfuse_enabled and self.langfuse_content_enabled and self.observability_purpose == "interactive",
+                "observability_purpose": self.observability_purpose}
 
 
 def load_agent_settings(path: str | Path | None = None, *, environ: Mapping[str, str] | None = None):
@@ -73,6 +77,10 @@ def load_agent_settings(path: str | Path | None = None, *, environ: Mapping[str,
     enabled = value("ONTO_LANGFUSE_ENABLED", "false")
     if enabled not in {"true", "false"}:
         raise ServiceError("INVALID_OBSERVABILITY_SETTING", 503)
+    content_enabled = value("ONTO_LANGFUSE_CONTENT_ENABLED", "false")
+    purpose = value("ONTO_OBSERVABILITY_PURPOSE", "interactive")
+    if content_enabled not in {"true", "false"} or purpose not in {"interactive", "evaluation"}:
+        raise ServiceError("INVALID_OBSERVABILITY_SETTING", 503)
     url = value("LANGFUSE_BASE_URL", value("LANGFUSE_HOST", "http://127.0.0.1:53000"))
     try:
         parsed = urlsplit(url)
@@ -95,6 +103,7 @@ def load_agent_settings(path: str | Path | None = None, *, environ: Mapping[str,
         langfuse_public_key=value("LANGFUSE_PUBLIC_KEY"),
         langfuse_secret_key=value("LANGFUSE_SECRET_KEY"),
         langfuse_base_url=url.rstrip("/"), langfuse_enabled=enabled == "true",
+        langfuse_content_enabled=content_enabled == "true", observability_purpose=purpose,
         prior_spend_usd=spend, budget_id=budget_id, budget_authorization_ref=authorization)
     if result.langfuse_enabled and not (result.langfuse_public_key and result.langfuse_secret_key):
         raise ServiceError("LANGFUSE_KEYS_REQUIRED", 503)
