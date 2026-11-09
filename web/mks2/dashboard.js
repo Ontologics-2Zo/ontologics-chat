@@ -130,6 +130,46 @@ export function renderMaterialTableRows(items, { planned = false, targetQty } = 
     <td>${esc(labels[item[statusKey]] || '판정 보류')}<small>${esc(item.conditional ? '시연 입력 · 기술검수 대기' : '적용 판단 근거 확인')}</small><small>원문 ${num(item.row_ids?.length)}행 합산</small>${item.issues?.length ? '<small>입력 근거 확인 필요</small>' : ''}</td></tr>`).join('');
 }
 
+function materialDecimal(value) {
+  const text = typeof value === 'number' && Number.isFinite(value) ? formatQuantity(value).replaceAll(',', '') : value;
+  if (typeof text !== 'string' || text.length > 256 || !/^\d+(?:\.\d+)?$/.test(text)) return null;
+  const [whole, fraction = ''] = text.split('.');
+  return { value: BigInt(whole + fraction), scale: 10n ** BigInt(fraction.length) };
+}
+
+/** Display-only ratio. Server statuses and exact shortages remain authoritative. */
+export function materialCoverage(item, { planned = false } = {}) {
+  const required = materialDecimal(item[planned ? 'planned_required_qty' : 'required_qty']);
+  const available = materialDecimal(item.available_qty);
+  const shortage = materialDecimal(item[planned ? 'planned_shortage_qty' : 'shortage_qty']);
+  const status = item[planned ? 'planned_quantity_status' : 'quantity_status'];
+  const unknown = { state: 'unknown', width: null, label: '미확인' };
+  if (!required || !available || !shortage || !['COVERED', 'SHORTAGE'].includes(status)) return unknown;
+  if (required.value === 0n) return status === 'COVERED' && shortage.value === 0n
+    ? { state: 'not_required', width: null, label: '소요 없음' } : unknown;
+  const stock = available.value * required.scale, need = required.value * available.scale;
+  if ((status === 'SHORTAGE') !== (stock < need) || (status === 'SHORTAGE') !== (shortage.value > 0n)) return unknown;
+  const points = stock * 10000n / need;
+  const width = Number(points > 10000n ? 10000n : points) / 100;
+  const percent = stock * 100n / need;
+  const label = stock === 0n ? '0%' : percent === 0n ? '1% 미만'
+    : percent > 999n ? '999% 초과' : `${percent}%`;
+  return { state: status === 'SHORTAGE' ? 'shortage' : 'covered', width, label };
+}
+
+export function renderMaterialCoverage(items, { planned = false } = {}) {
+  if (!items.length) return '';
+  const requiredKey = planned ? 'planned_required_qty' : 'required_qty';
+  const shortageKey = planned ? 'planned_shortage_qty' : 'shortage_qty';
+  const rows = items.map(item => {
+    const coverage = materialCoverage(item, { planned });
+    const ratio = `${num(item.available_qty)}/${num(item[requiredKey])}`;
+    const caption = `가용 ${num(item.available_qty)} / 필요 ${num(item[requiredKey])} ${item.unit_label || item.unit || '단위 미확인'} · ${coverage.state === 'shortage' ? `부족 ${num(item[shortageKey])}` : coverage.label}${item.conditional ? ' · 시연 적용 가정' : ''}`;
+    return `<div class="mk-material-row" data-material-item="${esc(item.item_id)}" data-coverage-state="${coverage.state}"><div class="mk-material-label">${item.item_entity_id ? `<button type="button" class="mk-link" data-graph="${esc(item.item_entity_id)}">${esc(item.item_id)}</button>` : esc(item.item_id)}<small>${esc(item.item_name || '품목명 미확인')}</small></div><div class="mk-material-track ${coverage.state}" role="img" tabindex="0" aria-label="${esc(caption)}" title="${esc(caption)}">${coverage.width === null ? '' : `<i style="width:${coverage.width}%"></i>`}<span class="mk-material-tick"></span></div><div class="mk-material-value"><b>${coverage.state === 'shortage' ? `−${num(item[shortageKey])}` : esc(coverage.label)}</b><span>${ratio}</span></div></div>`;
+  }).join('');
+  return `<div class="mk-material-bars" aria-label="품목별 자재 충족률">${rows}</div><div class="mk-material-axis" aria-hidden="true"><span></span><div><span>0%</span><span>50%</span><span>100% = 필요량</span></div><span></span></div>`;
+}
+
 export function mountDashboard(container, { snapshot, onSelect = () => {}, onAsk = () => {}, onGraph = () => {}, api, getIdentity, onPosted, onRefresh }) {
   const summary = snapshot.summary || {}, meta = snapshot.meta || {};
   const previousEvents = eventCursors.get(container);
@@ -183,19 +223,25 @@ export function mountDashboard(container, { snapshot, onSelect = () => {}, onAsk
   function materialContent() {
     if (!requirements.bom_id) return `<div class="mk-empty"><b>${blockedBom ? 'BOM이 없어 계산할 수 없습니다' : '승인된 BOM 근거가 필요합니다'}</b><p>실제 원본의 등록·검토·승인·반영 후 같은 버전으로 소요량을 조회합니다. 미확인 수량은 0으로 계산하지 않습니다.</p>${button('BOM 원본 등록', 'bom', true)}</div>`;
     const planned = basis === 'planned', basisData = requirements.basis || {};
-    const qtyKey = planned ? 'planned_required_qty' : 'required_qty', shortageKey = planned ? 'planned_shortage_qty' : 'shortage_qty';
+    const qtyKey = planned ? 'planned_required_qty' : 'required_qty';
     const targetQty = planned ? basisData.planned_input_qty : basisData.production_remaining_qty;
     const label = planned ? `계획 투입 ${num(basisData.planned_input_qty)}대 · 수율 ${esc(basisData.plan_yield)} 가정` : `추가 양품 목표 ${num(basisData.production_remaining_qty)}대 기준`;
     const policy = requirements.calculation_policy;
     const issueLabel = value => ({ UNRESOLVED: '적용 미확인', MAPPING_UNKNOWN: '품목 매핑 미확인', INVENTORY_UNKNOWN: '재고 미확인', APPLICATION_UNREVIEWED: '적용 미검수', ITEM_MAPPING_UNCONFIRMED: '품목 매핑 미확인', QUANTITY_UNCONFIRMED: '수량 미확인', UNIT_UNCONFIRMED: '단위 미확인', INVENTORY_UNIT_UNCONFIRMED: '재고 단위 미확인', INVENTORY_COVERAGE_AMBIGUOUS: '재고 범위 대조 필요', CALCULATED: '계산됨', APPLICABLE: '적용 가정', UNIT_UNKNOWN: '단위 미확인', NOT_MOUNTED: '비실장', SETTING: '설정', UNREVIEWED: '미검수', DEMO_ASSUMPTION: '시연 가정' }[value] || value);
-    return `<p class="mk-small-note"><b>전체 BOM 중 일부 품목 기준 · ${num(requirementItems.length)}개 품목</b> · ${label}. 적용 수량·품목 연결은 시연 가정, 재고는 ${esc(inventoryBasis)} 기준입니다. 원장 v${num(version)} / BOM 문서 v${num(requirements.bom_version)}.</p>
+    const chart = renderMaterialCoverage(requirementItems, { planned });
+    const assumption = requirements.has_demo_assumptions || requirementItems.some(item => item.conditional);
+    return `${chart || `<div class="mk-empty" data-material-pending><b>품목 연결·수량 검수가 필요합니다</b><p>계산 대상 ${num(requirementItems.length)}개 품목 · 원문 ${num(requirementRows.length)}행 중 적용 미확인 ${num(requirements.unresolved_count)}행</p>${button('BOM 원문·검수 근거', 'bom-evidence')}</div>`}
+      <p class="mk-small-note">${planned ? `${label} · 양품 수량 보장 아님` : `남은 생산 ${num(targetQty)}대 × 1대당 소요량`}${chart ? ' · 100% 넘는 막대는 100%에서 자름' : ''}</p>
+      <p class="mk-small-note mk-material-basis">${assumption ? tag('시연 적용 가정', 'warn') : ''}${tag(`재고 · ${inventoryBasis}`, 'info')}<span>적용 미확인 ${num(requirements.unresolved_count)}행 · 제조 가능성 미확인</span></p>
+      <details class="mk-material-details"><summary>소요·재고 상세 · ${num(requirementItems.length)}개 품목</summary>
+      <p class="mk-small-note"><b>전체 BOM 중 일부 품목 기준 · ${num(requirementItems.length)}개 품목</b> · ${label}. ${assumption ? '적용 수량·품목 연결은 시연 가정, ' : ''}재고는 ${esc(inventoryBasis)} 기준입니다. 원장 v${num(version)} / BOM 문서 v${num(requirements.bom_version)}.</p>
       <p class="mk-small-note">실제 BOM 원문 전체 ${num(requirementRows.length)}행은 아래 상세에 보존하며 이 계산을 전체 BOM 기술 검수·제조 가능 확정으로 보지 않습니다. ${planned ? '계획 수율은 실적이나 양품 수량 보장이 아닙니다.' : ''}</p>
       <p class="mk-small-note">품목 코드는 부품의 식별자이고, EA는 낱개를 세는 단위입니다. 아래 판정은 현재 입력값의 수량 비교이며 실제 제조 가능 판정과 구분합니다.</p>
       <div class="mk-table-scroll"><table class="mk-round-table" data-register="material-items"><thead><tr><th>품목 / 단위</th><th>대당 수량</th><th>합산 소요</th><th>가용</th><th>부족</th><th>수량 판정 / 검수</th></tr></thead><tbody>${renderMaterialTableRows(requirementItems, { planned, targetQty }) || '<tr><td colspan="6">계산 대상 품목이 아직 연결되지 않았습니다. 원문 상세에서 검수 근거를 확인할 수 있습니다.</td></tr>'}</tbody></table></div>
-      ${policy ? `<details class="mk-material-details"><summary>${esc(policy.label)} · 산식과 판정 기준</summary><p class="mk-small-note">현재 서비스에 적용된 계산 기준입니다. 사내 규정 승인과 실제 BOM·현장 재고 검수는 별도입니다.</p><ol class="mk-small-note">${(policy.rules || []).map(rule => `<li>${esc(rule.text)}</li>`).join('')}</ol><p class="mk-small-note">기준 버전: ${esc(policy.id)}</p></details>` : ''}
-      <details class="mk-material-details"><summary>원문 전체 ${num(requirementRows.length)}행 · 적용 검토와 계산 제외 근거 보기</summary>      <div class="mk-bom-stats"><div><b>${num(requirements.row_count)}</b><span>원문 전체 행</span></div><div><b>${num(requirements.applicable_count)}</b><span>적용 판단 행</span></div><div><b>${num(requirements.unresolved_count)}</b><span>적용 미확인 행</span></div><div><b>${num(requirements.unknown_shortage_count)}</b><span>부족량 미확인</span></div></div><div class="mk-table-scroll"><table class="mk-round-table" data-register="material-rows"><thead><tr><th>원문 근거</th><th>부품 위치</th><th>상태</th><th>대당 수량</th><th>검토 기준 소요</th><th>원문 × ${num(basisData.production_remaining_qty)}</th><th>원문 × ${num(basisData.planned_input_qty)}</th><th>미확인 / 가정</th></tr></thead><tbody>${requirementRows.map(row => `<tr><td><button type="button" class="mk-link" data-bom-evidence="${esc(row.row_id)}">${esc(row.locator || row.row_id)}</button></td><td>${esc((row.designators || []).join(', '))}</td><td>${esc(issueLabel(row.decision?.application_status || row.calculation_state))}</td><td>${num(row.decision?.quantity_per_unit)}</td><td>${num(row[qtyKey])}</td><td>${num(row.source_quantity_times_target)}</td><td>${num(row.source_quantity_times_plan)}</td><td>${esc(issueLabel(row.decision?.review_basis || 'UNREVIEWED'))}<small>${esc((row.issues || []).map(issueLabel).join(' · '))}</small></td></tr>`).join('')}</tbody></table></div></details>
-      <p class="mk-small-note">원문 수량 단순 환산 · 단위/실장 검수 전. 원문의 수량 × 목표/계획 투입 수량이며 적용 소요·부족량과 구분합니다.</p>
-      <p class="mk-small-note">같은 품목을 사용하는 BOM 행은 먼저 합산하고 재고를 한 번만 차감합니다. 검사대기·다른 수요 예약은 가용으로 더하지 않습니다.</p>${button('BOM 원문·검수 근거', 'bom-evidence')}`;
+      <p class="mk-small-note">같은 품목을 사용하는 BOM 행은 먼저 합산하고 재고를 한 번만 차감합니다. 검사대기·다른 수요 예약은 가용으로 더하지 않습니다.</p></details>
+      <details class="mk-material-details"><summary>원문 전체 ${num(requirementRows.length)}행 · 적용 검토와 계산 제외 근거 보기</summary>      <div class="mk-bom-stats"><div><b>${num(requirements.row_count)}</b><span>원문 전체 행</span></div><div><b>${num(requirements.applicable_count)}</b><span>적용 판단 행</span></div><div><b>${num(requirements.unresolved_count)}</b><span>적용 미확인 행</span></div><div><b>${num(requirements.unknown_shortage_count)}</b><span>부족량 미확인</span></div></div><div class="mk-table-scroll"><table class="mk-round-table" data-register="material-rows"><thead><tr><th>원문 근거</th><th>부품 위치</th><th>상태</th><th>대당 수량</th><th>검토 기준 소요</th><th>원문 × ${num(basisData.production_remaining_qty)}</th><th>원문 × ${num(basisData.planned_input_qty)}</th><th>미확인 / 가정</th></tr></thead><tbody>${requirementRows.map(row => `<tr><td><button type="button" class="mk-link" data-bom-evidence="${esc(row.row_id)}">${esc(row.locator || row.row_id)}</button></td><td>${esc((row.designators || []).join(', '))}</td><td>${esc(issueLabel(row.decision?.application_status || row.calculation_state))}</td><td>${num(row.decision?.quantity_per_unit)}</td><td>${num(row[qtyKey])}</td><td>${num(row.source_quantity_times_target)}</td><td>${num(row.source_quantity_times_plan)}</td><td>${esc(issueLabel(row.decision?.review_basis || 'UNREVIEWED'))}<small>${esc((row.issues || []).map(issueLabel).join(' · '))}</small></td></tr>`).join('')}</tbody></table></div>
+      <p class="mk-small-note">원문 수량 단순 환산 · 단위/실장 검수 전. 원문의 수량 × 목표/계획 투입 수량이며 적용 소요·부족량과 구분합니다.</p></details>
+      ${policy ? `<details class="mk-material-details"><summary>${esc(policy.label)} · 산식과 판정 기준</summary><p class="mk-small-note">현재 서비스에 적용된 계산 기준입니다. 사내 규정 승인과 실제 BOM·현장 재고 검수는 별도입니다.</p><ol class="mk-small-note">${(policy.rules || []).map(rule => `<li>${esc(rule.text)}</li>`).join('')}</ol><p class="mk-small-note">기준 버전: ${esc(policy.id)}</p></details>` : ''}`;
   }
   function render() {
     const date = meta.effective_at || meta.as_of;
@@ -204,7 +250,7 @@ export function mountDashboard(container, { snapshot, onSelect = () => {}, onAsk
     container.innerHTML = `<div class="mk-dashboard-heading"><h1>운영 대시보드</h1><span>${esc(dateLabel)}</span><label class="mk-live"><input type="checkbox" disabled>실시간 사건 반영</label></div>
       <div class="mk-config-banner"><b>${blockedBom ? '구성 미등록' : '계산 기준'}</b><span>${esc(statusText)}. 확인된 원장과 같은 버전의 근거로 판단합니다.</span>${button('BOM 원본 등록', 'bom', true)}</div>
       ${renderKpis()}
-      <div class="mk-viz-grid"><section class="mk-card"><h3>자재 충족 현황<span class="mk-spacer"></span><span class="mk-toggle" role="group" aria-label="계산 기준"><button type="button" data-basis="production_remaining" aria-pressed="${basis === 'production_remaining'}">기본 소요 ${num(summary.production_remaining_qty)}대</button><button type="button" data-basis="planned" aria-pressed="${basis === 'planned'}">수율 반영 ${num(requirements.basis?.planned_input_qty)}대</button></span></h3><div data-region="materials">${materialContent()}</div></section>
+      <div class="mk-viz-grid"><section class="mk-card" data-material-coverage><h3>자재 충족률${summary.production_job_id ? ` · ${esc(summary.production_job_id)}` : ''}<span class="mk-spacer"></span><span class="mk-toggle" role="group" aria-label="계산 기준"><button type="button" data-basis="production_remaining" aria-pressed="${basis === 'production_remaining'}">남은 생산 ${num(summary.production_remaining_qty)}대</button><button type="button" data-basis="planned" aria-pressed="${basis === 'planned'}">수율 반영 ${num(requirements.basis?.planned_input_qty)}대</button></span></h3><div data-region="materials">${materialContent()}</div></section>
       <section class="mk-card"><h3>회차별 이행 단계<span class="mk-spacer"></span>${tag('단위: 대')}</h3>${rows.map(row => `<button type="button" class="mk-round-bar" data-select="${esc(row.id || row.node_id)}"><span class="mk-round-label">${esc(row.delivery_round_id || row.display_id)}<small>${num(row.promised_qty ?? row.promise_qty)}대</small></span><span class="mk-bar-width">${bars(row, row.promised_qty ?? row.promise_qty)}</span><span class="mk-round-remaining">${num(row.promise_remaining_qty)}</span></button>`).join('')}<p class="mk-small-note">오른쪽 숫자는 남은 고객 도착 약속입니다.</p><div class="mk-inline-legend">${segmentLabels.map((label, i) => `<span><i class="${segmentClass[i]}"></i>${label}</span>`).join('')}</div></section></div>
       <section class="mk-card mk-rounds-card"><h3>계약 회차별 이행 현황 ${tag(num(rows.length))}<span class="mk-spacer"></span><span class="mk-toggle" role="group" aria-label="회차 상태">${[['all', '전체'], ['open', '미완료'], ['done', '납품 완료']].map(([id, label]) => `<button type="button" data-filter="${id}" aria-pressed="${filter === id}">${label}</button>`).join('')}</span></h3><div data-region="rounds">${roundContent()}</div></section>
       <div class="mk-lower-grid"><section class="mk-card"><h3>공급 흐름<span class="mk-spacer"></span>${tag("개발 원장 · 외부 송신 없음")}</h3><div data-region="procurement"></div></section>${renderEvents()}

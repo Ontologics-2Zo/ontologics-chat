@@ -247,6 +247,26 @@
 .mk-material-details{margin:12px 0;font-size:12px}
 .mk-material-details>summary{cursor:pointer;color:var(--accent,#5546ff)}
 .mk-material-details table{min-width:650px}
+.mk-card[data-material-coverage]{align-self:start;min-width:0}
+.mk-material-bars{display:grid;gap:8px;font-size:12px}
+.mk-material-row,.mk-material-axis{display:grid;grid-template-columns:88px minmax(0,1fr) 92px;column-gap:10px;align-items:center}
+.mk-material-label{min-width:0;font:11.5px var(--mk-font);overflow-wrap:anywhere}
+.mk-material-label button{font:inherit}
+.mk-material-label small{display:block;font:10.5px var(--sans,sans-serif);color:var(--mk-muted)}
+.mk-material-track{position:relative;height:14px;background:var(--vtrack,#e3e9f2);border-radius:0 4px 4px 0}
+.mk-material-track i{position:absolute;left:0;top:0;bottom:0;background:var(--vgray,#8c9cb0);border-radius:0 4px 4px 0;transition:width .6s}
+.mk-material-track.shortage i{background:var(--st-crit,var(--bad,#b91c1c))}
+.mk-material-track.unknown{background:repeating-linear-gradient(135deg,var(--vtrack,#e3e9f2),var(--vtrack,#e3e9f2) 4px,var(--surface,#fff) 4px,var(--surface,#fff) 8px)}
+.mk-material-tick{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--fg2,#475569);left:calc(100% - 1px)}
+.mk-material-value{text-align:right;font:11.5px var(--mk-font);color:var(--fg2,#475569);min-width:0;overflow-wrap:anywhere}
+.mk-material-value b{color:var(--fg,#0f172a)}
+.mk-material-value span{display:block}
+[data-coverage-state="shortage"] .mk-material-value b{color:var(--bad,#b91c1c)}
+.mk-material-axis{margin-top:4px;font-size:10.5px;color:var(--mk-muted)}
+.mk-material-axis>div{display:flex;justify-content:space-between;gap:4px}
+.mk-material-basis{display:flex;flex-wrap:wrap;align-items:center;gap:5px}
+@media(max-width:520px){.mk-material-row,.mk-material-axis{grid-template-columns:72px minmax(0,1fr) 78px;column-gap:7px}.mk-material-axis{font-size:9px}}
+@media(prefers-reduced-motion:reduce){.mk-material-track i{transition:none}}
 .mk-drawer [disabled]{opacity:.55;cursor:not-allowed}
 @media(max-width:640px){.mk-bom-checks{grid-template-columns:1fr}.mk-bom-source-pick>.mk-small-note{flex-basis:100%}}
 @media(max-width:620px){.mk-bom-fields{grid-template-columns:1fr}.mk-bom-toolbar>.mk-bom-field{min-width:0;flex-basis:100%}}
