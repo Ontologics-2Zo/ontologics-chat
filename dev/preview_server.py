@@ -40,6 +40,7 @@ STATIC_FILES = {
     "/mks2/procurement.js": ("mks2/procurement.js", "text/javascript; charset=utf-8"),
     "/mks2/dashboard.css": ("mks2/dashboard.css", "text/css; charset=utf-8"),
     "/mks2/graph.js": ("mks2/graph.js", "text/javascript; charset=utf-8"),
+    "/mks2/graph-layout.js": ("mks2/graph-layout.js", "text/javascript; charset=utf-8"),
     "/mks2/graph.css": ("mks2/graph.css", "text/css; charset=utf-8"),
 }
 FIXTURE_FILES = {

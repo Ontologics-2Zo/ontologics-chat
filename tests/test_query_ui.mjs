@@ -173,3 +173,169 @@ test('Agent router live calls are visible independently of deterministic query m
     assert.match(withClass(fixture.message, 'answer-footer')[0].textContent, /모델 호출 0회/);
   } finally { fixture.restore(); }
 });
+
+function deliveryResponse() {
+  return { ...response(), intent: ['delivery', 'fulfillment', 'production'], intent_label: '도착기한 확인',
+    conclusion: '확인 조건 부족 · 도착 판단 보류', answer: '합성 테스트의 현재 잔량과 계획만 확인했습니다.',
+    calculation: { actual_delivery_feasibility: 'UNKNOWN', estimated_arrival: null, delivery_probability: null },
+    sections: [
+      { id: 'ledger', title: '현재 원장 수량', origin: 'synthetic_opening_balance', items: [
+        { label: '남은 고객 도착 약속', value: '17대', detail: '현재 약속과 도착 기록의 차이입니다.' },
+        { label: '추가 양품 목표', value: '9대', detail: '이미 생산한 수량과 구분합니다.' },
+        { label: '기존 미도착', value: '8대', detail: '생산 목표에 다시 더하지 않습니다.' },
+      ] },
+      { id: 'production', title: '명시된 계획 가정', origin: 'user_assumption', status: 'PARTIAL', items: [
+        { label: '계획 투입', value: '12대', detail: '계획이며 완료 실적이 아닙니다.' },
+      ] },
+      { id: 'source', title: '원본 등록 근거', origin: 'actual_bom', items: [
+        { label: '원본 전체 행', value: '35행' }, { label: '적용 판단 / 미확인', value: '0행 / 35행' },
+      ] },
+      { id: 'materials', title: '조회 범위 · 0개 품목', origin: 'unknown', status: 'PARTIAL', items: [
+        { label: '선택 품목 소요·부족', value: '미확인', detail: '현재 원본에 적용 판단이 없습니다.' },
+      ] },
+      { id: 'material_unknowns', title: '자재 판단의 남은 확인', origin: 'unknown', status: 'UNKNOWN', items: [
+        { label: '부족량 미확인', value: '35행', detail: '미확인은 부족 0을 뜻하지 않습니다.' },
+      ] },
+      { id: 'delivery', title: '납기 가능 여부 · 판단 보류', origin: 'unknown', status: 'UNKNOWN', items: [
+        { label: '능력과 작업 달력', value: '미확인', detail: '실제 시작 근거가 필요합니다.' },
+      ] },
+      { id: 'next', title: '다음 확인', origin: 'unknown', status: 'UNKNOWN', items: [
+        { label: '실제 판단', value: '근거 확인 후 재조회' },
+      ] },
+    ],
+  };
+}
+
+test('delivery answer leads with server conclusion and distinct remaining-promise and production metrics', () => {
+  const { message, restore } = setup();
+  try {
+    const data = deliveryResponse(), before = JSON.stringify(data);
+    renderQueryAnswer(message, data);
+    assert.equal(message.dataset.queryPresentation, 'delivery');
+    assert.deepEqual(withClass(message, 'query-metric-value').map(value => value.textContent), ['17대', '9대']);
+    assert.equal(withClass(message, 'query-flow-step').length, 4);
+    assert.deepEqual(withClass(message, 'query-flow-number').map(value => value.textContent), ['1', '2', '3', '4']);
+    assert.equal(withClass(message, 'query-section').length, data.sections.length);
+    assert.ok(message.children.indexOf(withClass(message, 'query-verdict')[0]) < message.children.indexOf(withClass(message, 'query-delivery-metrics')[0]));
+    assert.ok(message.textContent.includes('납기 판단 보류'));
+    assert.ok(message.textContent.includes('합성 초기 원장') && message.textContent.includes('질문에서 지정한 가정'));
+    assert.equal(JSON.stringify(data), before);
+  } finally { restore(); }
+});
+
+test('an unmapped active BOM keeps its current counts and unknown shortage without reusing old example results', () => {
+  const { message, restore } = setup();
+  try {
+    renderQueryAnswer(message, deliveryResponse());
+    for (const value of ['0개 품목', '0행 / 35행', '부족량 미확인', '35행', '미확인은 부족 0을 뜻하지 않습니다.']) {
+      assert.ok(message.textContent.includes(value), value);
+    }
+    for (const absent of ['68대', '40대', '43대', '94%', '5개 품목', '69행', '도착 가능합니다']) {
+      assert.ok(!message.textContent.includes(absent), absent);
+    }
+    assert.equal(withClass(message, 'query-flow-conditions').length, 1);
+    assert.equal(withClass(message, 'query-origin-source').length, 1);
+  } finally { restore(); }
+});
+
+test('missing or ambiguous labelled metrics do not invent defaults or reuse a prior answer', () => {
+  const { message, restore } = setup();
+  try {
+    renderQueryAnswer(message, deliveryResponse());
+    const data = deliveryResponse();
+    data.sections[0].items = [{ label: '추가 양품 목표', value: '7대' }, { label: '추가 양품 목표', value: '8대' }];
+    renderQueryAnswer(message, data);
+    assert.equal(withClass(message, 'query-delivery-metrics').length, 0);
+    assert.equal(withClass(message, 'query-metric-value').length, 0);
+    assert.ok(!message.textContent.includes('17대') && !message.textContent.includes('9대'));
+    assert.ok(message.textContent.includes('7대') && message.textContent.includes('8대'));
+  } finally { restore(); }
+});
+
+test('delivery relation preview preserves actual edge IDs, direction and parallel predicates with all others accessible', () => {
+  const { message, restore } = setup();
+  try {
+    const data = deliveryResponse(), edges = Array.from({ length: 9 }, (_, index) => ({
+      id: `synthetic-edge-${index}`, source: `synthetic-node-${index}`, target: `synthetic-node-${index + 1}`,
+      predicate: `syntheticRelation${index}`, label: `합성 관계 ${index}`,
+    }));
+    edges[1] = { ...edges[1], source: edges[0].source, target: edges[0].target };
+    data.evidence_edge_ids = edges.map(edge => edge.id);
+    data.graph_path = edges.map(edge => [edge.source, edge.target]);
+    const selected = [], replayed = [];
+    renderQueryAnswer(message, data, { evidenceEdges: [...edges, edges[0]],
+      labelFor: id => `표시 ${id}`, onEvidence: id => selected.push(id), onReplay: () => replayed.push(true) });
+    const hops = withClass(message, 'query-path-hop');
+    assert.equal(hops.length, 9);
+    assert.deepEqual(hops.map(hop => hop.dataset.edgeId), edges.map(edge => edge.id));
+    assert.equal(withClass(message, 'query-more-paths').length, 1);
+    assert.equal(withClass(message, 'query-path-list')[0].children.length, 4);
+    assert.equal(withClass(message, 'query-path-list')[1].children.length, 5);
+    assert.match(hops[0].textContent, /표시 synthetic-node-0— 합성 관계 0 →표시 synthetic-node-1/);
+    assert.match(hops[1].attributes.title, /syntheticRelation1 · synthetic-edge-1/);
+    withClass(hops[0], 'chip')[1].click();
+    assert.deepEqual(selected, [edges[0].target]);
+    descendants(message).find(element => element.tagName === 'BUTTON' && element.textContent === '그래프에서 보기').click();
+    assert.deepEqual(replayed, [true]);
+  } finally { restore(); }
+});
+
+test('mismatched or unsupported relation metadata cannot fabricate a query path', () => {
+  const { message, restore } = setup();
+  try {
+    const data = deliveryResponse();
+    data.evidence_edge_ids = ['allowed-edge']; data.graph_path = [['source-node', 'target-node']];
+    renderQueryAnswer(message, data, { evidenceIds: ['source-node', 'target-node'], evidenceEdges: [
+      { id: 'allowed-edge', source: 'target-node', target: 'source-node', predicate: 'reversed' },
+      { id: 'other-edge', source: 'source-node', target: 'target-node', predicate: 'unrelated' },
+      { id: 'allowed-edge', source: 'source-node', target: 'target-node' },
+    ] });
+    assert.equal(withClass(message, 'query-evidence-flow').length, 0);
+    assert.equal(withClass(message, 'chip').length, 2);
+    assert.ok(!message.textContent.includes('reversed') && !message.textContent.includes('unrelated'));
+  } finally { restore(); }
+});
+
+test('delivery metrics and relation labels remain literal untrusted data', () => {
+  const { message, restore } = setup();
+  try {
+    const attack = '<img src=x onerror="attack()"><script>attack()</script>', data = deliveryResponse();
+    data.sections[0].items[0].value = attack; data.sections[0].items[0].origin = '__proto__';
+    data.status = 'constructor';
+    data.graph_path = [['synthetic-left', 'synthetic-right']]; data.evidence_edge_ids = ['synthetic-edge'];
+    renderQueryAnswer(message, data, { evidenceEdges: [{ edge_id: 'synthetic-edge', source_node_id: 'synthetic-left',
+      target_node_id: 'synthetic-right', relation_type: attack }], labelFor: () => attack });
+    assert.equal(withClass(message, 'query-metric-value')[0].textContent, attack);
+    assert.equal(withClass(message, 'query-path-predicate')[0].textContent, `— ${attack} →`);
+    assert.equal(descendants(message).filter(element => ['IMG', 'SCRIPT'].includes(element.tagName)).length, 0);
+    assert.ok(descendants(message).every(element => !element.className?.includes('onerror')));
+  } finally { restore(); }
+});
+
+test('delivery remains visible before replay and cancellation cannot be overwritten by a late successful animation', async () => {
+  const { message, restore } = setup();
+  try {
+    const pending = deferred(), data = deliveryResponse();
+    const view = renderQueryAnswer(message, data, { evidenceIds: ['synthetic-node'] });
+    const replay = view.play(() => pending.promise);
+    assert.equal(withClass(message, 'query-verdict').length, 1);
+    assert.equal(withClass(message, 'query-delivery-metric').length, 2);
+    descendants(message).find(element => element.tagName === 'BUTTON' && element.textContent === '재생 중단').click();
+    pending.resolve({ completed: true }); await replay;
+    assert.ok(message.textContent.includes('근거 재생 중단'));
+    assert.ok(!message.textContent.includes('근거 경로 재생 완료'));
+    assert.ok(message.textContent.includes(data.conclusion));
+  } finally { restore(); }
+});
+
+test('delivery clarification does not pretend a numbered calculation or receipt of evidence occurred', () => {
+  const { message, restore } = setup();
+  try {
+    renderQueryAnswer(message, { intent: ['delivery'], status: 'NEEDS_CLARIFICATION',
+      answer: '합성 테스트 회차를 지정해 주세요.', meta: response().meta });
+    assert.equal(withClass(message, 'query-flow-step').length, 0);
+    assert.equal(withClass(message, 'query-delivery-metric').length, 0);
+    assert.equal(withClass(message, 'query-evidence-flow').length, 0);
+    assert.equal(message.dataset.queryPresentation, 'standard');
+  } finally { restore(); }
+});

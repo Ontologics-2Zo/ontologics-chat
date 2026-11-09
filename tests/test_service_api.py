@@ -378,7 +378,7 @@ class ServiceApiIntegrationTests(unittest.TestCase):
             self.assertEqual(conn.execute("SELECT count(*) AS n FROM documents").fetchone()["n"], 0)
 
     def test_static_routes_preserve_both_tabs_and_reject_private_paths(self):
-        routes = {"/": "shell.html", "/current/": "index.html", "/app.js": "app.js", "/mks2/": "mks2/index.html"}
+        routes = {"/": "shell.html", "/current/": "index.html", "/app.js": "app.js", "/mks2/": "mks2/index.html", "/mks2/graph-layout.js": "mks2/graph-layout.js"}
         for route, filename in routes.items():
             result = self.client.get(route)
             self.assertEqual(result.status_code, 200)

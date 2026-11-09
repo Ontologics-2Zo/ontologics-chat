@@ -28,7 +28,7 @@ const origins = {
 function originBadge(value) {
   const raw = text(value);
   if (!raw) return null;
-  const [label, kind] = origins[raw.toLowerCase()] || [raw, 'other'];
+  const [label, kind] = Object.hasOwn(origins, raw.toLowerCase()) ? origins[raw.toLowerCase()] : [raw, 'other'];
   return node('span', `query-origin query-origin-${kind}`, label);
 }
 function appendOrigin(container, value) {
@@ -38,7 +38,7 @@ function appendOrigin(container, value) {
 function statusBadge(value) {
   const raw = text(value);
   if (!raw) return null;
-  const [label, kind] = statuses[raw] || [raw, 'mute'];
+  const [label, kind] = Object.hasOwn(statuses, raw) ? statuses[raw] : [raw, 'mute'];
   return node('span', `pill ${kind}`, label);
 }
 function sectionCard(section) {
@@ -63,22 +63,112 @@ function sectionCard(section) {
   card.append(list); return card;
 }
 
+function deliveryMetrics(sections) {
+  const ledger = sections.find(section => section.id === 'ledger');
+  if (!ledger) return null;
+  // These are already labelled server facts, not values parsed or calculated
+  // from the user's question. Missing facts do not get reference-demo defaults.
+  const labels = ['남은 고객 도착 약속', '추가 양품 목표'];
+  const metrics = node('div', 'query-delivery-metrics');
+  for (const label of labels) {
+    const matches = (Array.isArray(ledger.items) ? ledger.items : []).filter(item => item?.label === label && text(item.value));
+    if (matches.length !== 1) continue;
+    const item = matches[0], card = node('section', 'query-delivery-metric');
+    card.append(node('h3', '', label), node('strong', 'query-metric-value', item.value));
+    appendOrigin(card, item.origin || ledger.origin);
+    if (text(item.detail)) card.append(node('p', 'query-detail', item.detail));
+    metrics.append(card);
+  }
+  return metrics.children.length ? metrics : null;
+}
+
+function deliverySections(sections) {
+  const result = node('div', 'query-sections query-delivery-flow');
+  const groups = [
+    ['현재 원장 수량', ['ledger']],
+    ['양품 목표와 계획 투입', ['production']],
+    ['BOM·재고 확인', ['source', 'materials', 'material_unknowns', 'inventory']],
+    ['도착기한 판단에 남은 조건', ['delivery', 'next']],
+  ];
+  const included = new Set(groups.flatMap(([, ids]) => ids));
+  const additional = sections.filter(section => !included.has(section.id));
+  if (additional.length) groups.push(['추가 확인', additional.map(section => section.id)]);
+  let index = 0;
+  for (const [title, ids] of groups) {
+    const selected = sections.filter(section => ids.includes(section.id));
+    if (!selected.length) continue;
+    const step = node('section', 'query-flow-step');
+    if (ids.includes('delivery')) step.className += ' query-flow-conditions';
+    const heading = node('div', 'query-flow-heading');
+    heading.append(node('span', 'query-flow-number', String(++index)), node('h3', '', title));
+    step.append(heading);
+    for (const section of selected) step.append(sectionCard(section));
+    result.append(step);
+  }
+  return result;
+}
+
+function evidenceFlow(answer, suppliedEdges, labelFor, onEvidence, onReplay) {
+  const allowed = new Set(Array.isArray(answer.evidence_edge_ids) ? answer.evidence_edge_ids : []);
+  const hops = new Set((Array.isArray(answer.graph_path) ? answer.graph_path : [])
+    .filter(hop => Array.isArray(hop) && hop.length === 2 && hop.every(id => typeof id === 'string')).map(hop => JSON.stringify(hop)));
+  const edges = [], seen = new Set();
+  for (const raw of Array.isArray(suppliedEdges) ? suppliedEdges : []) {
+    const id = text(raw?.edge_id) || text(raw?.id), source = text(raw?.source_node_id) || text(raw?.source);
+    const target = text(raw?.target_node_id) || text(raw?.target), predicate = text(raw?.relation_type) || text(raw?.predicate);
+    if (!id || !source || !target || !predicate || !allowed.has(id) || seen.has(id)
+        || (hops.size && !hops.has(JSON.stringify([source, target])))) continue;
+    seen.add(id); edges.push({ id, source, target, predicate, label: text(raw.label) || predicate });
+  }
+  if (!edges.length) return null;
+  const result = node('section', 'query-evidence-flow');
+  const heading = node('div', 'query-section-heading');
+  heading.append(node('h3', '', '조회한 근거 관계'), action('그래프에서 보기', onReplay));
+  result.append(heading, node('p', 'query-detail', '현재 원장에 기록된 관계입니다. 업무 완료 순서나 미래 일정으로 해석하지 않습니다.'));
+  const visible = node('ol', 'query-path-list'), remaining = node('ol', 'query-path-list');
+  edges.forEach((edge, index) => {
+    const row = node('li', 'query-path-hop'); row.dataset.edgeId = edge.id;
+    row.setAttribute('title', `${edge.predicate} · ${edge.id}`);
+    const arrow = node('span', 'query-path-predicate', `— ${edge.label} →`);
+    row.append(action(labelFor(edge.source), () => onEvidence(edge.source), 'chip'), arrow,
+      action(labelFor(edge.target), () => onEvidence(edge.target), 'chip'));
+    (index < 4 ? visible : remaining).append(row);
+  });
+  result.append(visible);
+  if (edges.length > 4) {
+    const more = node('details', 'query-more-paths');
+    more.append(node('summary', '', `전체 관계 ${edges.length}개 · 나머지 ${edges.length - 4}개 보기`), remaining);
+    result.append(more);
+  }
+  return result;
+}
+
 export function renderQueryAnswer(message, answer, {
-  evidenceIds = [], labelFor = id => id, onEvidence = () => {},
+  evidenceIds = [], evidenceEdges = [], labelFor = id => id, onEvidence = () => {},
   onReplay = () => {}, onCancel = () => {},
 } = {}) {
   message.replaceChildren();
+  const sectionData = (Array.isArray(answer.sections) ? answer.sections : []).filter(section => section && typeof section === 'object');
+  const delivery = Array.isArray(answer.intent) && answer.intent.includes('delivery') && answer.status !== 'NEEDS_CLARIFICATION';
+  message.dataset.queryPresentation = delivery ? 'delivery' : 'standard';
+  const verdict = delivery ? node('section', 'query-verdict') : message;
   const summary = node('div', 'query-summary');
   if (text(answer.intent_label)) summary.append(node('span', 'query-intent', answer.intent_label));
   const status = statusBadge(answer.status);
   if (status) summary.append(status);
-  if (summary.children.length) message.append(summary);
-  if (text(answer.conclusion)) message.append(node('p', 'query-conclusion', answer.conclusion));
-  message.append(node('p', 'answer', text(answer.answer) || text(answer.answer?.text) || '확인된 답변이 없습니다.'));
-  const sections = node('div', 'query-sections');
-  for (const section of Array.isArray(answer.sections) ? answer.sections : []) {
-    if (section && typeof section === 'object') sections.append(sectionCard(section));
+  if (delivery && answer.calculation?.actual_delivery_feasibility === 'UNKNOWN') summary.append(node('span', 'query-delivery-status', '납기 판단 보류'));
+  if (summary.children.length) verdict.append(summary);
+  if (text(answer.conclusion)) verdict.append(node('p', 'query-conclusion', answer.conclusion));
+  verdict.append(node('p', 'answer', text(answer.answer) || text(answer.answer?.text) || '확인된 답변이 없습니다.'));
+  if (delivery) {
+    message.append(verdict);
+    const metrics = deliveryMetrics(sectionData);
+    if (metrics) message.append(metrics);
+    const flow = evidenceFlow(answer, evidenceEdges, labelFor, onEvidence, onReplay);
+    if (flow) message.append(flow);
   }
+  const sections = delivery ? deliverySections(sectionData) : node('div', 'query-sections');
+  if (!delivery) for (const section of sectionData) sections.append(sectionCard(section));
   if (sections.children.length) message.append(sections);
 
   const meta = answer.meta || {};
@@ -121,7 +211,7 @@ export function renderQueryAnswer(message, answer, {
   footer.append(node('span', '', `원장 v${meta.ledger_version ?? '미확인'} · 그래프 v${meta.projection_version ?? '미확인'} · 모델 호출 ${liveCalls}회`));
   const replayStatus = node('span', 'query-replay-status');
   replayStatus.setAttribute('aria-live', 'polite');
-  const cancel = action('재생 중단', () => { onCancel(); setReplayState('cancelled'); });
+  const cancel = action('재생 중단', () => { playVersion++; onCancel(); setReplayState('cancelled'); });
   cancel.hidden = true;
   if (ids.length) footer.append(action('근거 다시 보기', onReplay));
   footer.append(cancel, replayStatus); message.append(footer);

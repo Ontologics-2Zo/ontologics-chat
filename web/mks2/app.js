@@ -222,7 +222,7 @@ async function runQuery(name, question) {
         () => generation === playGeneration && replay === replayGeneration);
     });
     const presentation = renderQueryAnswer(message, answer, {
-      evidenceIds: ids, labelFor,
+      evidenceIds: ids, labelFor, evidenceEdges: snapshot.graph.data.edges,
       onEvidence: id => evidenceAtVersion(() => focusEvidence(id)),
       onReplay: () => replayEvidence(true),
       onCancel: () => { if (activeReplay === replayGeneration) cancelPendingReplay(); },
