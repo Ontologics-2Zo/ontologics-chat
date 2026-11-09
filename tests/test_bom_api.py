@@ -6,6 +6,7 @@ from hashlib import sha256
 import json
 import os
 import unittest
+from unittest.mock import patch
 
 import test_service_api as api_fixtures
 
@@ -79,6 +80,75 @@ class BomApiTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/mks2/bom/documents/" + doc["id"]).json(),
                          {key: value for key, value in doc.items() if key != "operation_id"})
         self.assertEqual(self.client.get("/api/mks2/snapshot").json(), before)
+
+    @staticmethod
+    def compare_ref(document):
+        return {"document_id": document["id"], "expected_version": document["version"],
+                "payload_hash": document["payload_hash"]}
+
+    def test_compare_is_read_only_with_explicit_baseline_and_no_parser_call(self):
+        author = self.select()
+        left, args = self.create(author)
+        second = self.client.post("/api/mks2/bom/documents", json={**args, "idempotency_key": "second-source-document"},
+                                  headers=self.headers(author))
+        self.assertEqual(second.status_code, 200, second.text)
+        right = second.json()
+        viewer = self.select("dev-viewer-f", author)
+
+        def state():
+            tables = ("bom_sources", "bom_documents", "bom_revisions", "bom_audit", "operations",
+                      "ledger_state", "ledger_events", "audit_events", "outbox", "service_snapshots")
+            with self.db.connect() as conn:
+                # Both table names and SQL are fixed, independent of HTTP data.
+                return {name: conn.execute("SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text), '[]'::jsonb) AS state FROM " + name + " t").fetchone()["state"]
+                        for name in tables}
+
+        before = state()
+        with patch.object(self.app.state.bom.runner, "parse", side_effect=AssertionError("comparison must not parse")):
+            no_baseline = self.client.post("/api/mks2/bom/compare", json={"right": self.compare_ref(right)}, headers=self.headers(viewer))
+            self.assertEqual(no_baseline.status_code, 200, no_baseline.text)
+            self.assertEqual(no_baseline.json()["status"], "NO_BASELINE")
+            response = self.client.post("/api/mks2/bom/compare", json={"left": self.compare_ref(left), "right": self.compare_ref(right)},
+                                        headers=self.headers(viewer))
+        self.assertEqual(response.status_code, 200, response.text)
+        result = response.json()
+        self.assertEqual(result["status"], "IDENTICAL_SOURCE")
+        self.assertEqual(result["left"]["document_id"], left["id"])
+        self.assertEqual(result["right"]["document_id"], right["id"])
+        self.assertEqual(result["meta"]["identity_revision"], viewer["principal"]["identity_revision"])
+        self.assertEqual((result["model_calls"], result["ledger_mutations"]), (0, 0))
+        self.assertEqual(state(), before)
+
+    def test_compare_requires_exact_versions_and_hashes_on_both_sides(self):
+        session = self.select(); doc, _ = self.create(session)
+        body = {"left": self.compare_ref(doc), "right": self.compare_ref(doc)}
+        for side in ("left", "right"):
+            for field, value in (("expected_version", 99), ("payload_hash", "f" * 64)):
+                request = {**body, side: {**body[side], field: value}}
+                self.error(self.client.post("/api/mks2/bom/compare", json=request, headers=self.headers(session)),
+                           409, "DOCUMENT_VERSION_CHANGED")
+        with self.db.connect() as conn:
+            # Corruption is confined to this test's disposable schema.
+            conn.execute("UPDATE bom_documents SET canonical_bytes=%s WHERE id=%s", (b"corrupt", doc["id"]))
+        self.error(self.client.post("/api/mks2/bom/compare", json=body, headers=self.headers(session)),
+                   409, "DOCUMENT_INTEGRITY_FAILURE")
+
+    def test_compare_keeps_identity_company_and_typed_read_boundary(self):
+        self.error(self.client.post("/api/mks2/bom/compare", json={"right": {"document_id": "unavailable", "expected_version": 1,
+            "payload_hash": "a" * 64}}, headers=self.headers()), 401, "IDENTITY_REQUIRED")
+        author = self.select(); doc, _ = self.create(author)
+        body = {"right": self.compare_ref(doc)}
+        self.error(self.client.post("/api/mks2/bom/compare", json=body, headers=self.headers()), 403, "CSRF_REJECTED")
+        self.error(self.client.post("/api/mks2/bom/compare", json={**body, "company_id": "DEMO-B"}, headers=self.headers(author)), 422)
+        other = self.identity.login("dev-other-g").principal
+        from service.bom_contracts import BomCompare
+        from service.errors import ServiceError
+        with self.assertRaises(ServiceError) as denied:
+            self.app.state.bom.compare(other, "DEMO-B", BomCompare.model_validate(body))
+        self.assertEqual(denied.exception.status_code, 404)
+        with self.assertRaises(ServiceError) as denied:
+            self.app.state.bom.compare(other, "DEMO-A", BomCompare.model_validate(body))
+        self.assertEqual(denied.exception.status_code, 403)
 
     def test_bom_read_requires_identity_and_csrf_write_boundary(self):
         for route in ("/api/mks2/bom/sources", "/api/mks2/bom/documents"):

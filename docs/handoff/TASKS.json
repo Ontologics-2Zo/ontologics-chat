@@ -1012,6 +1012,18 @@
           "record": "docs/handoff/SERVICE-BOM-UI-20261109.md",
           "scope": "DEC-H32 BOM review UI only: actual stored-document read checks22, isolated synthetic pending/error/retry checks16, Node18 PASS. Shared review page and warning evidence; no new source intake, business ledger mutation or model call.",
           "parent_complete": false
+        },
+        {
+          "record": "docs/handoff/SERVICE-BOM-REVIEW-20261109.md",
+          "status": "VERIFIED",
+          "verification_ids": [
+            "BOM-REVIEW-SERVER",
+            "BOM-REVIEW-NODE",
+            "BOM-REVIEW-BROWSER",
+            "BOM-REVIEW-PRESERVE"
+          ],
+          "scope": "DEC-H33 read-only exact-version BOM comparison, evidence-based progress and explicit select-based row review; no original business write or model call. Full manufacturing acceptance remains incomplete.",
+          "parent_complete": false
         }
       ],
       "actual_implementation_paths": [
@@ -1021,7 +1033,10 @@
         "migrations/004_bom.sql",
         "web/mks2/bom.js",
         "tests/test_bom.py",
-        "tests/test_bom_api.py"
+        "tests/test_bom_api.py",
+        "tests/test_bom_ui.mjs",
+        "service/bom_compare.py",
+        "tests/test_bom_compare.py"
       ],
       "actual_api_or_tool_contract": "Typed BOM source/document routes under /api/mks2/bom; create, revise, review, approve, post; exact document version/hash and current ledger version; stored original source retrieval. The actual Mac source slice is verified; full technical review and overall service acceptance remain separate.",
       "blockers": [],
@@ -1310,6 +1325,18 @@
           "record": "docs/handoff/SERVICE-BOM-UI-20261109.md",
           "scope": "DEC-H32 BOM review UI only: actual stored-document read checks22, isolated synthetic pending/error/retry checks16, Node18 PASS. Shared review page and warning evidence; no new source intake, business ledger mutation or model call.",
           "parent_complete": false
+        },
+        {
+          "record": "docs/handoff/SERVICE-BOM-REVIEW-20261109.md",
+          "status": "VERIFIED",
+          "verification_ids": [
+            "BOM-REVIEW-SERVER",
+            "BOM-REVIEW-NODE",
+            "BOM-REVIEW-BROWSER",
+            "BOM-REVIEW-PRESERVE"
+          ],
+          "scope": "DEC-H33 read-only exact-version BOM comparison, evidence-based progress and explicit select-based row review; no original business write or model call. Full manufacturing acceptance remains incomplete.",
+          "parent_complete": false
         }
       ],
       "actual_implementation_paths": [
@@ -1319,7 +1346,8 @@
         "web/mks2/product.js",
         "web/mks2/bom.js",
         "tests/test_product.py",
-        "tests/test_product_workflow.py"
+        "tests/test_product_workflow.py",
+        "tests/test_bom_ui.mjs"
       ],
       "actual_api_or_tool_contract": "product.review + typed product_review Agent; existing BOM inline review",
       "blockers": [],
@@ -2305,7 +2333,16 @@
     "known_cost_usd": "0.00128",
     "held_usd": "0.010932",
     "runtime_ledger_version": 2,
-    "isolated_verified_ledger_version": 8
+    "isolated_verified_ledger_version": 8,
+    "latest_bom_review": {
+      "decision": "DEC-H33",
+      "record": "docs/handoff/SERVICE-BOM-REVIEW-20261109.md",
+      "status": "VERIFIED",
+      "read_only_comparison": true,
+      "original_domain_writes": false,
+      "new_live_model_calls": 0,
+      "parent_complete": false
+    }
   },
   "retained_foundation_batch": [
     "T00",

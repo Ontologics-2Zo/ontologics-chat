@@ -81,5 +81,7 @@ export function createProductReview({ api, onChange = () => {} }) {
     const row = result?.rows?.find(value => value.row_id === selected);
     return row ? `<div data-product-inline><p class="mk-small-note">후보는 서버에 저장된 문서 기준입니다. 위 검수 입력에 자동 적용하지 않습니다.</p>${renderProductRow(row, result, { embedded: true })}</div>` : '';
   }
-  return { load, render, reset };
+  return { load, render, reset, candidates() {
+    return result?.rows?.find(value => value.row_id === selected)?.candidates || [];
+  } };
 }

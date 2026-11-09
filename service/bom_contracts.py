@@ -16,6 +16,17 @@ class BomCreate(Contract):
     idempotency_key: str = Field(min_length=1, max_length=200)
 
 
+class BomCompareDocument(Contract):
+    document_id: str = Field(min_length=1, max_length=100)
+    expected_version: int = Field(ge=1)
+    payload_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class BomCompare(Contract):
+    left: BomCompareDocument | None = None
+    right: BomCompareDocument
+
+
 class BomDecision(Contract):
     row_id: str = Field(pattern=r"^[0-9a-f]{64}$")
     application_status: Literal["UNRESOLVED", "APPLICABLE", "NOT_MOUNTED", "SETTING"] = "UNRESOLVED"

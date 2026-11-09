@@ -17,7 +17,8 @@ from uuid import UUID, uuid4
 
 from psycopg.types.json import Jsonb
 
-from service.bom_contracts import BomCreate, BomDecision, BomReview, BomRevise
+from service.bom_contracts import BomCompare, BomCreate, BomDecision, BomReview, BomRevise
+from service.bom_compare import compare_bom_documents
 from service.contracts import CANONICAL_VERSION, DocumentAction, canonical_bytes, content_hash
 from service.domain import DomainService, _public
 from service.errors import ServiceError
@@ -369,6 +370,31 @@ class BomService(DomainService):
         with self.db.connect() as conn:
             self.identity.require(principal, "document.read", conn, company_id)
             return _public(self._view(self._document(conn, company_id, document_id)))
+
+    def compare(self, principal, company_id, body: BomCompare):
+        body = BomCompare.model_validate(body)
+        refs = [ref for ref in (body.left, body.right) if ref is not None]
+        try:
+            identifiers = [UUID(ref.document_id) for ref in refs]
+        except ValueError:
+            raise ServiceError("BOM_NOT_FOUND", 404) from None
+        with self.db.connect() as conn:
+            self.identity.require(principal, "document.read", conn, company_id)
+            # One SELECT observes both versions together. No source parsing,
+            # row lock, operation, audit event or ledger write is performed.
+            documents = conn.execute("SELECT * FROM bom_documents WHERE company_id=%s AND id=ANY(%s)",
+                                     (company_id, identifiers)).fetchall()
+            by_id = {str(document["id"]): document for document in documents}
+            selected = []
+            for ref, identifier in zip(refs, identifiers):
+                document = by_id.get(str(identifier))
+                if document is None:
+                    raise ServiceError("BOM_NOT_FOUND", 404)
+                self._exact(document, ref.expected_version, ref.payload_hash)
+                selected.append(document)
+            result = compare_bom_documents(selected[0] if body.left else None, selected[-1])
+            result["meta"] = {"company_id": company_id, "identity_revision": principal.identity_revision}
+            return result
 
     def list(self, principal, company_id, limit=100):
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
