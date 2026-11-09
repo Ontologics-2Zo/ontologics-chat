@@ -180,7 +180,19 @@
 .mk-bom-source-table td{overflow-wrap:anywhere;max-width:240px}
 .mk-bom-source-table td small{display:block;color:var(--fg3,#6b7f9f)}
 .mk-bom-source-table details{margin-top:5px;color:var(--fg2,#475a78)}
-.mk-bom-cells{padding-left:20px;margin:6px 0;white-space:pre-wrap}
+.mk-bom-cells,.mk-bom-selected-cells{padding-left:20px;margin:6px 0;white-space:pre-wrap}
+.mk-bom-review-page{display:grid;grid-template-columns:minmax(0,1fr);gap:18px;min-width:0}
+.mk-bom-review-page>[data-bom-section]{scroll-margin-top:8px;min-width:0}
+.mk-bom-review-page>[data-bom-section]>h3{margin:0 0 10px;font-size:14px}
+.mk-bom-review-page .mk-bom-stats{margin-bottom:12px}
+.mk-bom-review-page .mk-bom-warning{margin-bottom:12px}
+.mk-bom-review-page [data-bom-section="editor"]{margin-top:12px}
+.mk-bom-extracted .mk-table-scroll,.mk-bom-review-table{max-height:280px;overflow:auto}
+.mk-bom-review-page th{position:sticky;top:0;background:var(--raised,#f8fafc);z-index:1}
+.mk-bom-progress{height:8px;overflow:hidden;border-radius:99px;background:var(--line2,#e5ebf5);margin:16px 0}
+.mk-bom-progress>span{display:block;width:35%;height:100%;border-radius:inherit;background:var(--accent,#5546ff);animation:mk-bom-processing 1.4s ease-in-out infinite}
+@keyframes mk-bom-processing{from{transform:translateX(-100%)}to{transform:translateX(390%)}}
+@media(prefers-reduced-motion:reduce){.mk-bom-progress>span{animation:none;width:100%;opacity:.55}}
 .mk-material-details{margin:12px 0;font-size:12px}
 .mk-material-details>summary{cursor:pointer;color:var(--accent,#5546ff)}
 .mk-material-details table{min-width:650px}

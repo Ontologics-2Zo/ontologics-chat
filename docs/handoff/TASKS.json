@@ -1007,6 +1007,11 @@
           "record": "docs/handoff/SERVICE-BOM-MAC-20261108.md",
           "scope": "Mac arm64 actual Runner/source registration and conditional five-item ledger slice; 182 Python tests PASS / 0 SKIP; manual UI, independent preservation and restart PASS; no parent completion",
           "parent_complete": false
+        },
+        {
+          "record": "docs/handoff/SERVICE-BOM-UI-20261109.md",
+          "scope": "DEC-H32 BOM review UI only: actual stored-document read checks22, isolated synthetic pending/error/retry checks16, Node18 PASS. Shared review page and warning evidence; no new source intake, business ledger mutation or model call.",
+          "parent_complete": false
         }
       ],
       "actual_implementation_paths": [
@@ -1299,6 +1304,11 @@
           ],
           "verified_code_commit": "8ba67fd80b8adeed0bf82bdba05aaa4a91b6f25e",
           "scope": "기존 BOM8단계 내 후보 검토·정확 초안/원장 버전·모호성·원문 보존. 전체 형식·실제 AI 추출 품질·기술검수는 잔여.",
+          "parent_complete": false
+        },
+        {
+          "record": "docs/handoff/SERVICE-BOM-UI-20261109.md",
+          "scope": "DEC-H32 BOM review UI only: actual stored-document read checks22, isolated synthetic pending/error/retry checks16, Node18 PASS. Shared review page and warning evidence; no new source intake, business ledger mutation or model call.",
           "parent_complete": false
         }
       ],
