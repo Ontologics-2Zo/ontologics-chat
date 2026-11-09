@@ -63,7 +63,14 @@ async function setup() {
       twins.push(instance); return instance;
     },
     renderQueryAnswer: (message, answer, options) => {
-      answers.push({ answer, options }); message.textContent = answer.answer; return { play() {} };
+      let resolve;
+      const finished = new Promise(done => { resolve = done; });
+      const record = { answer, options, finishCalls: 0, disposeCalls: 0, playCalls: 0, resolve };
+      record.presentation = { finished,
+        finish() { record.finishCalls++; resolve(); },
+        dispose() { record.disposeCalls++; resolve(); },
+        play() { record.playCalls++; } };
+      answers.push(record); message.textContent = answer.answer; return record.presentation;
     },
     fetch: async (path, options = {}) => {
       const request = { path, method: options.method || 'GET', body: options.body && JSON.parse(options.body) };
@@ -85,7 +92,7 @@ async function setup() {
   vm.runInContext(`identity = fixture.principal; snapshot = fixture.snapshot;
     for (const name of SCREENS) createPanel(name);
     globalThis.app = { ask: question => runQuery('dashboard', question), refresh: refreshSnapshot,
-      askTwin: question => runQuery('twin', question), panel: () => panels.dashboard,
+      askTwin: question => runQuery('twin', question), askGraph: question => runQuery('graph', question), panel: () => panels.dashboard,
       twinPanel: () => panels.twin, graphPanel: () => panels.graph, generation: () => generation,
       route: name => { location.hash = '#' + name; route(); }, invalidate: invalidateView,
       load: loadSnapshot, setContext, setTwinContext, twinActive: updateTwinActivity };`, context);
@@ -286,4 +293,85 @@ test('an old answer cannot reopen BOM registration after refresh or identity inv
   assert.match(h.element('notice').textContent, /과거 원장 버전/);
   h.app.invalidate(); h.answers[0].options.onOpenBom();
   assert.deepEqual(h.bomOpens, []); assert.equal(h.requests.length, count);
+});
+
+test('graph playback and request completion do not prematurely finish the active text presentation', async () => {
+  const h = await setup(); await h.app.load(); h.app.route('twin');
+  h.setHandler(() => twinAnswer(h)); await h.app.askTwin('합성 표시 질문');
+  const shown = h.answers[0];
+  assert.equal(shown.options.animate, true); assert.equal(shown.playCalls, 1);
+  assert.equal(shown.finishCalls, 0); assert.equal(shown.disposeCalls, 0);
+  assert.equal(h.app.twinPanel().presentation, shown.presentation);
+  assert.equal(h.app.twinPanel().submit.disabled, false);
+  assert.equal(apiCalls(h).length, 0);
+});
+
+test('a new question finishes the old answer and late completion cannot release the newer presentation', async () => {
+  const h = await setup(); await h.app.load(); h.app.route('twin'); h.setHandler(() => twinAnswer(h));
+  await h.app.askTwin('합성 이전 질문');
+  const older = h.answers[0], previousMessage = h.app.twinPanel().messages.children.at(-1), text = previousMessage.textContent;
+  await h.app.askTwin('합성 새 질문'); const newer = h.answers[1];
+  older.resolve(); await Promise.resolve();
+  assert.equal(older.finishCalls, 1); assert.equal(older.disposeCalls, 0);
+  assert.equal(previousMessage.textContent, text);
+  assert.equal(h.app.twinPanel().presentation, newer.presentation); assert.equal(newer.finishCalls, 0);
+  assert.equal(h.requests.filter(r => r.path === '/api/mks2/query').length, 2);
+});
+
+test('tab and document visibility settle text without additional queries or changing the original answer', async () => {
+  const h = await setup(); await h.app.load(); h.app.route('twin'); h.setHandler(() => twinAnswer(h));
+  await h.app.askTwin('합성 탭 질문'); const before = h.app.twinPanel().messages.textContent;
+  let count = h.requests.length; h.app.route('graph');
+  assert.equal(h.answers[0].finishCalls, 1); assert.equal(h.app.twinPanel().messages.textContent, before);
+  assert.equal(h.requests.length, count);
+  h.app.route('twin'); await h.app.askTwin('합성 숨김 질문'); count = h.requests.length;
+  h.document.hidden = true; h.documentEvents.visibilitychange();
+  assert.equal(h.answers[1].finishCalls, 1); assert.equal(h.requests.length, count);
+});
+
+test('refresh finishes the exact old answer before changing the snapshot and keeps its version guards', async () => {
+  const h = await setup(); await h.app.load(); h.app.route('twin'); h.setHandler(() => twinAnswer(h));
+  await h.app.askTwin('합성 과거 질문'); const before = h.app.twinPanel().messages.textContent;
+  h.setNextSnapshot(snapshotAt(8)); await h.app.refresh();
+  assert.equal(h.answers[0].finishCalls, 1); assert.equal(h.answers[0].disposeCalls, 0);
+  assert.equal(h.app.twinPanel().messages.textContent, before);
+  assert.equal(h.answers[0].answer.meta.ledger_version, 7);
+  h.answers[0].options.onOpenBom(); assert.deepEqual(h.bomOpens, []);
+});
+
+test('reset and identity invalidation dispose presentations before removing their visible messages', async () => {
+  const h = await setup(); await h.app.load(); h.app.route('twin'); h.setHandler(() => twinAnswer(h));
+  await h.app.askTwin('합성 초기화 질문'); let count = h.requests.length;
+  h.element('reset').dispatchClick();
+  assert.equal(h.answers[0].disposeCalls, 1); assert.equal(h.answers[0].finishCalls, 0);
+  assert.equal(h.app.twinPanel().presentation, null); assert.equal(h.requests.length, count);
+  await h.app.askTwin('합성 무효화 질문'); count = h.requests.length;
+  h.app.invalidate(); h.answers[1].resolve(); await Promise.resolve();
+  assert.equal(h.answers[1].disposeCalls, 1); assert.equal(h.answers[1].finishCalls, 0);
+  assert.equal(h.element('twin-panel').textContent, ''); assert.equal(h.requests.length, count);
+});
+
+test('a response arriving on a hidden tab is complete without animation or mixing parallel panel answers', async () => {
+  const h = await setup(); await h.app.load(); h.app.route('twin');
+  let replyTwin, replyGraph;
+  h.setHandler(request => new Promise(resolve => {
+    if (request.body.question === '합성 트윈 요청') replyTwin = resolve; else replyGraph = resolve;
+  }));
+  const twinRequest = h.app.askTwin('합성 트윈 요청'); h.app.route('graph');
+  const graphRequest = h.app.askGraph('합성 그래프 요청');
+  replyGraph({ ...twinAnswer(h), answer: '합성 그래프 결과' }); await graphRequest;
+  replyTwin({ ...twinAnswer(h), answer: '합성 트윈 결과' }); await twinRequest;
+  assert.equal(h.answers[0].options.animate, true); assert.equal(h.answers[1].options.animate, false);
+  assert.match(h.app.graphPanel().messages.textContent, /합성 그래프 결과/);
+  assert.doesNotMatch(h.app.graphPanel().messages.textContent, /합성 트윈 결과/);
+  assert.match(h.app.twinPanel().messages.textContent, /합성 트윈 결과/);
+  assert.equal(h.app.graphPanel().presentation, h.answers[0].presentation);
+});
+
+test('the BOM entry finishes only its answer presentation and opens the existing drawer without a command', async () => {
+  const h = await setup(); await h.app.load(); h.app.route('twin'); h.setHandler(() => twinAnswer(h));
+  await h.app.askTwin('합성 원본 질문'); const count = h.requests.length;
+  h.answers[0].options.onOpenBom();
+  assert.equal(h.answers[0].finishCalls, 1); assert.equal(h.answers[0].disposeCalls, 0);
+  assert.deepEqual(h.bomOpens, [0]); assert.equal(h.requests.length, count);
 });

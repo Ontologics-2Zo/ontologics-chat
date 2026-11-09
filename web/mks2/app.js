@@ -32,6 +32,22 @@ function notify(text) {
   clearTimeout(noticeTimer); noticeTimer = setTimeout(() => { $('notice').hidden = true; }, 4500);
 }
 function cancelPendingReplay() { replayGeneration++; graph?.cancelReplay(); }
+// A completed server answer has its own presentation lifetime. Graph playback
+// must never cancel its text, and old answers keep their original full content.
+function settleAnswer(panel, discard = false) {
+  const presentation = panel?.presentation;
+  if (!presentation) return;
+  panel.presentation = null;
+  if (discard) presentation.dispose?.();
+  else presentation.finish?.();
+}
+function answerVisible(name) {
+  return currentScreen() === name && !document.hidden
+    && (!window.frameElement || window.frameElement.getBoundingClientRect().height > 0);
+}
+function settleHiddenAnswers() {
+  for (const [name, panel] of Object.entries(panels)) if (!answerVisible(name)) settleAnswer(panel);
+}
 async function api(path, body, method, { binary = false } = {}) {
   const headers = { 'X-Requested-With': 'MK-S2' };
   if (identity?.identity_revision != null) headers['X-Identity-Revision'] = String(identity.identity_revision);
@@ -64,6 +80,7 @@ function errorText(error) {
 }
 function route() {
   if (!snapshot) return;
+  settleHiddenAnswers();
   for (const name of SCREENS) {
     $(`${name}-view`).hidden = currentScreen() !== name;
     $(`tab-${name}`).setAttribute('aria-current', currentScreen() === name ? 'page' : 'false');
@@ -72,6 +89,7 @@ function route() {
   updateTwinActivity();
 }
 function updateTwinActivity() {
+  settleHiddenAnswers();
   twin?.setActive(currentScreen() === 'twin' && !document.hidden
     && (!window.frameElement || window.frameElement.getBoundingClientRect().height > 0));
 }
@@ -123,6 +141,7 @@ function currentAgentWaiting(panel, waiting) {
     && waiting.state.status === 'WAITING' && agentSnapshotMatches(waiting.state);
 }
 function createPanel(name) {
+  settleAnswer(panels[name], true);
   clearAgentWaiting(panels[name]);
   const root = $(`${name}-panel`); root.replaceChildren();
   const heading = element('div', 'panel-heading');
@@ -148,7 +167,7 @@ function createPanel(name) {
   });
   root.append(heading, context, messages, suggestions, form,
     element('div', 'disclosure', `${snapshot.material_requirements?.bom_id ? '실제 BOM 원문 · 합성 초기 재고' : '합성 초기 이관 원장'}${snapshot.meta.data_origins?.inventory === 'mixed_sources' ? ' · 개발 입하·검사 반영' : ''} · 결정적 업무 조회. 실제 모델 호출·구매·승인 실행은 구분합니다.`));
-  panels[name] = { root, context, messages, suggestions, input, submit, pending: null, waiting: null };
+  panels[name] = { root, context, messages, suggestions, input, submit, pending: null, waiting: null, presentation: null };
 }
 function productInput() {
   const bom = snapshot.bom;
@@ -253,6 +272,7 @@ async function agentQuery(panel, question, message, requestGeneration) {
 }
 async function runQuery(name, question) {
   const panel = panels[name], requestGeneration = generation;
+  settleAnswer(panel);
   panel.messages.append(element('div', 'message user', question)); panel.submit.disabled = true;
   const message = element('div', 'message assistant', '원장과 근거를 조회하고 있습니다.'); panel.messages.append(message);
   cancelPendingReplay();
@@ -289,14 +309,22 @@ async function runQuery(name, question) {
         () => generation === playGeneration && replay === replayGeneration);
     });
     const presentation = renderQueryAnswer(message, answer, {
+      animate: answerVisible(name),
       evidenceIds: ids, labelFor, evidenceEdges: snapshot.graph.data.edges,
       onEvidence: id => evidenceAtVersion(() => focusEvidence(id)),
-      onOpenBom: () => evidenceAtVersion(() => { cancelPendingReplay(); dashboard.openBom(0); }),
+      onOpenBom: () => evidenceAtVersion(() => { settleAnswer(panel); cancelPendingReplay(); dashboard.openBom(0); }),
       onReplay: () => replayEvidence(true),
       onCancel: () => { if (activeReplay === replayGeneration) cancelPendingReplay(); },
     });
-    // Answers and their immutable basis are visible before animation begins.
-    // Sending another question can cancel playback without hiding the answer.
+    panel.presentation = presentation;
+    // Text display is independent of the request and graph animation. A late
+    // completion can release only its own view, never a newer answer's view.
+    presentation.finished?.then(() => {
+      if (panel.presentation === presentation) panel.presentation = null;
+    }, () => {
+      presentation.finish?.();
+      if (panel.presentation === presentation) panel.presentation = null;
+    });
     if (ids.length) replayEvidence();
   } catch (error) {
     if (error.name === 'AbortError' || generation !== requestGeneration) return;
@@ -328,7 +356,7 @@ function mountCurrentGraph() {
   controls.prepend(switcher);
 }
 function invalidateView() {
-  for (const panel of Object.values(panels)) clearAgentWaiting(panel);
+  for (const panel of Object.values(panels)) { settleAnswer(panel, true); clearAgentWaiting(panel); }
   generation++; requests.abort(); requests = new AbortController(); cancelPendingReplay();
   graph?.destroy(); dashboard?.destroy(); twin?.destroy(); graph = null; dashboard = null; twin = null; snapshot = null; ontology = null; twinContextId = null;
   for (const name of SCREENS) { $(`${name}-view`).hidden = true; $(`${name}-panel`).replaceChildren(); }
@@ -382,7 +410,7 @@ async function loadSnapshot({ preserveMessages = false } = {}) {
 }
 async function refreshSnapshot() {
   if (!identity || refreshButton.disabled) return;
-  for (const panel of Object.values(panels)) clearAgentWaiting(panel);
+  for (const panel of Object.values(panels)) { settleAnswer(panel); clearAgentWaiting(panel); }
   generation++; requests.abort(); requests = new AbortController(); cancelPendingReplay();
   refreshButton.disabled = true;
   try { await loadSnapshot({ preserveMessages: true }); }
