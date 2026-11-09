@@ -30,8 +30,8 @@ DEC-H27의 제한된 자연어 CQ 읽기는 PR #3으로 main `848fe79`에 병합
 | 전체 온톨로지 | 클래스52·관계74·shape79 보존. INITIAL18노드/11관계 증거와 후속 BOM 전체 행/출처 연결 증거를 분리하며 전체 후속 업무·의미 검증은 잔여 |
 | 실제 BOM | Mac 제한 Runner로 전체 74행 보존, 선택 5품목 조건부 결정의 독립 검토·정확 버전 승인·반영 확인. 나머지 69행 UNRESOLVED, PARTIAL/제조 가능성 UNKNOWN. 원장/그래프 v2, 176노드/252관계. 최신 체크는 SERVICE-BOM-MAC 참조. 구성 충돌·기술검수·현장 재고 미확인은 유지 |
 | 선행 자연어 CQ 읽기 | `aecd23a` 당시 제한된 읽기 slice VERIFIED. 당시 Python 223 PASS·Node 11 PASS·읽기 API 9 PASS, 수동 UI·8870 재시작·보존 PASS. 원장/투영 v2·모델 호출0·업무 snapshot 불변. 납기 PARTIAL/실제 가능성 UNKNOWN, 명시 가정 What-if는 읽기 전용. SERVICE-CQ-NL 참조 |
-| Agent·실제 업무 | 로컬 Agent 브랜치의 제한된 T04~T07 Fake/읽기 경로 VERIFIED: 280 Python/12 Node, 실제 LangGraph 전문 조회·PostgreSQL checkpoint/질문 확인 재개·로컬 Langfuse metadata. 후속 실제 모델 연결1회 성공은 SERVICE-MODEL-20261109에 별도 기록. 이전 실패2건의 outcome_unknown 예약 보존. 부모 Task는 IN_PROGRESS, 업무 쓰기 승인 HITL·PR/PO/입하/IQC·실제 AI 품질은 미완료 |
-| 전체 인수와 실행 환경 | T00~T23 부모 집계는 IN_PROGRESS 14 / NOT_STARTED 10 / VERIFIED 0. Mac BOM·CQ·Agent의 부분 검증과 전체 잔여 범위를 구분. 전체 CQ20·Agent·전체 인수는 미완료. Cloud localhost와 Mac 접속 주소를 구분 |
+| Agent·실제 업무 | 기존 T04~T07 읽기 기반과 실제 연결 기록을 보존. DEC-H31에서 로컬 Hybrid 검색·기존 BOM 품목연결·두 읽기 Agent·내부 PR/PO/모의확인/입하/IQC를 연결해 345 Python/18 Node 및 격리 실제74행 v8/Neo4j 검증. 원래 Mac 원장v2 보존. 부모 IN_PROGRESS, 예약·불출·대체/쓰기 승인 HITL·실제 AI 품질/전체 인수는 잔여. 최신 SERVICE-MATERIAL-FLOW 참조 |
+| 전체 인수와 실행 환경 | T00~T23 부모 집계는 IN_PROGRESS 17 / NOT_STARTED 7 / VERIFIED 0. Mac BOM·CQ·Agent의 부분 검증과 전체 잔여 범위를 구분. 전체 CQ20·Agent·전체 인수는 미완료. Cloud localhost와 Mac 접속 주소를 구분 |
 
 현재 브랜치는 이전 환경의 미커밋 서비스/DB 복원본이 아니다. 사용자는 이전 환경 복구 대신 새 환경에서 진행하기로 결정했다. 과거 실행 기록을 현재 코드의 성공 증거로 이월하지 않는다.
 
@@ -77,3 +77,7 @@ DEC-H27의 제한된 자연어 CQ 읽기는 PR #3으로 main `848fe79`에 병합
 3. 전체 온톨로지 카탈로그와 INITIAL allowlist 변환·PostgreSQL opening balance의 현재 증거를 재사용한다. COMMANDS/EXPECTED의 업무별 변환·재생과 원본 BOM 검수는 별도로 남아 있다. 원본 버전과 서버 원장 버전을 구분하고 비공개 분석 스크립트를 그대로 실행하지 않는다.
 4. 현재의 Domain/outbox → RDF/Neo4j → SHACL·동일 버전 Graph/query → MK-S2 경로를 보존하면서 공식 선행 조건에 따라 확장한다. 이 준비 slice는 T09.1을 건너뛴 T10.1 완료가 아니다. 오프라인 전체 A-Box와 미래 사건·기대값을 현재 원장에 섞지 않는다.
 5. 최신 Agent/BOM 기록과 T00~T23의 남은 수용을 대조한다. 검증된 제한 기반에서 T11 권한 내 검색·T12 Product 추출/매핑과 T13~14 구매·입하/수입검사 연결을 의존성에 맞게 이어간다. T04~T07 부모를 완료 처리하지 않으며 원문 기술검수, 합성 시연, 전체 온톨로지 보존, 디자인, 실제 AI 품질은 각각 검증한다.
+
+## 최신 작업 · 2026-11-09
+
+[자재 확보 연결 기록](SERVICE-MATERIAL-FLOW-20261109.md)이 최신이다. 기존 MK-S2 BOM8단계와 본문 공급흐름 카드 안에 서버 기능을 연결했고, 별도 Product 등록 화면은 추가하지 않았다. 기존 Mac 업무 원장v2/전체74행을 보존한 채, 신규 구매·입하·IQC는 격리 복제본에서 v8까지 검증했다. T11/T12/T14는 IN_PROGRESS이며 전체1차 완료가 아니다. 예산은 기존10달러 범위를 유지하고 이번추가live0, 누적확정비용0.00128달러·미확정예약0.010932달러다. 다음 구현은 같은 MD의 T13 예약/자재이동·대체 승인 및 영속 업무승인/실시간 관련대화·전체인수 잔여를 따른다.

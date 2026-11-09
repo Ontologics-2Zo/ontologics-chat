@@ -135,10 +135,10 @@ DEC-H27의 최신 요청에 따라 `codex/cq68-natural-language`의 코드 `aecd
 | T08 | 제한 파서 Sandbox·Broker | BOM 업로드·추출 상태/오류 | T02, T04 | 1차 공통 기반 | IN_PROGRESS |
 | T09 | 실제 BOM 접수·검수·등록 | BOM 등록 드로어·전체 행·검토·비교 | T03, T08 | 1차 slice + 전체 잔여 | IN_PROGRESS |
 | T10 | 온톨로지·제약·투영·관계 조회 | 온톨로지 그래프·객체/관계 상세·버전·표 | T09 | 1차 slice + 전체 잔여 | IN_PROGRESS |
-| T11 | 근거 검색·Hybrid RAG | AI 근거·문서 상세·그래프 경로 | T10 | 1차 slice + 전체 잔여 | NOT_STARTED |
-| T12 | Product·추출·매핑 Agent | BOM 원문/추출/매핑 패널·AI 설명 | T06, T09, T11 | 1차 slice + 전체 잔여 | NOT_STARTED |
+| T11 | 근거 검색·Hybrid RAG | AI 근거·문서 상세·그래프 경로 | T10 | 1차 slice + 전체 잔여 | IN_PROGRESS |
+| T12 | Product·추출·매핑 Agent | BOM 원문/추출/매핑 패널·AI 설명 | T06, T09, T11 | 1차 slice + 전체 잔여 | IN_PROGRESS |
 | T13 | 자재 원장·수급·대체 검토 | 회차·자재표·기본/예측 비교·대체 후보·LOT 상세 | T03, T06, T09, T11 | 1차 slice + 전체 잔여 | IN_PROGRESS |
-| T14 | 구매·견적·발주·입고 일반화 | 견적카드·PR/PO 드로어·입하·수입검사·확보 진행 | T13 | 1차 slice + 전체 잔여 | NOT_STARTED |
+| T14 | 구매·견적·발주·입고 일반화 | 견적카드·PR/PO 드로어·입하·수입검사·확보 진행 | T13 | 1차 slice + 전체 잔여 | IN_PROGRESS |
 | T15 | 생산작업·일정·부분실적 | 생산 표·작업·일정·부분실적·완성품 입고 상세 | T13 | 후속 납품 | NOT_STARTED |
 | T16 | 계약·회차·분할출하·부분도착 | 회차·배분·출하·도착 표·상세·잔여 약속 | T15 | 후속 납품 | NOT_STARTED |
 | T17 | 보드·로트·장착 사건·시간 조사 | 온톨로지 조사·LOT/보드 상세·장착/제거/이력 보완 | T10, T15, T16 | 후속 추적 | NOT_STARTED |
@@ -424,3 +424,7 @@ DEC-H27의 최신 요청에 따라 `codex/cq68-natural-language`의 코드 `aecd
 모든 MD Task가 완료된 상태는 아니다. T04~T07의 제한된 읽기 Agent 기반을 이어 구현하며 [SERVICE-AGENT-20261108](SERVICE-AGENT-20261108.md)에 실제 검증과 잔여 범위를 분리한다. 이전 자연어 CQ PR #3은 main `848fe79`로 병합·Mac 검증을 마쳤다. 이번 작업은 그 main에서 분리한 `codex/agent-foundation`이며 자동 main 병합은 하지 않는다. T05~T07 부모는 IN_PROGRESS로 갱신하며, 전체 Product·Hybrid RAG·구매/입하/IQC·업무 승인 HITL·전체 CQ/규모 인수는 보존한다.
 
 이번 제한된 읽기 기반은 Python280/Node12·실제 로컬 Langfuse Fake 수집·Mac 작성자 A UI·영속 복구·파일/DB 보존을 검증했다. 부모 T04~T07은 IN_PROGRESS를 유지한다. 실제 모델 요청1회는 실패했으며 사용자가 충전 후 재개하기로 하여 현재 앱은 Fake다. 실제 AI 성공/의미 평가와 후속 전체 업무는 완료 처리하지 않는다.
+
+## 2026-11-09 자재 확보 연결 검증
+
+DEC-H31로 T11/T12/T14 부모를 IN_PROGRESS로 갱신했다. 로컬 근거 검색, 기존 BOM8단계 안의 품목 후보, 현재 재고와 내부 견적→PR/PO→모의 공급확인→입하/IQC 경로를 연결했다. 실제74행은 별도 복제DB/Neo4j에서 업무 사건을 검증했고 원래 Mac 원장v2·74행을 보존했다. 상세 명령·증거·남은 수용은 [자재 확보 실행 기록](SERVICE-MATERIAL-FLOW-20261109.md)을 따른다. 345 Python/18 Node 및 추가 targeted 검증은 해당 구현 범위의 증거이며 전체 부모/1차 완료가 아니다. 예약·불출·대체 승인, 영속 쓰기 HITL, 실시간 관련 대화 갱신, 실제 AI 품질·전체 CQ/규모 수용과 실제 기술검수는 남아 있다.

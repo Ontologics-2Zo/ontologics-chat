@@ -81,7 +81,12 @@
         "T10.1"
       ],
       "retained": "전체 corpus/CQ와 선택 검색 전략 평가",
-      "status": "NOT_STARTED"
+      "status": "IN_PROGRESS",
+      "current_material_flow_slice": {
+        "record": "docs/handoff/SERVICE-MATERIAL-FLOW-20261109.md",
+        "status": "VERIFIED",
+        "full_slice_complete": false
+      }
     },
     {
       "id": "T12.1",
@@ -93,7 +98,12 @@
         "T11.1"
       ],
       "retained": "전체 모델·형식·후속 사용례",
-      "status": "NOT_STARTED"
+      "status": "IN_PROGRESS",
+      "current_material_flow_slice": {
+        "record": "docs/handoff/SERVICE-MATERIAL-FLOW-20261109.md",
+        "status": "VERIFIED",
+        "full_slice_complete": false
+      }
     },
     {
       "id": "T13.1",
@@ -117,6 +127,11 @@
         "screen_verification": "VERIFIED",
         "restart_verification": "VERIFIED",
         "verified_code_commit": "aecd23add18615c33a051b43686a75a426929d01"
+      },
+      "current_material_flow_slice": {
+        "record": "docs/handoff/SERVICE-MATERIAL-FLOW-20261109.md",
+        "status": "VERIFIED",
+        "full_slice_complete": false
       }
     },
     {
@@ -127,7 +142,12 @@
         "T13.1"
       ],
       "retained": "다품목/다업무 일반화 및 전체 예외",
-      "status": "NOT_STARTED"
+      "status": "IN_PROGRESS",
+      "current_material_flow_slice": {
+        "record": "docs/handoff/SERVICE-MATERIAL-FLOW-20261109.md",
+        "status": "VERIFIED",
+        "full_slice_complete": false
+      }
     },
     {
       "id": "T19.1",
@@ -1144,7 +1164,7 @@
       ],
       "requirements_original_text": "EV01~02, AG16, AI03",
       "source_line": 1156,
-      "status": "NOT_STARTED",
+      "status": "IN_PROGRESS",
       "phase": "PHASE1_SLICE_AND_RETAINED_FULL",
       "sources": [
         {
@@ -1185,11 +1205,38 @@
       ],
       "scope_and_completion": "선택적 검색 전략은 측정 후 채택하되 기본 Hybrid RAG 연결을 생략하지 않는다.",
       "verification_commands": [],
-      "execution_evidence": [],
-      "actual_implementation_paths": [],
-      "actual_api_or_tool_contract": null,
+      "execution_evidence": [
+        {
+          "record": "docs/handoff/SERVICE-MATERIAL-FLOW-20261109.md",
+          "status": "VERIFIED",
+          "verification_ids": [
+            "MAT-RAG",
+            "MAT-REGRESSION",
+            "MAT-PRESERVE"
+          ],
+          "verified_code_commit": "8ba67fd80b8adeed0bf82bdba05aaa4a91b6f25e",
+          "scope": "권한·시점·버전의 R0/R1/R3 로컬 검색과 과거 근거 재열기. 광범위 검색 품질·전체 corpus와 R2/R4/R5 실험은 잔여.",
+          "parent_complete": false
+        }
+      ],
+      "actual_implementation_paths": [
+        "service/retrieval.py",
+        "service/retrieval_embedding.py",
+        "service/material_api.py",
+        "tests/test_retrieval.py",
+        "tests/test_retrieval_embedding.py"
+      ],
+      "actual_api_or_tool_contract": "retrieval.search/evidence with host-owned snapshot and identity",
       "blockers": [],
-      "goal_summary": "권한·동일버전 exact/lexical/vector 검색; 융합과 선택적 rerank/graph/rewrite profile; 원문 locator·evidence refs·ContextBuilder"
+      "goal_summary": "권한·동일버전 exact/lexical/vector 검색; 융합과 선택적 rerank/graph/rewrite profile; 원문 locator·evidence refs·ContextBuilder",
+      "remaining_acceptance": "권한·시점·버전의 R0/R1/R3 로컬 검색과 과거 근거 재열기. 광범위 검색 품질·전체 corpus와 R2/R4/R5 실험은 잔여.",
+      "current_material_flow_slice": {
+        "record": "docs/handoff/SERVICE-MATERIAL-FLOW-20261109.md",
+        "status": "VERIFIED",
+        "original_ledger_unchanged": true,
+        "isolated_actual_source_workflow": "VERIFIED",
+        "parent_complete": false
+      }
     },
     {
       "id": "T12",
@@ -1201,7 +1248,7 @@
       ],
       "requirements_original_text": "REG-01~04, AG16-02, AI01~03",
       "source_line": 1157,
-      "status": "NOT_STARTED",
+      "status": "IN_PROGRESS",
       "phase": "PHASE1_SLICE_AND_RETAINED_FULL",
       "sources": [
         {
@@ -1241,11 +1288,40 @@
       ],
       "scope_and_completion": "L1 먼저 연결하고 전체 모델/형식 일반화는 부모 Task 잔여로 보존한다.",
       "verification_commands": [],
-      "execution_evidence": [],
-      "actual_implementation_paths": [],
-      "actual_api_or_tool_contract": null,
+      "execution_evidence": [
+        {
+          "record": "docs/handoff/SERVICE-MATERIAL-FLOW-20261109.md",
+          "status": "VERIFIED",
+          "verification_ids": [
+            "MAT-PRODUCT",
+            "MAT-REGRESSION",
+            "MAT-PRESERVE"
+          ],
+          "verified_code_commit": "8ba67fd80b8adeed0bf82bdba05aaa4a91b6f25e",
+          "scope": "기존 BOM8단계 내 후보 검토·정확 초안/원장 버전·모호성·원문 보존. 전체 형식·실제 AI 추출 품질·기술검수는 잔여.",
+          "parent_complete": false
+        }
+      ],
+      "actual_implementation_paths": [
+        "service/product.py",
+        "service/product_contracts.py",
+        "service/agents/product.py",
+        "web/mks2/product.js",
+        "web/mks2/bom.js",
+        "tests/test_product.py",
+        "tests/test_product_workflow.py"
+      ],
+      "actual_api_or_tool_contract": "product.review + typed product_review Agent; existing BOM inline review",
       "blockers": [],
-      "goal_summary": "Product pipeline·Extraction/Mapping typed capability; 파서 결과 재사용·원문 근거·모호성/미확인 처리"
+      "goal_summary": "Product pipeline·Extraction/Mapping typed capability; 파서 결과 재사용·원문 근거·모호성/미확인 처리",
+      "remaining_acceptance": "기존 BOM8단계 내 후보 검토·정확 초안/원장 버전·모호성·원문 보존. 전체 형식·실제 AI 추출 품질·기술검수는 잔여.",
+      "current_material_flow_slice": {
+        "record": "docs/handoff/SERVICE-MATERIAL-FLOW-20261109.md",
+        "status": "VERIFIED",
+        "original_ledger_unchanged": true,
+        "isolated_actual_source_workflow": "VERIFIED",
+        "parent_complete": false
+      }
     },
     {
       "id": "T13",
@@ -1332,6 +1408,18 @@
           "automated_server_verification": "VERIFIED",
           "automated_server_scope": "Mac actual PostgreSQL/Neo4j/Runner suite223PASS in28.650s; live read-only API9PASS,ledger/projectionv2,model calls0,ledger mutations0,business snapshot unchanged,stale version409.",
           "verified_code_commit": "aecd23add18615c33a051b43686a75a426929d01"
+        },
+        {
+          "record": "docs/handoff/SERVICE-MATERIAL-FLOW-20261109.md",
+          "status": "VERIFIED",
+          "verification_ids": [
+            "MAT-STOCK",
+            "MAT-REGRESSION",
+            "MAT-PRESERVE"
+          ],
+          "verified_code_commit": "8ba67fd80b8adeed0bf82bdba05aaa4a91b6f25e",
+          "scope": "기초 원장을 보존한 입하/검사 현재 재고·품목/LOT 근거 계산. 69행 UNRESOLVED·실제 재고·동시 예약/불출/소비/반납·일반 대체 승인은 잔여.",
+          "parent_complete": false
         }
       ],
       "actual_implementation_paths": [
@@ -1341,7 +1429,8 @@
         "web/mks2/dashboard.js",
         "tests/test_materials.py",
         "service/query_answers.py",
-        "tests/test_query_answers.py"
+        "tests/test_query_answers.py",
+        "tests/test_query_inventory.py"
       ],
       "actual_api_or_tool_contract": "requirements_for_snapshot() feeds MK-S2 snapshot/query; full row decisions, aggregated same-item requirements, conditional yield, and UNKNOWN shortages.",
       "blockers": [],
@@ -1357,7 +1446,7 @@
         "screen_connection_scope": "이번 Mac 실제74행·선택5품목 조건부 범위의 수동 CUA 확인. UI 자동 suite나 전체 서비스 수용과 구분. 재시작 및 독립 보존 확인.",
         "implementation_note": "해당 직접 경로만 실행 확인. 원문 등록 승인은 제조 기술검수·전체 자재 확보가 아님"
       },
-      "remaining_acceptance": "선택5품목 조건부 소요/부족 서버 산술 대조 확인. 69행 UNRESOLVED·현장 재고·T06/T11 전문 기능과 수급 전체 수용은 잔여",
+      "remaining_acceptance": "기초 원장을 보존한 입하/검사 현재 재고·품목/LOT 근거 계산. 69행 UNRESOLVED·실제 재고·동시 예약/불출/소비/반납·일반 대체 승인은 잔여.",
       "application_check_history": [
         {
           "record": "docs/handoff/SERVICE-BOM-20261108.md",
@@ -1380,6 +1469,13 @@
         "screen_verification": "VERIFIED",
         "restart_verification": "VERIFIED",
         "verified_code_commit": "aecd23add18615c33a051b43686a75a426929d01"
+      },
+      "current_material_flow_slice": {
+        "record": "docs/handoff/SERVICE-MATERIAL-FLOW-20261109.md",
+        "status": "VERIFIED",
+        "original_ledger_unchanged": true,
+        "isolated_actual_source_workflow": "VERIFIED",
+        "parent_complete": false
       }
     },
     {
@@ -1390,7 +1486,7 @@
       ],
       "requirements_original_text": "PLN-04~06, R12-PUR, AG16-02",
       "source_line": 1159,
-      "status": "NOT_STARTED",
+      "status": "IN_PROGRESS",
       "phase": "PHASE1_SLICE_AND_RETAINED_FULL",
       "sources": [
         {
@@ -1437,11 +1533,40 @@
       ],
       "scope_and_completion": "1차 대표 업무의 끝은 자재 확보. 고객 도착이 없으면 잔여 약속68을 유지한다. 다품목/다업무 일반화 잔여는 부모 Task에 남긴다.",
       "verification_commands": [],
-      "execution_evidence": [],
-      "actual_implementation_paths": [],
-      "actual_api_or_tool_contract": null,
+      "execution_evidence": [
+        {
+          "record": "docs/handoff/SERVICE-MATERIAL-FLOW-20261109.md",
+          "status": "VERIFIED",
+          "verification_ids": [
+            "MAT-PROC",
+            "MAT-REGRESSION",
+            "MAT-PRESERVE"
+          ],
+          "verified_code_commit": "8ba67fd80b8adeed0bf82bdba05aaa4a91b6f25e",
+          "scope": "격리 실제74행 복제에서 견적/PR/PO/모의확인/입하/IQC·부분수량/반려/취소·exact 승인·재고/Neo4j 연결. 다업무 일반화·운영 역할·영속 쓰기 Agent HITL·전체 예외는 잔여.",
+          "parent_complete": false
+        }
+      ],
+      "actual_implementation_paths": [
+        "service/procurement.py",
+        "service/procurement_contracts.py",
+        "service/procurement_state.py",
+        "service/procurement_api.py",
+        "migrations/008_procurement.sql",
+        "web/mks2/procurement.js",
+        "tests/test_procurement.py"
+      ],
+      "actual_api_or_tool_contract": "procurement.options/create/revise/review/reject/approve/post; internal simulated event workflow",
       "blockers": [],
-      "goal_summary": "Procurement 기능·MOQ/배수/비용/유효기간 계산; PR/PO·공급확인·입하·검사 사건과 상태; 부분수량·품질·가용 전환 및 실시간 상태"
+      "goal_summary": "Procurement 기능·MOQ/배수/비용/유효기간 계산; PR/PO·공급확인·입하·검사 사건과 상태; 부분수량·품질·가용 전환 및 실시간 상태",
+      "remaining_acceptance": "격리 실제74행 복제에서 견적/PR/PO/모의확인/입하/IQC·부분수량/반려/취소·exact 승인·재고/Neo4j 연결. 다업무 일반화·운영 역할·영속 쓰기 Agent HITL·전체 예외는 잔여.",
+      "current_material_flow_slice": {
+        "record": "docs/handoff/SERVICE-MATERIAL-FLOW-20261109.md",
+        "status": "VERIFIED",
+        "original_ledger_unchanged": true,
+        "isolated_actual_source_workflow": "VERIFIED",
+        "parent_complete": false
+      }
     },
     {
       "id": "T15",
@@ -2134,14 +2259,14 @@
     }
   ],
   "source_access_rule": "공개 저장소에는 요약 인계와 참조 ID만 둔다. 실제 원본은 Git 밖 private_inputs에 별도 보관한다. 원본 접근이 없는 Cloud는 T00 원문·해시 전수 대조를 완료할 수 없으며 T09 원본 처리는 BLOCKED다. 허용된 공개 계약 기반 T01 준비 부분은 독립 진행하되 T00 완료나 T01 전체 수용으로 기록하지 않는다.",
-  "current_execution_record": "docs/handoff/SERVICE-AGENT-20261108.md",
+  "current_execution_record": "docs/handoff/SERVICE-MATERIAL-FLOW-20261109.md",
   "current_work_scope": {
-    "decision": "DEC-H29",
-    "branch": "codex/agent-foundation",
+    "decision": "DEC-H31",
+    "branch": "codex/phase1-material-flow",
     "base_main": "848fe79f3dae60148bf90fababbbd0b9639d8124",
     "status": "IN_PROGRESS",
-    "scope": "T04~T07 제한된 읽기 Agent: typed ports, canonical model accounting, local observation, LangGraph two specialist subgraphs, persistent clarification/recovery.",
-    "record": "docs/handoff/SERVICE-AGENT-20261108.md",
+    "scope": "T11/T12 local evidence + existing BOM candidate flow; T13 current stock; T14 internal purchasing/receipt/IQC and read specialists.",
+    "record": "docs/handoff/SERVICE-MATERIAL-FLOW-20261109.md",
     "no_parent_completion_from_partial_check": true,
     "domain_writes": false,
     "model_call_path": true,
@@ -2154,16 +2279,23 @@
       "status": "NOT_STARTED"
     },
     "current_runtime_mode": "live",
-    "live_dispatched_attempts": 3,
-    "live_successful_responses": 1,
+    "live_dispatched_attempts": 5,
+    "live_successful_responses": 3,
     "live_hold_reason": null,
     "bounded_fake_read_verification": "VERIFIED",
-    "python_tests_passed": 286,
-    "node_tests_passed": 12,
+    "python_tests_passed": 345,
+    "node_tests_passed": 18,
     "actual_model_scope": "Single approved live fulfillment routing + deterministic ledger read; general semantic quality and full Agent acceptance remain incomplete.",
     "live_unknown_attempts": 2,
     "latest_connection_record": "docs/handoff/SERVICE-MODEL-20261109.md",
-    "latest_connection_decision": "DEC-H30"
+    "latest_connection_decision": "DEC-H30",
+    "original_domain_writes": false,
+    "isolated_domain_writes": true,
+    "new_live_model_calls": 0,
+    "known_cost_usd": "0.00128",
+    "held_usd": "0.010932",
+    "runtime_ledger_version": 2,
+    "isolated_verified_ledger_version": 8
   },
   "retained_foundation_batch": [
     "T00",
@@ -2295,6 +2427,36 @@
         "final_restart_live_queries_preservation": "9e52976fca4a67346d03230c95a44e3a648b7cc4b3cb1e552ed9a08bc8b6176f",
         "native_browser": "3c82e6cd0fded7ff883038be69bdd476fb97367b3f10c6fde3f58302aad65f22"
       }
+    },
+    {
+      "decision": "DEC-H29",
+      "branch": "codex/agent-foundation",
+      "base_main": "848fe79f3dae60148bf90fababbbd0b9639d8124",
+      "status": "IN_PROGRESS",
+      "scope": "T04~T07 제한된 읽기 Agent: typed ports, canonical model accounting, local observation, LangGraph two specialist subgraphs, persistent clarification/recovery.",
+      "record": "docs/handoff/SERVICE-AGENT-20261108.md",
+      "no_parent_completion_from_partial_check": true,
+      "domain_writes": false,
+      "model_call_path": true,
+      "budget_scope": "mks2-agent-20261108",
+      "historical_spend": "PRESERVED_UNKNOWN",
+      "approved_new_budget_usd": "10",
+      "actual_model_verification": "VERIFIED",
+      "merge": {
+        "automatic_authorization": false,
+        "status": "NOT_STARTED"
+      },
+      "current_runtime_mode": "live",
+      "live_dispatched_attempts": 3,
+      "live_successful_responses": 1,
+      "live_hold_reason": null,
+      "bounded_fake_read_verification": "VERIFIED",
+      "python_tests_passed": 286,
+      "node_tests_passed": 12,
+      "actual_model_scope": "Single approved live fulfillment routing + deterministic ledger read; general semantic quality and full Agent acceptance remain incomplete.",
+      "live_unknown_attempts": 2,
+      "latest_connection_record": "docs/handoff/SERVICE-MODEL-20261109.md",
+      "latest_connection_decision": "DEC-H30"
     }
   ]
 }
