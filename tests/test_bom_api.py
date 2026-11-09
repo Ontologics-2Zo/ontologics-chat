@@ -60,6 +60,26 @@ class BomApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         return response.json(), args
 
+    def test_product_candidates_in_existing_draft_flow_preserve_document_and_ledger(self):
+        session = self.select()
+        doc, _ = self.create(session)
+        api_fixtures.ServiceApiIntegrationTests.mark_projection_ready(self)
+        before = self.client.get("/api/mks2/snapshot").json()
+        body = {"ledger_version": 1, "bom_id": doc["id"], "bom_version": doc["version"],
+                "payload_hash": doc["payload_hash"], "row_id": doc["content"]["rows"][0]["row_id"]}
+        response = self.client.post("/api/mks2/product/review", json=body, headers=self.headers(session))
+        self.assertEqual(response.status_code, 200, response.text)
+        result = response.json()
+        self.assertEqual(result["status"], "NEEDS_REVIEW")
+        self.assertEqual(result["ledger_mutations"], 0)
+        self.assertEqual(result["model_calls"], 0)
+        self.assertEqual(result["payload_hash"], doc["payload_hash"])
+        changed = self.client.post("/api/mks2/product/review", json={**body, "payload_hash": "f" * 64}, headers=self.headers(session))
+        self.error(changed, 409, "PRODUCT_BOM_VERSION_CHANGED")
+        self.assertEqual(self.client.get("/api/mks2/bom/documents/" + doc["id"]).json(),
+                         {key: value for key, value in doc.items() if key != "operation_id"})
+        self.assertEqual(self.client.get("/api/mks2/snapshot").json(), before)
+
     def test_bom_read_requires_identity_and_csrf_write_boundary(self):
         for route in ("/api/mks2/bom/sources", "/api/mks2/bom/documents"):
             self.error(self.client.get(route), 401, "IDENTITY_REQUIRED")

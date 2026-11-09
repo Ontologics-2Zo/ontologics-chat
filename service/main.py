@@ -48,7 +48,7 @@ class Snapshot(Contract):
 
 def create_app(db, *, private_root: str, origin="http://127.0.0.1:8870", dev_mode=False,
                reference_preview=False, catalog=None,projector=None,bom_runner=None,agent_settings=None,
-               agent_receipt_path=None):
+               agent_receipt_path=None, retrieval_embedding=None):
     parsed=urlsplit(origin)
     if parsed.scheme != "http" or parsed.hostname not in {"localhost","127.0.0.1"} or parsed.username or parsed.password or not parsed.port or parsed.path or parsed.query or parsed.fragment:
         raise ServiceError("LOCAL_ORIGIN_REQUIRED",503)
@@ -161,6 +161,9 @@ def create_app(db, *, private_root: str, origin="http://127.0.0.1:8870", dev_mod
             raise ServiceError("SNAPSHOT_MISMATCH")
         view=snapshot_view(payload)
         view["meta"]["identity_revision"]=actor.identity_revision
+        view["capabilities"].update({"product_review": "READ_ONLY", "retrieval": "LOCAL_HYBRID" if retrieval_embedding else "LOCAL_LEXICAL",
+            "purchase_write": "INTERNAL_DEVELOPMENT_ONLY", "bom_upload": "CHECK_RUNNER_ON_UPLOAD",
+            "agent": "ENABLED" if workflow else "DISABLED", "model": model_summary()["mode"]})
         return ToolOutput(data=view,snapshot=ctx,evidence_refs=[EvidenceRef(evidence_id=ctx.read_snapshot_id,source_version=str(ctx.ledger_version),content_hash=payload["metadata"]["source_sha256"])])
 
     def query_handler(actor,args,ctx):
@@ -206,6 +209,13 @@ def create_app(db, *, private_root: str, origin="http://127.0.0.1:8870", dev_mod
     ):
         gateway.register(ToolSpec("bom."+action,permission,True,input_model,bom_handler(action,model)))
     app.state.gateway=gateway
+
+    from service.material_api import mount_material_api
+    mount_material_api(app, identity=identity, ledger=ledger, bom=bom, gateway=gateway, principal=principal,
+                       context=context, verified_payload=verified_payload, embedding=retrieval_embedding)
+    from service.procurement_api import mount_procurement_api
+    mount_procurement_api(app, db=db, identity=identity, ledger=ledger, gateway=gateway,
+                         principal=principal, context=context, verified_payload=verified_payload)
 
     workflow, observer = None, None
     def model_summary(execution_id=None):

@@ -112,8 +112,13 @@ function createPanel(name) {
     input.value = ''; runQuery(name, question);
   });
   root.append(heading, context, messages, suggestions, form,
-    element('div', 'disclosure', `${snapshot.material_requirements?.bom_id ? '실제 BOM 원문 · 합성 초기 재고' : '합성 초기 이관 원장'} · 결정적 업무 조회. 실제 모델 호출·구매·승인 실행은 구분합니다.`));
+    element('div', 'disclosure', `${snapshot.material_requirements?.bom_id ? '실제 BOM 원문 · 합성 초기 재고' : '합성 초기 이관 원장'}${snapshot.meta.data_origins?.inventory === 'mixed_sources' ? ' · 개발 입하·검사 반영' : ''} · 결정적 업무 조회. 실제 모델 호출·구매·승인 실행은 구분합니다.`));
   panels[name] = { root, context, messages, suggestions, input, submit, pending: null };
+}
+function productInput() {
+  const bom = snapshot.bom;
+  return bom ? { ledger_version: snapshot.meta.ledger_version, bom_id: bom.bom_id,
+    bom_version: bom.bom_version, payload_hash: bom.payload_hash } : undefined;
 }
 async function agentQuery(panel, question, message, requestGeneration) {
   let state;
@@ -129,6 +134,7 @@ async function agentQuery(panel, question, message, requestGeneration) {
   let cursor = 0, reading = false, finished = false;
   const labels = { created: '실행 준비', route: '조회 기능 선택', validate: '권한과 기준 확인',
     fulfillment_read: '이행 수량 조회', material_analysis: '소요·부족 조회',
+    product_review: 'BOM 품목 후보 검토', procurement_review: '부족량·견적 비교',
     tool: '원장 근거 조회', validation: '결과 확인', completed: '조회 완료' };
   const progress = async () => {
     if (reading || finished || generation !== requestGeneration) return;
@@ -153,6 +159,7 @@ async function agentQuery(panel, question, message, requestGeneration) {
     const pending = panel.pending;
     state = pending?.capability
       ? await api(`${base}/resume`, { question, capability: pending.capability,
+        product: pending.capability === 'product_review' ? productInput() : undefined,
         expected_revision: pending.revision, idempotency_key: key })
       : await api(`${base}/run`, {});
   } finally { finished = true; clearInterval(timer); }
@@ -162,8 +169,10 @@ async function agentQuery(panel, question, message, requestGeneration) {
     message.replaceChildren(element('p', '', state.interrupt?.message || '조회할 업무를 확인해 주세요.'),
       element('p', 'note', '업무를 선택하고 질문을 보완하면 같은 실행을 이어갑니다. 원장 반영은 없습니다.'));
     for (const capability of state.interrupt?.allowed_capabilities || []) {
-      if (!['fulfillment_read', 'material_analysis'].includes(capability)) continue;
-      message.append(button(capability === 'fulfillment_read' ? '이행·생산 수량' : '소요·부족 수량', () => {
+      const capabilityLabels = { fulfillment_read: '이행·생산 수량', material_analysis: '소요·부족 수량',
+        product_review: 'BOM 품목 후보 검토', procurement_review: '부족량·견적 비교' };
+      if (!capabilityLabels[capability]) continue;
+      message.append(button(capabilityLabels[capability], () => {
         panel.pending = { ...state, capability };
         panel.input.placeholder = '선택한 업무에 맞게 질문을 보완해 주세요'; panel.input.focus();
       }));
@@ -280,7 +289,7 @@ async function loadSnapshot({ preserveMessages = false } = {}) {
   dashboard?.destroy();
   dashboard = mountDashboard($('dashboard-stage'), { snapshot, onSelect: setContext,
     onAsk: text => fillQuestion(text, 'dashboard'), onGraph: focusEvidence, api, getIdentity: () => identity,
-    onPosted: () => { refreshButton.textContent = 'BOM 반영 · 최신 원장 조회'; notify('BOM 등록이 반영됐습니다. 그래프 준비 후 최신 원장을 조회해 주세요.'); }, onRefresh: refreshSnapshot });
+    onPosted: () => { refreshButton.textContent = '업무 반영 · 최신 원장 조회'; notify('업무 사건이 반영됐습니다. 그래프 준비 후 최신 원장을 조회해 주세요.'); }, onRefresh: refreshSnapshot });
   mountCurrentGraph();
   const initialNode = data.graph.data.nodes.find(node => node.entity_ref?.entity_type === 'delivery_round' || node.type === 'DeliveryRound');
   const initialContext = initialNode?.node_id || initialNode?.id;

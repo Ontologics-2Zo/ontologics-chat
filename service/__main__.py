@@ -61,9 +61,13 @@ def main():
                 ledger.save_projection(row["company_id"],row["run_id"],row["ledger_version"],result,rdf)
 
         project_pending()
+        from service.retrieval_embedding import LocalMultilingualEmbedding
+        retrieval_settings = Path(args.runtime_file).resolve().parent / "model-settings.json"
+        retrieval_embedding = (LocalMultilingualEmbedding.from_settings(retrieval_settings)
+                               if retrieval_settings.is_file() else None)
         app=create_app(db,private_root=private_root,origin=f"http://127.0.0.1:{args.port}",dev_mode=args.dev_mode,
                        reference_preview=args.reference_preview,catalog=catalog,projector=projector,
-                       agent_settings=agent_settings,
+                       agent_settings=agent_settings, retrieval_embedding=retrieval_embedding,
                        agent_receipt_path=Path(args.runtime_file).resolve().parent / 'agent-observability.sqlite3')
 
         def worker():

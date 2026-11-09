@@ -131,9 +131,12 @@ class AgentStore:
                 raise ServiceError("AGENT_NOT_WAITING", 409)
             conn.execute("""INSERT INTO agent_resume_requests(execution_id,idempotency_key,request_hash)
                 VALUES (%s,%s,%s)""", (execution_id, request.idempotency_key, digest))
+            pending = {"capability": request.capability, "question": request.question}
+            if request.product is not None:
+                pending["product"] = request.product.model_dump(mode="json")
             conn.execute("""UPDATE agent_executions SET pending_resume=%s,status='CREATED',
                 revision=revision+1,updated_at=now() WHERE execution_id=%s""",
-                (Jsonb({"capability": request.capability, "question": request.question}), execution_id))
+                (Jsonb(pending), execution_id))
             self._event(conn, execution_id, None, "resume_requested", "CREATED")
             return True
 

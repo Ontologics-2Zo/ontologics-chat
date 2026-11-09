@@ -20,12 +20,19 @@ from service.agent_contracts import (AgentRequest, AgentResume, CHECKPOINT_VERSI
                                      SpecialistInput, WORKFLOW_VERSION)
 from service.agent_store import AgentStore, DurableAgentBudget, TERMINAL
 from service.agents import FulfillmentRead, MaterialAnalysis
+from service.agents.product import ProductReview
+from service.agents.procurement import ProcurementReview
 from service.contracts import content_hash
 from service.errors import ServiceError
 from service.query_intents import interpret_question
+from service.product_contracts import ProductReviewInput
 
 
-CAPABILITIES = {"fulfillment_read": FulfillmentRead, "material_analysis": MaterialAnalysis}
+CAPABILITIES = {"fulfillment_read": FulfillmentRead, "material_analysis": MaterialAnalysis,
+                "product_review": ProductReview, "procurement_review": ProcurementReview}
+CAPABILITY_TOOLS = {"fulfillment_read": "ledger.query", "material_analysis": "ledger.query",
+                    "product_review": "product.review", "procurement_review": "procurement.options"}
+MODEL_CAPABILITIES = frozenset({"fulfillment_read", "material_analysis"})
 PINNED_FIELDS = ("company_id", "read_snapshot_id", "ledger_version", "projection_version",
                  "ontology_version", "rule_version", "as_of", "known_as_of")
 
@@ -132,6 +139,8 @@ class AgentWorkflow:
         request = AgentResume.model_validate(request)
         row = self._owner(principal, execution_id)
         self._revalidate(principal, row)
+        if request.product is not None and request.product.ledger_version != row["pinned_context"]["ledger_version"]:
+            raise ServiceError("AGENT_SNAPSHOT_CHANGED", 409)
         changed = self.store.resume(str(row["execution_id"]), request)
         if not changed:
             return self.status(principal, execution_id)
@@ -148,12 +157,15 @@ class AgentWorkflow:
     def _build(self, principal, row, context, budget, saver):
         execution_id, segment_id, lease = str(row["execution_id"]), row["segment_id"], row["lease_token"]
 
-        def effective_input():
+        def effective_choice():
             current = self.store.get(execution_id)
             initial = current["request"]
-            choice = current["pending_resume"] or initial
+            return current["pending_resume"] or initial
+
+        def effective_input():
+            choice = effective_choice()
             return SpecialistInput(question=choice["question"], ledger_version=context.ledger_version,
-                                   context_entity_id=initial.get("context_entity_id")), choice.get("capability")
+                                   context_entity_id=row["request"].get("context_entity_id")), choice.get("capability")
 
         def observed(name, fn):
             def call(state):
@@ -197,7 +209,7 @@ class AgentWorkflow:
                 capability = None
             if capability == "needs_clarification":
                 capability = None
-            if capability is not None and capability not in CAPABILITIES:
+            if capability is not None and capability not in MODEL_CAPABILITIES:
                 raise ServiceError("AGENT_ROUTE_FORBIDDEN", 403)
             return {"capability": capability, "needs_clarification": capability is None}
 
@@ -211,13 +223,19 @@ class AgentWorkflow:
             choice = interrupt({"kind": "clarification", "message": message,
                                 "allowed_capabilities": list(CAPABILITIES)})
             request, persisted_capability = effective_input()
-            if not isinstance(choice, dict) or choice != {"capability": persisted_capability, "question": request.question}:
+            expected = {"capability": persisted_capability, "question": request.question}
+            product = effective_choice().get("product")
+            if product is not None:
+                expected["product"] = product
+            if not isinstance(choice, dict) or choice != expected:
                 raise ServiceError("AGENT_RESUME_INVALID", 409)
             return {"capability": persisted_capability, "result_ref": None, "needs_clarification": False}
 
         def specialist_node(capability):
             def call(state):
                 request, _ = effective_input()
+                if capability == "product_review":
+                    request = ProductReviewInput.model_validate(effective_choice().get("product"))
                 key = content_hash({"capability": capability, "input": request.model_dump(mode="json")})
                 prior = self.store.artifact(execution_id, key)
                 if prior:
@@ -225,7 +243,7 @@ class AgentWorkflow:
                     self.store.result(execution_id, prior["artifact_id"])
                     return {"result_ref": str(prior["artifact_id"])}
                 port = self.gateway.bind(principal=principal, context=context, budget=budget,
-                                         allowed_tools={"ledger.query"})
+                                         allowed_tools={CAPABILITY_TOOLS[capability]})
                 result = CAPABILITIES[capability]().run(request, port, context)
                 ref = self.store.put_artifact(execution_id, lease, key, result.data)
                 return {"result_ref": ref}

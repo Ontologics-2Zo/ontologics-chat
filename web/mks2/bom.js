@@ -1,5 +1,6 @@
 // BOM presentation and explicit commands. All parsing, authority, approval and
 // ledger effects belong to the server; local row edits remain unsaved drafts.
+import { createProductReview } from './product.js';
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 const count = value => Number.isInteger(value) ? value.toLocaleString('ko-KR') : '미확인';
 const stages = ['원본 접수', '개정 식별', '추출·검증', '개정 차이', '품목 연결', '등록 초안', '검토·승인', '반영'];
@@ -35,6 +36,10 @@ export function createBomDrawer({ snapshot, api, getIdentity = () => null, onPos
   let wrap = null, focusBefore = null, step = 0, active = null, sources = [], documents = [], runner = null;
   let busy = false, generation = 0, notice = '', failure = false, selectedRow = null;
   let drafts = new Map(), dirty = false, reviewNote = '', reviewerNote = '', acknowledged = false;
+  const product = createProductReview({ api, onChange: () => {
+    const slot = wrap?.querySelector('[data-product-review-slot]');
+    if (slot) slot.innerHTML = product.render();
+  } });
   const abort = new AbortController(), pendingCommands = new Map();
   const permitted = action => (getIdentity()?.permitted_actions || []).includes(action);
   const isAuthor = () => active?.created_by === getIdentity()?.actor_id;
@@ -46,11 +51,13 @@ export function createBomDrawer({ snapshot, api, getIdentity = () => null, onPos
   const currentLedger = () => snapshot.meta.current_ledger_version || snapshot.meta.ledger_version;
   const setNotice = (text, isError = false) => { notice = text; failure = isError; };
   function resetDrafts() {
+    product.reset();
     drafts = new Map(); dirty = false; selectedRow = null;
     reviewNote = content().review_note || ''; reviewerNote = ''; acknowledged = false;
   }
   function close() {
     generation++;
+    product.reset();
     if (!wrap) return;
     wrap.remove(); wrap = null; busy = false;
     focusBefore?.focus(); focusBefore = null;
@@ -128,13 +135,14 @@ export function createBomDrawer({ snapshot, api, getIdentity = () => null, onPos
     if (step === 1) return `${documentHeader()}${conflicts()}<section class="mk-drawer-block"><h3>원문 시트</h3><p>${esc([...new Set(allRows().map(row => row.sheet))].join(' · '))}</p><p>파일명·시트명·구성 식별이 다르면 차이를 해소한 근거가 필요합니다. 등록만으로 기술 검수 상태를 변경하지 않습니다.</p></section>`;
     if (step === 2) return `${stats()}${conflicts()}${rawTable()}`;
     if (step === 3) return `${documentHeader()}<section class="mk-drawer-block"><h3>개정 비교 범위</h3><p>현재 선택한 문서의 원본 hash와 버전을 표시합니다. 다른 원본·개정은 별도 등록 문서로 보관합니다. 자동 개정 차이 판정은 아직 연결되지 않았습니다.</p><p>행별 판단을 수정하면 문서 버전이 증가하며, 이전 승인 내용을 새 버전에 적용하지 않습니다.</p></section>`;
-    if (step === 4) return `${stats()}${conflicts()}${rowEditor()}${draftForm()}${rawTable()}`;
+    if (step === 4) return `${stats()}${conflicts()}${rowEditor()}<div data-product-review-slot>${product.render()}</div>${draftForm()}${rawTable()}`;
     if (step === 5) return `${documentHeader()}${stats()}${draftForm()}${rawTable()}`;
     if (step === 6) return `${documentHeader()}${conflicts()}${stats()}${approvalForm()}${rawTable()}`;
     return `${documentHeader()}${postedSection()}`;
   }
   function render() {
     if (!wrap) return;
+    if (step === 4 && active) product.load(snapshot, active, selectedRow || allRows()[0]?.row_id);
     const restoreFocus = wrap.contains(document.activeElement);
     wrap.innerHTML = `<div class="mk-drawer-scrim" data-close></div><section class="mk-drawer" role="dialog" aria-modal="true" aria-labelledby="mk-drawer-title" aria-busy="${busy}"><header><div><div class="mk-drawer-eyebrow">제품 구성 · BOM 원본 등록</div><h2 id="mk-drawer-title">${esc(snapshot.summary.configuration_id || 'BOM 등록')}</h2></div><button type="button" class="mk-btn" data-close>닫기</button></header><nav class="mk-drawer-steps" aria-label="BOM 처리 단계">${stages.map((label,index) => `<button type="button" data-bom-step="${index}" aria-current="${index === step ? 'step' : 'false'}"${busy ? ' disabled' : ''}>${label}</button>`).join('')}</nav><div class="mk-drawer-body"><div class="mk-bom-toolbar"><label class="mk-bom-field">등록 문서<select data-bom-field="document"${busy ? ' disabled' : ''}><option value="">등록 문서를 선택하세요</option>${documents.map(doc => option(doc.id, `${doc.content?.source?.filename || doc.id} · v${doc.version} · ${statuses[doc.status] || doc.status}`, active?.id)).join('')}</select></label>${button('다시 조회', 'reload', busy)}</div><p class="mk-bom-notice${failure ? ' error' : ''}" role="status" aria-live="polite">${esc(notice)}</p>${stageBody()}<p class="mk-preview-notice">현재 회사·계정의 서버 문서만 조회합니다. 단계 선택은 상태를 바꾸지 않으며 검토·승인·반영은 각각 명시적으로 실행합니다.</p></div></section>`;
     if (restoreFocus) (wrap.querySelector(`[data-bom-step="${step}"]:not(:disabled)`) || wrap.querySelector('.mk-drawer [data-close]')).focus();

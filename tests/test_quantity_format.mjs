@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { formatQuantity, mountDashboard } from '../web/mks2/dashboard.js';
+import { formatQuantity, mountDashboard, renderMaterialTableRows } from '../web/mks2/dashboard.js';
 
 test('positive fractional quantities retain every decimal digit', () => {
   assert.equal(formatQuantity('0.00001'), '0.00001');
@@ -48,7 +48,9 @@ test('material table renders a positive shortage instead of a rounded zero', () 
     dashboard = mountDashboard(container, { snapshot });
     const itemTable = container.innerHTML.match(/data-register="material-items"[\s\S]*?<\/table>/)?.[0];
     assert.ok(itemTable);
-    assert.match(itemTable, /<td>12\.00001<\/td><td>12<\/td><td>0\.00001<\/td>/);
+    assert.match(itemTable, /<td>12\.00001<small>/);
+    assert.match(itemTable, /<td>12<small>/);
+    assert.match(itemTable, /<td>0\.00001<\/td>/);
     assert.match(container.innerHTML, /전체 BOM 중 일부 품목 기준/);
     assert.match(container.innerHTML, /재고는 합성 초기 원장 기준/);
   } finally {
@@ -56,4 +58,19 @@ test('material table renders a positive shortage instead of a rounded zero', () 
     if (previousDocument === undefined) delete globalThis.document;
     else globalThis.document = previousDocument;
   }
+});
+
+test('item explanation escapes source text and distinguishes unit from review state', () => {
+  const row = { item_id: 'sample-item', item_entity_id: 'urn:sample', item_name: '<script>unsafe</script>',
+    unit: 'EA', unit_label: '개 (EA)', quantity_per_unit: '2', required_qty: '22',
+    available_qty: null, shortage_qty: null, quantity_status: 'UNKNOWN', conditional: true,
+    inventory_scope_label: '재고 범위 미확인', row_ids: ['sample'] };
+  const html = renderMaterialTableRows([row], { targetQty: 11 });
+  assert.ok(!html.includes('<script>'));
+  assert.match(html, /&lt;script&gt;/);
+  assert.match(html, /단위: 개 \(EA\)/);
+  assert.match(html, /11대 × 2/);
+  assert.match(html, /판정 보류/);
+  assert.match(html, /시연 입력 · 기술검수 대기/);
+  assert.ok(!html.includes('계산상 충족'));
 });

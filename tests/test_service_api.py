@@ -142,6 +142,40 @@ class ServiceApiIntegrationTests(unittest.TestCase):
         self.error(broken, 503, "SERVICE_UNAVAILABLE")
         self.assertNotIn("PRIVATE_DIAGNOSTIC_SENTINEL", broken.text)
 
+    def test_retrieval_evidence_is_authorized_versioned_read_without_mutation(self):
+        session = self.select()
+        self.mark_projection_ready()
+        before = self.client.get("/api/mks2/snapshot").json()
+        query = before["entities"][0]["display_id"]
+        body = {"ledger_version": 1, "query": query, "profile": "R0"}
+        response = self.client.post("/api/mks2/retrieval/search", json=body, headers=self.headers(session))
+        self.assertEqual(response.status_code, 200, response.text)
+        result = response.json()
+        self.assertEqual(result["status"], "HIT")
+        evidence = {"ledger_version": 1, "evidence_id": result["hits"][0]["evidence_id"],
+                    "corpus_version": result["meta"]["corpus_version"]}
+        response = self.client.post("/api/mks2/retrieval/evidence", json=evidence, headers=self.headers(session))
+        self.assertEqual(response.status_code, 200, response.text)
+        bad = self.client.post("/api/mks2/retrieval/search", json={**body, "ledger_version": 2}, headers=self.headers(session))
+        self.assertEqual(bad.status_code, 404)
+        missing_csrf = self.client.post("/api/mks2/retrieval/search", json=body, headers=self.headers())
+        self.assertEqual(missing_csrf.status_code, 403)
+        self.assertEqual(self.client.get("/api/mks2/snapshot").json(), before)
+
+    def test_product_requires_authorized_bom_and_procurement_read_does_not_create(self):
+        session = self.select()
+        self.mark_projection_ready()
+        before = self.client.get("/api/mks2/snapshot").json()
+        body = {"ledger_version": 1, "bom_id": "unregistered", "bom_version": 1, "payload_hash": "a" * 64}
+        response = self.client.post("/api/mks2/product/review", json=body, headers=self.headers(session))
+        self.error(response, 404, "BOM_NOT_FOUND")
+        response = self.client.post("/api/mks2/procurement/options", json={"ledger_version": 1}, headers=self.headers(session))
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["quotes"], [])
+        self.assertEqual(response.json()["ledger_mutations"], 0)
+        self.assertEqual(self.client.get("/api/mks2/procurement/documents").json()["documents"], [])
+        self.assertEqual(self.client.get("/api/mks2/snapshot").json(), before)
+
     def test_service_origin_requires_explicit_loopback_without_credentials(self):
         for origin in ("https://127.0.0.1:8870", "http://example.invalid:8870", "http://127.0.0.1",
                        "http://user:secret@127.0.0.1:8870", "http://127.0.0.1:8870/path"):

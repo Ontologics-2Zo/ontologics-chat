@@ -17,7 +17,7 @@ from uuid import uuid4
 
 from psycopg import sql
 
-from service.agent_contracts import AgentRequest
+from service.agent_contracts import AgentRequest, WORKFLOW_VERSION
 from service.agent_workflow import AgentWorkflow
 from service.contracts import Contract
 from service.db import Database
@@ -167,7 +167,7 @@ class AgentWorkflowTests(unittest.TestCase):
             conn.execute("UPDATE agent_executions SET workflow_version='incompatible' WHERE execution_id=%s", (pending["execution_id"],))
         self.assert_code("AGENT_WORKFLOW_CHANGED", lambda: self.workflow.resume(self.actor, pending["execution_id"], payload))
         with self.db.connect() as conn:
-            conn.execute("UPDATE agent_executions SET workflow_version='readonly-agent-v1' WHERE execution_id=%s", (pending["execution_id"],))
+            conn.execute("UPDATE agent_executions SET workflow_version=%s WHERE execution_id=%s", (WORKFLOW_VERSION, pending["execution_id"]))
             conn.execute("UPDATE identity_accounts SET policy_version=policy_version+1 WHERE actor_id=%s", (self.actor.actor_id,))
         fresh = self.identity.login("dev-operator-a").principal
         self.assert_code("AGENT_POLICY_CHANGED", lambda: self.workflow.resume(fresh, pending["execution_id"], payload))

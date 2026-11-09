@@ -275,7 +275,7 @@ class LedgerReader:
                     (company, run),
                 ).fetchone()
                 events = conn.execute(
-                    "SELECT event_id,ledger_version,event_type,payload,document_id,bom_document_id,recorded_at FROM ledger_events WHERE company_id=%s AND ledger_version>%s ORDER BY ledger_version",
+                    "SELECT event_id,ledger_version,event_type,payload,document_id,bom_document_id,procurement_document_id,recorded_at FROM ledger_events WHERE company_id=%s AND ledger_version>%s ORDER BY ledger_version",
                     (company, previous["ledger_version"]),
                 ).fetchall()
                 expected = previous["ledger_version"] + 1
@@ -285,6 +285,9 @@ class LedgerReader:
                         raise ServiceError("LEDGER_EVENT_GAP")
                     if event["event_type"] == "BomRegistered" and event["document_id"] is None and event["bom_document_id"] is not None:
                         snapshot = apply_bom_event(previous["payload"], event)
+                    elif event["event_type"] == "ProcurementPosted" and event["procurement_document_id"] is not None:
+                        from service.procurement_state import apply_procurement_event
+                        snapshot = apply_procurement_event(previous["payload"], event)
                     elif event["event_type"] == "EvidenceDocumentPosted" and event["document_id"] is not None:
                         event_payload = event["payload"]
                         if (event_payload.get("event_type") != "EvidenceDocumentPosted" or event_payload.get("company_id") != company
