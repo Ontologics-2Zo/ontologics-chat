@@ -190,6 +190,35 @@
         "screen_verification": "VERIFIED",
         "restart_verification": "VERIFIED",
         "verified_code_commit": "aecd23add18615c33a051b43686a75a426929d01"
+      },
+      "performance_baseline_20261110": {
+        "record": "docs/handoff/SERVICE-EVALUATION-20261110.md",
+        "status": "VERIFIED",
+        "scope": "bounded documented-contract baseline; not complete quality acceptance",
+        "service_revision": "0dce620fecda0d069bf3184a3b4cdad26a2739e4",
+        "harness_sha256": "856a768c05d4492c7f80da272d0cfeb37d3edd3c17646e24081ff2c995f5edaa",
+        "query_unique_cases": 24,
+        "query_samples": 120,
+        "query_expected_matches": 120,
+        "query_p50_ms": 295.841167,
+        "query_p95_ms": 334.390959,
+        "live_route_unique_cases": 7,
+        "live_route_calls": 14,
+        "live_route_matches": 14,
+        "live_cost_usd": "0.00657",
+        "live_agent_e2e_p50_ms": 7424.568792,
+        "live_agent_e2e_p95_ms": 10650.064125,
+        "recovery_unique_faults": 2,
+        "recovery_runs": 6,
+        "recovery_pass": 6,
+        "qualitative_cases": 8,
+        "qualitative_axes": 5,
+        "qualitative_mean": 3.925,
+        "qualitative_evaluator": "DEVELOPMENT_COLLABORATION_AI_REVIEW",
+        "independent_human_gold": false,
+        "unresolved_qualitative_scope_overclaims": 1,
+        "parent_complete": false,
+        "full_cq_comparison_scale_business_effects": "NOT_MEASURED"
       }
     }
   ],
@@ -2409,7 +2438,8 @@
         "screen_verification": "VERIFIED",
         "restart_verification": "VERIFIED",
         "verified_code_commit": "aecd23add18615c33a051b43686a75a426929d01"
-      }
+      },
+      "performance_baseline_record": "docs/handoff/SERVICE-EVALUATION-20261110.md"
     },
     {
       "id": "T23",
