@@ -18,6 +18,7 @@ let snapshot, ontology, graph, dashboard, identity, csrfToken;
 let contextId, noticeTimer, generation = 0, replayGeneration = 0, schemaMode = false;
 let requests = new AbortController();
 let polling = false, latestVersion = null;
+let agentMode = 'disabled';
 const refreshButton = button('최신 원장 조회', refreshSnapshot);
 refreshButton.id = 'refresh-ledger'; refreshButton.hidden = true;
 $('reset').before(refreshButton);
@@ -87,7 +88,27 @@ function updateSuggestions(container, name) {
   const questions = snapshot.suggested_questions || snapshot.suggestions || [];
   for (const question of questions) if (typeof question === 'string') container.append(button(question, () => fillQuestion(question, name), 'suggestion'));
 }
+function clearAgentWaiting(panel) {
+  if (!panel) return;
+  for (const control of panel.waiting?.controls || []) control.disabled = true;
+  panel.waiting = null;
+  panel.pending = null;
+  panel.input.placeholder = '질문하면 같은 버전의 원장 근거를 조회합니다';
+}
+function agentSnapshotMatches(state) {
+  const basis = state?.snapshot, meta = snapshot?.meta;
+  return !!basis && !!meta && !!identity
+    && basis.context_revision === identity.identity_revision
+    && basis.company_id === identity.company_id && basis.company_id === meta.company_id
+    && basis.read_snapshot_id === meta.snapshot_id
+    && basis.ledger_version === meta.ledger_version && basis.projection_version === meta.projection_version;
+}
+function currentAgentWaiting(panel, waiting) {
+  return !!waiting && panel.waiting === waiting && waiting.generation === generation
+    && waiting.state.status === 'WAITING' && agentSnapshotMatches(waiting.state);
+}
 function createPanel(name) {
+  clearAgentWaiting(panels[name]);
   const root = $(`${name}-panel`); root.replaceChildren();
   const heading = element('div', 'panel-heading');
   heading.append(element('h2', '', name === 'graph' ? '업무 AI 질의' : '업무 에이전트'), element('span', 'tag', '원장 근거 조회'));
@@ -111,8 +132,109 @@ function createPanel(name) {
     input.value = ''; runQuery(name, question);
   });
   root.append(heading, context, messages, suggestions, form,
-    element('div', 'disclosure', `${snapshot.material_requirements?.bom_id ? '실제 BOM 원문 · 합성 초기 재고' : '합성 초기 이관 원장'} · 결정적 업무 조회. 실제 모델 호출·구매·승인 실행은 구분합니다.`));
-  panels[name] = { root, context, messages, suggestions, input, submit };
+    element('div', 'disclosure', `${snapshot.material_requirements?.bom_id ? '실제 BOM 원문 · 합성 초기 재고' : '합성 초기 이관 원장'}${snapshot.meta.data_origins?.inventory === 'mixed_sources' ? ' · 개발 입하·검사 반영' : ''} · 결정적 업무 조회. 실제 모델 호출·구매·승인 실행은 구분합니다.`));
+  panels[name] = { root, context, messages, suggestions, input, submit, pending: null, waiting: null };
+}
+function productInput() {
+  const bom = snapshot.bom;
+  return bom ? { ledger_version: snapshot.meta.ledger_version, bom_id: bom.bom_id,
+    bom_version: bom.bom_version, payload_hash: bom.payload_hash } : undefined;
+}
+async function agentQuery(panel, question, message, requestGeneration) {
+  let state;
+  const key = crypto.randomUUID();
+  const waiting = panel.waiting;
+  if (panel.pending && (!currentAgentWaiting(panel, waiting)
+      || panel.pending.execution_id !== waiting.state.execution_id
+      || panel.pending.revision !== waiting.state.revision)) clearAgentWaiting(panel);
+  const pending = panel.pending;
+  if (pending?.capability) {
+    state = pending;
+    waiting.inflight = true;
+    for (const control of waiting.controls) control.disabled = true;
+  } else {
+    // A new question supersedes unselected clarification buttons, while their
+    // original answer text remains in the conversation.
+    clearAgentWaiting(panel);
+    state = await api('/api/mks2/agent/executions', { question,
+      ledger_version: snapshot.meta.ledger_version, context_entity_id: contextId || undefined,
+      idempotency_key: key });
+  }
+  if (generation !== requestGeneration) return null;
+  const base = `/api/mks2/agent/executions/${encodeURIComponent(state.execution_id)}`;
+  let cursor = 0, reading = false, finished = false;
+  const labels = { created: '실행 준비', route: '조회 기능 선택', validate: '권한과 기준 확인',
+    fulfillment_read: '이행 수량 조회', material_analysis: '소요·부족 조회',
+    product_review: 'BOM 품목 후보 검토', procurement_review: '부족량·견적 비교',
+    tool: '원장 근거 조회', validation: '결과 확인', completed: '조회 완료' };
+  const progress = async () => {
+    if (reading || finished || generation !== requestGeneration) return;
+    reading = true;
+    try {
+      const response = await fetch(`${base}/events?after=${cursor}`, { credentials: 'same-origin',
+        cache: 'no-store', signal: requests.signal,
+        headers: { 'X-Identity-Revision': identity?.identity_revision || '' } });
+      if (!response.ok) return;
+      const stream = await response.text();
+      for (const line of stream.split('\n')) if (line.startsWith('data: ')) {
+        const event = JSON.parse(line.slice(6));
+        cursor = Math.max(cursor, event.sequence || 0);
+        if (!finished && generation === requestGeneration) message.textContent =
+          `업무 조회 진행 · ${labels[event.stage] || '서버 처리 중'} · 원장 변경 없음`;
+      }
+    } catch { /* The authoritative run response handles connection/auth errors. */ }
+    finally { reading = false; }
+  };
+  const timer = setInterval(progress, 750);
+  try {
+    state = pending?.capability
+      ? await api(`${base}/resume`, { question, capability: pending.capability,
+        product: pending.capability === 'product_review' ? productInput() : undefined,
+        expected_revision: pending.revision, idempotency_key: key })
+      : await api(`${base}/run`, {});
+  } catch (error) {
+    if (pending && panel.waiting === waiting) {
+      // Busy/projection errors can be retried. An obsolete revision, policy,
+      // snapshot, terminal execution or expired deadline needs a new question.
+      const retryableConflict = ['AGENT_EXECUTION_BUSY', 'PROJECTION_NOT_READY'].includes(error.message);
+      if ((error.status === 409 && !retryableConflict) || [403, 404, 408].includes(error.status)) clearAgentWaiting(panel);
+      else if (currentAgentWaiting(panel, waiting)) {
+        waiting.inflight = false;
+        for (const control of waiting.controls) control.disabled = false;
+      }
+    }
+    throw error;
+  } finally { finished = true; clearInterval(timer); }
+  if (generation !== requestGeneration) return null;
+  clearAgentWaiting(panel);
+  if (state.status === 'WAITING') {
+    if (!agentSnapshotMatches(state)) { const error = new Error('SNAPSHOT_MISMATCH'); error.status = 409; throw error; }
+    const nextWaiting = { state, generation: requestGeneration, controls: [], inflight: false };
+    panel.waiting = nextWaiting;
+    message.replaceChildren(element('p', '', state.interrupt?.message || '조회할 업무를 확인해 주세요.'),
+      element('p', 'note', '업무를 선택하고 질문을 보완하면 같은 실행을 이어갑니다. 원장 반영은 없습니다.'));
+    for (const capability of state.interrupt?.allowed_capabilities || []) {
+      const capabilityLabels = { fulfillment_read: '이행·생산 수량', material_analysis: '소요·부족 수량',
+        product_review: 'BOM 품목 후보 검토', procurement_review: '부족량·견적 비교' };
+      if (!capabilityLabels[capability]) continue;
+      const control = button(capabilityLabels[capability], () => {
+        if (!currentAgentWaiting(panel, nextWaiting) || nextWaiting.inflight || panel.submit.disabled) return;
+        panel.pending = { ...state, capability };
+        panel.input.placeholder = '선택한 업무에 맞게 질문을 보완해 주세요'; panel.input.focus();
+      });
+      nextWaiting.controls.push(control);
+      message.append(control);
+    }
+    return null;
+  }
+  if (!state.result) {
+    message.replaceChildren(element('p', '', state.status === 'CANCELLED' ? '실행이 취소되었습니다.' : '업무 조회를 완료하지 못했습니다.'),
+      element('p', 'note', `상태 · ${state.error_code || state.status} · 원장 변경 없음`));
+    return null;
+  }
+  return { ...state.result, agent_execution: { execution_id: state.execution_id,
+    status: state.status, mode: state.model?.mode, live_calls: state.model?.live_calls || 0,
+    fake_calls: state.model?.fake_calls || 0, tool_calls: state.tool_calls } };
 }
 async function runQuery(name, question) {
   const panel = panels[name], requestGeneration = generation;
@@ -120,8 +242,11 @@ async function runQuery(name, question) {
   const message = element('div', 'message assistant', '원장과 근거를 조회하고 있습니다.'); panel.messages.append(message);
   cancelPendingReplay();
   try {
-    const answer = await api('/api/mks2/query', { question, ledger_version: snapshot.meta.ledger_version,
-      context_entity_id: contextId || undefined });
+    const answer = name === 'dashboard' && agentMode !== 'disabled'
+      ? await agentQuery(panel, question, message, requestGeneration)
+      : await api('/api/mks2/query', { question, ledger_version: snapshot.meta.ledger_version,
+        context_entity_id: contextId || undefined });
+    if (!answer) return;
     if (generation !== requestGeneration) return;
     if (answer.meta?.identity_revision !== identity?.identity_revision || answer.meta?.company_id !== identity?.company_id) {
       identity = null; csrfToken = null; invalidateView(); throw new Error('IDENTITY_CHANGED');
@@ -145,7 +270,7 @@ async function runQuery(name, question) {
         () => generation === playGeneration && replay === replayGeneration);
     });
     const presentation = renderQueryAnswer(message, answer, {
-      evidenceIds: ids, labelFor,
+      evidenceIds: ids, labelFor, evidenceEdges: snapshot.graph.data.edges,
       onEvidence: id => evidenceAtVersion(() => focusEvidence(id)),
       onReplay: () => replayEvidence(true),
       onCancel: () => { if (activeReplay === replayGeneration) cancelPendingReplay(); },
@@ -175,6 +300,7 @@ function mountCurrentGraph() {
   controls.prepend(switcher);
 }
 function invalidateView() {
+  for (const panel of Object.values(panels)) clearAgentWaiting(panel);
   generation++; requests.abort(); requests = new AbortController(); cancelPendingReplay();
   graph?.destroy(); dashboard?.destroy(); graph = null; dashboard = null; snapshot = null; ontology = null;
   for (const name of ['graph', 'dashboard']) { $(`${name}-view`).hidden = true; $(`${name}-panel`).replaceChildren(); }
@@ -204,6 +330,7 @@ async function loadSnapshot({ preserveMessages = false } = {}) {
   $('versions').title = `원천 버전 ${data.meta.source_ledger_version ?? '미확인'} · ${data.meta.snapshot_id ?? ''}`;
   if (!preserveMessages) { createPanel('graph'); createPanel('dashboard'); }
   else for (const [name, panel] of Object.entries(panels)) {
+    clearAgentWaiting(panel);
     panel.context.textContent = `현재 원장 v${data.meta.ledger_version} · 이전 답변은 각 답변의 기준 버전을 유지합니다.`;
     panel.submit.disabled = false;
     updateSuggestions(panel.suggestions, name);
@@ -212,7 +339,7 @@ async function loadSnapshot({ preserveMessages = false } = {}) {
   dashboard?.destroy();
   dashboard = mountDashboard($('dashboard-stage'), { snapshot, onSelect: setContext,
     onAsk: text => fillQuestion(text, 'dashboard'), onGraph: focusEvidence, api, getIdentity: () => identity,
-    onPosted: () => { refreshButton.textContent = 'BOM 반영 · 최신 원장 조회'; notify('BOM 등록이 반영됐습니다. 그래프 준비 후 최신 원장을 조회해 주세요.'); }, onRefresh: refreshSnapshot });
+    onPosted: () => { refreshButton.textContent = '업무 반영 · 최신 원장 조회'; notify('업무 사건이 반영됐습니다. 그래프 준비 후 최신 원장을 조회해 주세요.'); }, onRefresh: refreshSnapshot });
   mountCurrentGraph();
   const initialNode = data.graph.data.nodes.find(node => node.entity_ref?.entity_type === 'delivery_round' || node.type === 'DeliveryRound');
   const initialContext = initialNode?.node_id || initialNode?.id;
@@ -221,6 +348,7 @@ async function loadSnapshot({ preserveMessages = false } = {}) {
 }
 async function refreshSnapshot() {
   if (!identity || refreshButton.disabled) return;
+  for (const panel of Object.values(panels)) clearAgentWaiting(panel);
   generation++; requests.abort(); requests = new AbortController(); cancelPendingReplay();
   refreshButton.disabled = true;
   try { await loadSnapshot({ preserveMessages: true }); }
@@ -268,6 +396,7 @@ async function signOut() {
 }
 async function start() {
   try {
+    const health = await api('/health'); agentMode = health.agent?.mode || 'disabled';
     const state = await api('/api/mks2/session'); identity = state.principal; csrfToken = state.csrf_token;
     const prompt = element('option', '', '계정 선택 / 세션 종료'); prompt.value = '';
     $('actor').replaceChildren(prompt, ...(state.profiles || []).map(profile => {

@@ -48,16 +48,43 @@ def section(identifier, title, origin, items, status="ANSWERED"):
             "status": status, "items": items}
 
 
+def inventory_origin(rows):
+    origins = set()
+    for row in rows:
+        origin = row.get("inventory_origin")
+        if origin == "DEVELOPMENT_RECEIPT":
+            origins.add("development_workflow")
+        elif origin == "OPENING_AGGREGATE_PLUS_DEVELOPMENT_RECEIPTS":
+            origins.update((SYNTHETIC, "development_workflow"))
+        else:
+            origins.add(SYNTHETIC)
+    return next(iter(origins)) if len(origins) == 1 else "mixed_sources" if origins else "unknown"
+
+
 def _result(view, plan, *, answer, status="ANSWERED", sections=(), kinds=(),
             include_bom=False, selected_items=(), selected_lot=None, conclusion=None):
     """Bind claims to the current BOM only, while preserving graph history."""
     active = view.get("bom")
     selected_items = set(selected_items)
     ids = set()
+    procurement = view.get("procurement", {})
+    # Material shortages use all stock for the selected item, even when the
+    # question starts from a LOT. Their evidence must cover that same scope.
+    lot_scope = selected_lot if not set(plan.intents) & {"materials", "delivery"} else None
+    receipts = [row for row in procurement.get("receipts", [])
+                if (not selected_items or row["item_id"] in selected_items)
+                and (not lot_scope or row["lot_code"] == lot_scope)]
+    receipt_ids = {row["receipt_id"] for row in receipts}
+    development_docs = receipt_ids | {row["id"] for row in procurement.get("documents", [])
+        if row["kind"] == "IQC" and row["content"]["resolved"]["parent"]["id"] in receipt_ids}
+    if receipts and set(plan.intents) & {"materials", "inventory", "delivery"}:
+        kinds = set(kinds) | {"PartsReceiptLine", "InspectionResult", "DocumentVersion", "ApprovalGrant"}
     for node in view["entities"]:
         if node["type"] not in kinds:
             continue
         evidence = node.get("evidence", {})
+        if evidence.get("record_type") == "development_procurement" and evidence.get("document_id") not in development_docs:
+            continue
         if evidence.get("record_type") == "bom_registration":
             if not include_bom or not active or (evidence.get("bom_id"), evidence.get("bom_version")) != (active["bom_id"], active["bom_version"]):
                 continue
@@ -65,7 +92,8 @@ def _result(view, plan, *, answer, status="ANSWERED", sections=(), kinds=(),
             continue
         if node["type"] == "PartLot":
             relevant_lots = {row.get("lot_id") for row in view["inventory"] if not selected_items or row["item_id"] in selected_items}
-            if node["display_id"] not in relevant_lots or (selected_lot and node["display_id"] != selected_lot):
+            relevant_lots.update(row["lot_code"] for row in receipts)
+            if node["display_id"] not in relevant_lots or (lot_scope and node["display_id"] != lot_scope):
                 continue
         ids.add(node["id"])
     edges = [edge for edge in view["relationships"] if edge["source"] in ids and edge["target"] in ids]
@@ -78,6 +106,12 @@ def _result(view, plan, *, answer, status="ANSWERED", sections=(), kinds=(),
         refs.append({"source_sha256": active["source"]["sha256"], "record_type": "bom_registration",
                      "origin": "actual_bom", "bom_id": active["bom_id"], "bom_version": active["bom_version"],
                      "payload_hash": active["payload_hash"], "snapshot_id": view["meta"]["snapshot_id"]})
+    for node in view["entities"]:
+        evidence = node.get("evidence", {})
+        if node["id"] in ids and evidence.get("record_type") == "development_procurement":
+            ref = {**deepcopy(evidence), "origin": "development_workflow", "snapshot_id": view["meta"]["snapshot_id"]}
+            if ref not in refs:
+                refs.append(ref)
     return {"status": status, "answer": answer, "conclusion": conclusion,
             "intent": list(plan.intents), "intent_label": " · ".join(LABELS[k] for k in plan.intents),
             "sections": list(sections), "meta": deepcopy(view["meta"]),
@@ -244,9 +278,12 @@ def answer_query(question, view, ontology, *, context_entity_id=None):
             rows = [row for row in req["items"] if not selected or row["item_id"] in selected]
             entries = []
             for row in rows:
+                stock_origin = inventory_origin([entry for entry in view["inventory"] if entry["item_id"] == row["item_id"]])
+                stock_label = {SYNTHETIC: "합성 기초 원장", "development_workflow": "개발 입하·수입검사 원장",
+                               "mixed_sources": "합성 기초 원장과 개발 입하·수입검사 원장", "unknown": "출처 미확인"}[stock_origin]
                 entries.append(item(row["item_id"],
                     f"소요 {number(row['required_qty'])} / {number(row['planned_required_qty'])} {row['unit']} · 가용 {number(row['available_qty'])} {row['unit']} · 부족 {number(row['shortage_qty'])} / {number(row['planned_shortage_qty'])} {row['unit']}",
-                    f"앞은 양품 목표 {basis['production_remaining_qty']}대, 뒤는 계획 투입 {basis['planned_input_qty']}대 기준. 대당 {number(row['quantity_per_unit'])} {row['unit']}, 원문 {len(row['row_ids'])}행 합산. 적용 매핑·수량은 {'시연 가정' if row['conditional'] else '검토된 적용 판단'}, 재고는 합성 기초 원장입니다.",
+                    f"앞은 양품 목표 {basis['production_remaining_qty']}대, 뒤는 계획 투입 {basis['planned_input_qty']}대 기준. 대당 {number(row['quantity_per_unit'])} {row['unit']}, 원문 {len(row['row_ids'])}행 합산. 적용 매핑·수량은 {'시연 가정' if row['conditional'] else '검토된 적용 판단'}, 재고는 {stock_label}입니다.",
                     DEMO if row["conditional"] else "reviewed_application"))
             if not entries:
                 entries.append(item("선택 품목 소요·부족", "미확인", "현재 BOM의 검토된 적용 행과 선택 품목 연결이 필요합니다.", "unknown"))
@@ -264,14 +301,17 @@ def answer_query(question, view, ontology, *, context_entity_id=None):
         sections.append(section("material_unknowns", "전체 자재 판단에 남은 확인", "unknown", [
             item("부족량 미확인", f"{req['unknown_shortage_count']}행" if req["bom_id"] else "전체 BOM", "미검수·미매핑·단위 또는 재고 미확인은 부족 0을 뜻하지 않습니다."),
             item("제조 기술검수", s["technical_review"], "제품 구성·개정·품목 동일성·단위·실장 여부를 확인해야 합니다."),
-            item("현장 재고", "미확인", "합성 초기 재고·예약·보류량으로 계산했으며 실제 현장 재고 확정이 아닙니다."),
+            item("현장 재고", "미확인", "합성 초기 재고와 개발 원장에 반영된 입하·검사 기록으로 계산합니다. 실제 현장 재고 확정이 아닙니다."),
         ], "UNKNOWN"))
 
     if "inventory" in intents:
         kinds.update({"InternalItem", "PartLot"})
         rows = [row for row in view["inventory"] if (not selected or row["item_id"] in selected)
                 and (selected_lot is None or row.get("lot_id") == selected_lot)]
-        sections.append(section("inventory", "현재 가용 재고 · 합성 기초 이관", SYNTHETIC, [
+        origin = inventory_origin(rows)
+        label = {SYNTHETIC: "합성 기초 이관", "development_workflow": "개발 입하·수입검사",
+                 "mixed_sources": "기초 이관 + 개발 입하·수입검사", "unknown": "미확인"}[origin]
+        sections.append(section("inventory", "현재 가용 재고 · " + label, origin, [
             item(row.get("lot_id") or row["item_id"], f"{number(row.get('available_qty'))} {row.get('unit') or '단위 미확인'}",
                  f"보유 {number(row.get('on_hand_qty'))} − 타 수요 예약 {number(row.get('reserved_other_qty'))} − 보류 {number(row.get('held_qty'))}. 자기 예약은 다시 차감하지 않습니다.")
             for row in rows] or [item("재고", "미확인", "선택 품목의 재고 근거가 없습니다.", "unknown")]))

@@ -13,6 +13,20 @@ from decimal import Decimal, InvalidOperation
 RULE_VERSION = "bom-material-requirements/1"
 
 
+CALCULATION_POLICY = {
+    "id": "material-calculation/1", "label": "자재 계산 기준 v1",
+    "status": "CURRENT_IMPLEMENTATION", "company_policy_approval": "NOT_RECORDED",
+    "default_basis": "production_remaining",
+    "rules": [
+        {"id": "REQUIREMENT", "text": "같은 품목·단위의 대당 수량을 합산한 뒤 기준 생산 대수를 곱합니다."},
+        {"id": "AVAILABLE", "text": "가용 = 보유 − 다른 수요 예약 − 보류·검사대기. 이 수요의 자기예약은 다시 빼지 않습니다."},
+        {"id": "SHORTAGE", "text": "부족 = max(소요 − 가용, 0). 단위·재고·품목 연결 미확인은 0 대신 미확인으로 둡니다."},
+        {"id": "YIELD", "text": "수율 반영 투입 = 올림(추가 양품 목표 ÷ 계획 수율). 계획 수율은 실적이나 양품 보장이 아닙니다."},
+        {"id": "COVERAGE", "text": "미검수 BOM 행을 전체 판정에서 제외하지 않으며, 부분 충족을 전체 제조 가능으로 확정하지 않습니다."},
+    ],
+}
+
+
 def _decimal(value, *, positive=False):
     if value is None or isinstance(value, bool) or not isinstance(value, (str, int, float, Decimal)):
         return None
@@ -85,6 +99,7 @@ def requirements_for_snapshot(payload, *, plan_yield="0.94"):
                   "good_output_guaranteed": False},
         "rows": [], "items": [], "has_demo_assumptions": False,
         "inventory_is_synthetic": True, "manufacturing_feasibility": "UNKNOWN",
+        "calculation_policy": deepcopy(CALCULATION_POLICY),
     }
     bom = payload.get("bom")
     if not bom:
@@ -141,6 +156,7 @@ def requirements_for_snapshot(payload, *, plan_yield="0.94"):
                 item_id = item["display_id"]
                 key = (item_id, unit)
                 group = groups.setdefault(key, {"item_id": item_id, "item_entity_id": item["id"], "unit": unit,
+                    "item_name": item.get("attributes", {}).get("display_name") or item.get("label") or item_id,
                     "row_ids": [], "quantity_per_unit": Decimal(0), "review_bases": set(), "evidence_refs": []})
                 group["quantity_per_unit"] += quantity
                 group["row_ids"].append(row["row_id"])
@@ -161,7 +177,8 @@ def requirements_for_snapshot(payload, *, plan_yield="0.94"):
         quantity = item.pop("quantity_per_unit")
         bases = item.pop("review_bases")
         required, planned_required = quantity * target, quantity * planned
-        available, scope, issues = _inventory_for_item(balance["inventory"], item["item_id"], item["unit"])
+        inventories = payload.get("current_inventory", balance["inventory"])
+        available, scope, issues = _inventory_for_item(inventories, item["item_id"], item["unit"])
         if len(units_by_item[item["item_id"]]) != 1:
             available, scope, issues = None, "UNKNOWN", ["ITEM_UNIT_CONFLICT"]
         item.update(quantity_per_unit=_number(quantity), required_qty=_number(required),
@@ -171,6 +188,18 @@ def requirements_for_snapshot(payload, *, plan_yield="0.94"):
                     state="CALCULATED" if available is not None else "UNKNOWN", issues=issues,
                     inventory_scope=scope, inventory_is_synthetic=True,
                     review_bases=sorted(bases), conditional="DEMO_ASSUMPTION" in bases)
+        # Presentation exposes the existing arithmetic and its evidence status
+        # separately. A readable rule is not a manufacturing approval.
+        item["unit_label"] = "개 (EA)" if item["unit"] == "EA" else item["unit"]
+        item["inventory_scope_label"] = {
+            "LOT": "LOT별 재고 근거 있음",
+            "ITEM_AGGREGATE_LOTS_UNKNOWN": "품목 합계 · LOT별 내역 미확인",
+            "UNKNOWN": "재고 범위 미확인",
+        }[scope]
+        item["quantity_status"] = ("UNKNOWN" if available is None else
+                                   "SHORTAGE" if required > available else "COVERED")
+        item["planned_quantity_status"] = ("UNKNOWN" if available is None else
+                                           "SHORTAGE" if planned_required > available else "COVERED")
         if available is None:
             unresolved += len(item["row_ids"])
         result["items"].append(item)

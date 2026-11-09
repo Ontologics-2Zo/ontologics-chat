@@ -17,7 +17,9 @@ from uuid import UUID, uuid4
 
 from psycopg.types.json import Jsonb
 
-from service.bom_contracts import BomCreate, BomDecision, BomReview, BomRevise
+from service.bom_contracts import BomCompare, BomCreate, BomDecision, BomReview, BomReviewFocus, BomRevise
+from service.bom_compare import compare_bom_documents
+from service.bom_focus import mapped_row_ids, review_focus
 from service.contracts import CANONICAL_VERSION, DocumentAction, canonical_bytes, content_hash
 from service.domain import DomainService, _public
 from service.errors import ServiceError
@@ -369,6 +371,56 @@ class BomService(DomainService):
         with self.db.connect() as conn:
             self.identity.require(principal, "document.read", conn, company_id)
             return _public(self._view(self._document(conn, company_id, document_id)))
+
+    def compare(self, principal, company_id, body: BomCompare):
+        body = BomCompare.model_validate(body)
+        refs = [ref for ref in (body.left, body.right) if ref is not None]
+        try:
+            identifiers = [UUID(ref.document_id) for ref in refs]
+        except ValueError:
+            raise ServiceError("BOM_NOT_FOUND", 404) from None
+        with self.db.connect() as conn:
+            self.identity.require(principal, "document.read", conn, company_id)
+            # One SELECT observes both versions together. No source parsing,
+            # row lock, operation, audit event or ledger write is performed.
+            documents = conn.execute("SELECT * FROM bom_documents WHERE company_id=%s AND id=ANY(%s)",
+                                     (company_id, identifiers)).fetchall()
+            by_id = {str(document["id"]): document for document in documents}
+            selected = []
+            for ref, identifier in zip(refs, identifiers):
+                document = by_id.get(str(identifier))
+                if document is None:
+                    raise ServiceError("BOM_NOT_FOUND", 404)
+                self._exact(document, ref.expected_version, ref.payload_hash)
+                selected.append(document)
+            result = compare_bom_documents(selected[0] if body.left else None, selected[-1])
+            result["meta"] = {"company_id": company_id, "identity_revision": principal.identity_revision}
+            return result
+
+    def review_focus(self, principal, company_id, body: BomReviewFocus):
+        body = BomReviewFocus.model_validate(body)
+        with self.db.connect() as conn:
+            self.identity.require(principal, "document.read", conn, company_id)
+            document = self._document(conn, company_id, body.document_id)
+            self._exact(document, body.expected_version, body.payload_hash)
+            reference = None
+            if not mapped_row_ids(document):
+                reference = conn.execute("""SELECT * FROM bom_documents
+                    WHERE company_id=%s AND source_hash=%s AND configuration_id=%s AND status='POSTED'
+                    AND EXISTS (SELECT 1 FROM jsonb_array_elements(content->'rows') AS source_row
+                        WHERE source_row->'decision'->>'application_status'='APPLICABLE'
+                          AND coalesce(source_row->'decision'->>'item_id','') <> '')
+                    ORDER BY ledger_version DESC, updated_at DESC, id DESC LIMIT 1""",
+                    (company_id, document["source_hash"], document["configuration_id"])).fetchone()
+                if reference is not None:
+                    self._exact(reference, reference["version"], reference["payload_hash"])
+            result = review_focus(document, reference)
+            # A concurrent edit must not leave a display hint attached to an
+            # obsolete target. POSTED references are immutable source records.
+            current = self._document(conn, company_id, body.document_id)
+            self._exact(current, body.expected_version, body.payload_hash)
+            result["meta"] = {"company_id": company_id, "identity_revision": principal.identity_revision}
+            return result
 
     def list(self, principal, company_id, limit=100):
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:

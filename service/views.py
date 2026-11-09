@@ -14,6 +14,8 @@ def display_graph(graph):
              "SourceRow": ("source_row", "doc"), "BOMSnapshot": ("bom", "doc"),
              "BOMLine": ("bom_line", "design"), "BOMApplication": ("bom_application", "design"),
              "ApprovalGrant": ("approval", "doc"), "DocumentVersion": ("document_version", "doc")}
+    types.update({name: (name, "doc") for name in ("PurchaseRequest", "PurchaseOrder", "PurchaseOrderLine",
+        "PartsReceiptLine", "InspectionResult", "SupplierConfirmation")})
     nodes=[]
     for node in graph.get("nodes", []):
         kind, shape = types.get(node["type"], (node["type"], "design"))
@@ -24,7 +26,8 @@ def display_graph(graph):
                                     "kind_label":node["type"],"properties":properties}})
     edges=[{**edge,"edge_id":edge["id"],"source_node_id":edge["source"],"target_node_id":edge["target"],
             "relation_type":edge.get("ontology_predicate") or edge["predicate"],"label":edge["predicate"],
-            "state":"BOM_REGISTRATION" if edge.get("evidence",{}).get("record_type")=="bom_registration" else "OPENING_BALANCE",
+            "state": {"bom_registration": "BOM_REGISTRATION", "development_procurement": "DEVELOPMENT_WORKFLOW"}.get(
+                edge.get("evidence",{}).get("record_type"), "OPENING_BALANCE"),
             "evidence_refs":[edge["evidence"]]} for edge in graph.get("edges",[])]
     return {"nodes":nodes,"edges":edges,"complete":True}
 
@@ -36,7 +39,7 @@ def snapshot_view(payload):
     ready = projection.get("state") == "READY" and projection.get("projection_version") == version
     balance = payload["opening_balance"]
     round_ = balance["delivery_round"]
-    inventories = balance["inventory"]
+    inventories = payload.get("current_inventory", balance["inventory"])
     lots = [row for row in inventories if row["scope"] == "LOT"]
     # Primary inventory is identified by its actual LOT records, never a fixed
     # product ID. Mixed item totals are not added together as one available item.
@@ -45,6 +48,9 @@ def snapshot_view(payload):
     config = balance["configuration"]
     requirements = requirements_for_snapshot(payload)
     bom = payload.get("bom")
+    procurement = payload.get("procurement", {})
+    receipts = procurement.get("receipts", [])
+    inventory_origin = "mixed_sources" if receipts else "synthetic_opening_balance"
     summary = {
         "promise_qty": round_["promised_qty"], "promised_qty": round_["promised_qty"],
         "good_qty": round_["good_qty"], "fg_received_qty": round_["fg_received_qty"],
@@ -65,8 +71,17 @@ def snapshot_view(payload):
         "item_id": next(iter(item_ids)) if len(item_ids) == 1 else None,
         "delivery_round_id": round_["round_id"], "production_job_id": round_["job_id"],
         "configuration_id": round_["configuration_id"], "arrival_due_date": round_["arrival_due_date"],
-        "effective_at": source["effective_at"], "serial_coverage": "UNKNOWN",
+        "effective_at": source.get("opening_effective_at", source["effective_at"]), "serial_coverage": "UNKNOWN",
     }
+    if procurement:
+        orders = [row for row in procurement.get("documents", []) if row["kind"] == "PO"]
+        order_units = {row["content"]["resolved"]["unit"] for row in orders}
+        receipt_units = {row["unit"] for row in receipts}
+        summary.update(purchase_order_qty=sum(row["content"]["quantity"] for row in orders) if len(order_units) <= 1 else None,
+            purchase_status="개발 원장 · 공급사 송신 없음", purchase_unit=next(iter(order_units), None),
+            inspection_total_qty=sum(row["quantity"] for row in receipts) if len(receipt_units) <= 1 else None,
+            inspection_pending_qty=sum(row["pending_qty"] for row in receipts) if len(receipt_units) <= 1 else None,
+            inspection_passed_qty=sum(row["passed_qty"] for row in receipts) if len(receipt_units) <= 1 else None)
     meta = {
         "ledger_version": version, "projection_version": projection.get("projection_version"),
         "projection_state": "READY" if ready else projection.get("state", "PENDING"),
@@ -82,9 +97,12 @@ def snapshot_view(payload):
         "bom_source_kind": source.get("bom_source_kind"), "bom_source_sha256": source.get("bom_source_sha256"),
         "bom_registered_at": source.get("bom_registered_at"), "opening_recorded_at": source.get("opening_recorded_at"),
         "material_rule_version": requirements["rule_version"],
-        "data_origins": {"inventory": "synthetic_opening_balance", "bom": "actual_bom" if bom else None,
+        "data_origins": {"inventory": inventory_origin, "bom": "actual_bom" if bom else None,
                          "application": "conditional_demo" if requirements["has_demo_assumptions"] else "unreviewed"},
     }
+    if source.get("opening_effective_at"):
+        meta.update(opening_effective_at=source["opening_effective_at"],
+                    inventory_effective_at=source.get("current_inventory_effective_at"))
     return {
         "mode": "ledger-service", "serviceConnected": True, "meta": meta, "summary": summary,
         "entities": payload["entities"], "relationships": payload["relationships"],
@@ -96,6 +114,7 @@ def snapshot_view(payload):
         "quotations": balance["quotations"], "substitutes": balance["substitutes"],
         "mapping_candidates": balance["mapping_candidates"],
         "bom": deepcopy(bom), "material_requirements": requirements,
+        "procurement": deepcopy(payload.get("procurement", {})),
         "capabilities": {"bom_upload": "RUNNER_UNAVAILABLE", "purchase_write": "NOT_IMPLEMENTED", "agent": "NOT_IMPLEMENTED", "model": "NOT_RUN"},
         "suggested_questions": ["남은 약속은 몇 대고, 얼마나 더 만들어야 해?", "수율을 적용하면 몇 대 투입하고 어떤 자재가 부족해?", f"남은 {summary['promise_remaining_qty']}대, 납기 안에 고객에게 도착할 수 있어?", "현재 가용 재고와 예약 근거를 보여줘", "전체 온톨로지의 클래스와 관계 범위를 보여줘"],
     }

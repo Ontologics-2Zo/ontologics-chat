@@ -16,11 +16,14 @@
     "T01"
   ],
   "next_batch": [
-    "T03",
-    "T08",
-    "T09",
-    "T10",
+    "T04",
+    "T05",
+    "T06",
+    "T07",
+    "T11",
+    "T12",
     "T13",
+    "T14",
     "T19",
     "T22"
   ],
@@ -78,7 +81,12 @@
         "T10.1"
       ],
       "retained": "전체 corpus/CQ와 선택 검색 전략 평가",
-      "status": "NOT_STARTED"
+      "status": "IN_PROGRESS",
+      "current_material_flow_slice": {
+        "record": "docs/handoff/SERVICE-MATERIAL-FLOW-20261109.md",
+        "status": "VERIFIED",
+        "full_slice_complete": false
+      }
     },
     {
       "id": "T12.1",
@@ -90,7 +98,12 @@
         "T11.1"
       ],
       "retained": "전체 모델·형식·후속 사용례",
-      "status": "NOT_STARTED"
+      "status": "IN_PROGRESS",
+      "current_material_flow_slice": {
+        "record": "docs/handoff/SERVICE-MATERIAL-FLOW-20261109.md",
+        "status": "VERIFIED",
+        "full_slice_complete": false
+      }
     },
     {
       "id": "T13.1",
@@ -114,6 +127,11 @@
         "screen_verification": "VERIFIED",
         "restart_verification": "VERIFIED",
         "verified_code_commit": "aecd23add18615c33a051b43686a75a426929d01"
+      },
+      "current_material_flow_slice": {
+        "record": "docs/handoff/SERVICE-MATERIAL-FLOW-20261109.md",
+        "status": "VERIFIED",
+        "full_slice_complete": false
       }
     },
     {
@@ -124,7 +142,12 @@
         "T13.1"
       ],
       "retained": "다품목/다업무 일반화 및 전체 예외",
-      "status": "NOT_STARTED"
+      "status": "IN_PROGRESS",
+      "current_material_flow_slice": {
+        "record": "docs/handoff/SERVICE-MATERIAL-FLOW-20261109.md",
+        "status": "VERIFIED",
+        "full_slice_complete": false
+      }
     },
     {
       "id": "T19.1",
@@ -440,6 +463,19 @@
           "record": "docs/handoff/SERVICE-BOM-MAC-20261108.md",
           "scope": "Mac arm64 actual Runner/source registration and conditional five-item ledger slice; 182 Python tests PASS / 0 SKIP; manual UI, independent preservation and restart PASS; no parent completion",
           "parent_complete": false
+        },
+        {
+          "record": "docs/handoff/SERVICE-LEDGER-FEED-20261109.md",
+          "status": "VERIFIED",
+          "verification_ids": [
+            "LEDGER-FEED-SERVER",
+            "LEDGER-FEED-API",
+            "LEDGER-FEED-NODE",
+            "LEDGER-FEED-BROWSER",
+            "LEDGER-FEED-PRESERVE"
+          ],
+          "scope": "DEC-H35 reference-style committed-event feed and allowlisted exact document evidence; no original business/model writes. Full realtime/recovery acceptance remains incomplete.",
+          "parent_complete": false
         }
       ],
       "actual_implementation_paths": [
@@ -450,7 +486,12 @@
         "service/bom_contracts.py",
         "migrations/004_bom.sql",
         "tests/test_bom.py",
-        "tests/test_bom_api.py"
+        "tests/test_bom_api.py",
+        "service/ledger.py",
+        "web/mks2/dashboard.js",
+        "web/mks2/dashboard.css",
+        "tests/test_ledger_event_views.py",
+        "tests/test_ledger_events_ui.mjs"
       ],
       "actual_api_or_tool_contract": "Typed BOM source/document routes under /api/mks2/bom; create, revise, review, approve, post; exact document version/hash and current ledger version; stored original source retrieval. The actual Mac source slice is verified; full technical review and overall service acceptance remain separate.",
       "blockers": [],
@@ -528,7 +569,7 @@
       ],
       "scope_and_completion": "1차 서비스 필수 기반. 개발 skills와 runtime 권한은 분리한다.",
       "verification_commands": [
-        ".venv/bin/python -m unittest discover -s tests -p 'test_gateway.py' -v"
+        ".venv/bin/python -m unittest discover -s tests -q (dedicated TEST_DATABASE_URL; actual PostgreSQL/Neo4j/Runner)"
       ],
       "execution_evidence": [
         {
@@ -548,6 +589,16 @@
           "automated_server_verification": "VERIFIED",
           "automated_server_scope": "Mac actual PostgreSQL/Neo4j/Runner suite223PASS in28.650s; live read-only API9PASS,ledger/projectionv2,model calls0,ledger mutations0,business snapshot unchanged,stale version409.",
           "verified_code_commit": "aecd23add18615c33a051b43686a75a426929d01"
+        },
+        {
+          "record": "docs/handoff/SERVICE-AGENT-20261108.md",
+          "scope": "Fake 기반 제한된 읽기 Agent·로컬 관측·영속 복구·Mac UI 검증. 실제 모델 성공은 BLOCKED, 전체 부모 Task 미완료.",
+          "status": "VERIFIED",
+          "parent_complete": false,
+          "verification_ids": [
+            "AGENT-CONTRACT"
+          ],
+          "actual_model_verification": "BLOCKED"
         }
       ],
       "actual_implementation_paths": [
@@ -556,12 +607,14 @@
         "tests/test_gateway.py",
         "service/query_intents.py",
         "service/query_answers.py",
-        "tests/test_query_intents.py"
+        "tests/test_query_intents.py",
+        "service/agent_contracts.py",
+        "service/agents/readers.py"
       ],
       "actual_api_or_tool_contract": null,
       "blockers": [],
       "goal_summary": "Agent SDK typed request/result·evidence/version; Tool/LLM/Evidence/Budget ports·capability registry; Gateway·공통 Fake·두 모듈 독립 시험",
-      "remaining_acceptance": "전문 Agent·영속/금액 예산·전체 SDK 인수 미완료",
+      "remaining_acceptance": "전체 Evidence/Budget SDK·Product/업무 모듈 확장 인수",
       "current_query_slice": {
         "record": "docs/handoff/SERVICE-CQ-NL-20261108.md",
         "implementation": "VERIFIED",
@@ -581,7 +634,7 @@
       ],
       "requirements_original_text": "OBS17-01~05, AG16-04, CM03",
       "source_line": 1150,
-      "status": "NOT_STARTED",
+      "status": "IN_PROGRESS",
       "phase": "FOUNDATION",
       "sources": [
         {
@@ -620,12 +673,39 @@
         "마스킹·중복 비용·exporter 장애 결과"
       ],
       "scope_and_completion": "Fake 호출의 관측 연동 검증은 실제 LLM 품질 평가와 다르다. 유료 호출은 별도 허용 범위에서만 수행한다.",
-      "verification_commands": [],
-      "execution_evidence": [],
-      "actual_implementation_paths": [],
+      "verification_commands": [
+        ".venv/bin/python -m unittest discover -s tests -q (dedicated TEST_DATABASE_URL; actual PostgreSQL/Neo4j/Runner)"
+      ],
+      "execution_evidence": [
+        {
+          "record": "docs/handoff/SERVICE-AGENT-20261108.md",
+          "scope": "Fake 기반 제한된 읽기 Agent·로컬 관측·영속 복구·Mac UI 검증. 실제 모델 성공은 BLOCKED, 전체 부모 Task 미완료.",
+          "status": "VERIFIED",
+          "parent_complete": false,
+          "verification_ids": [
+            "AGENT-MODEL",
+            "AGENT-OBS",
+            "AGENT-OBS-BLOCKED"
+          ],
+          "actual_model_verification": "BLOCKED"
+        },
+        {
+          "record": "docs/handoff/SERVICE-MODEL-20261109.md",
+          "scope": "승인 모델의 고정 Azure ZDR 경로 실제 기능 선택1회·원장 조회·재요청 중복0. 전체 실제 AI 의미 품질 인수 아님.",
+          "status": "VERIFIED",
+          "parent_complete": false
+        }
+      ],
+      "actual_implementation_paths": [
+        "service/model_gateway.py",
+        "service/model_store.py",
+        "service/observability.py",
+        "service/agent_config.py"
+      ],
       "actual_api_or_tool_contract": null,
       "blockers": [],
-      "goal_summary": "ModelGateway·provider 어댑터 경계; canonical attempt usage·local sink·redaction; local Langfuse 실제 수집·Tree/Timeline"
+      "goal_summary": "ModelGateway·provider 어댑터 경계; canonical attempt usage·local sink·redaction; local Langfuse 실제 수집·Tree/Timeline",
+      "remaining_acceptance": "전체 검색/재시도 관측·LangSmith 비교 및 전체 AI 평가"
     },
     {
       "id": "T06",
@@ -636,7 +716,7 @@
       ],
       "requirements_original_text": "LG17-01, AI01~03, AI-01~07",
       "source_line": 1151,
-      "status": "NOT_STARTED",
+      "status": "IN_PROGRESS",
       "phase": "FOUNDATION",
       "sources": [
         {
@@ -675,12 +755,73 @@
         "UI 진행·Langfuse trace 대응"
       ],
       "scope_and_completion": "필수 도구/Workflow/계층/협업/Harness를 적용한다. 선택적 Reflection/Adaptive는 비교 대상으로 유지한다.",
-      "verification_commands": [],
-      "execution_evidence": [],
-      "actual_implementation_paths": [],
+      "verification_commands": [
+        ".venv/bin/python -m unittest discover -s tests -q (dedicated TEST_DATABASE_URL; actual PostgreSQL/Neo4j/Runner)"
+      ],
+      "execution_evidence": [
+        {
+          "record": "docs/handoff/SERVICE-AGENT-20261108.md",
+          "scope": "Fake 기반 제한된 읽기 Agent·로컬 관측·영속 복구·Mac UI 검증. 실제 모델 성공은 BLOCKED, 전체 부모 Task 미완료.",
+          "status": "VERIFIED",
+          "parent_complete": false,
+          "verification_ids": [
+            "AGENT-GRAPH",
+            "AGENT-API",
+            "AGENT-UI",
+            "AGENT-UI-MAC"
+          ],
+          "actual_model_verification": "BLOCKED"
+        },
+        {
+          "record": "docs/handoff/SERVICE-MODEL-20261109.md",
+          "scope": "승인 모델의 고정 Azure ZDR 경로 실제 기능 선택1회·원장 조회·재요청 중복0. 전체 실제 AI 의미 품질 인수 아님.",
+          "status": "VERIFIED",
+          "parent_complete": false
+        },
+        {
+          "record": "docs/handoff/SERVICE-LEDGER-FEED-20261109.md",
+          "status": "VERIFIED",
+          "verification_ids": [
+            "LEDGER-FEED-SERVER",
+            "LEDGER-FEED-API",
+            "LEDGER-FEED-NODE",
+            "LEDGER-FEED-BROWSER",
+            "LEDGER-FEED-PRESERVE"
+          ],
+          "scope": "DEC-H35 reference-style committed-event feed and allowlisted exact document evidence; no original business/model writes. Full realtime/recovery acceptance remains incomplete.",
+          "parent_complete": false
+        },
+        {
+          "record": "docs/handoff/SERVICE-GRAPH-25D-20261110.md",
+          "status": "VERIFIED",
+          "verification_ids": [
+            "GRAPH-25D-LAYOUT",
+            "GRAPH-25D-ANSWER",
+            "GRAPH-25D-API",
+            "GRAPH-25D-BROWSER",
+            "GRAPH-25D-MOTION",
+            "GRAPH-25D-PRESERVE"
+          ],
+          "scope": "DEC-H36 2.5D presentation and same-version delivery CQ evidence; all nodes/edges and database preserved. Full trace/history/Agent/scale acceptance remains incomplete.",
+          "parent_complete": false,
+          "verified_code_commit": "451ec959209dcbb7686cb9921ad5cd61a0070037"
+        }
+      ],
+      "actual_implementation_paths": [
+        "service/agent_workflow.py",
+        "service/agent_host.py",
+        "service/agent_api.py",
+        "web/mks2/app.js",
+        "service/ledger.py",
+        "web/mks2/dashboard.js",
+        "web/mks2/dashboard.css",
+        "tests/test_ledger_event_views.py",
+        "tests/test_ledger_events_ui.mjs"
+      ],
       "actual_api_or_tool_contract": null,
       "blockers": [],
-      "goal_summary": "LangGraph 상위 workflow와 typed subgraphs; Supervisor·Product·전문 capability 연결; 진행 SSE·공유 Context·조건부 분기"
+      "goal_summary": "LangGraph 상위 workflow와 typed subgraphs; Supervisor·Product·전문 capability 연결; 진행 SSE·공유 Context·조건부 분기",
+      "remaining_acceptance": "Product 추출·매핑 및 구매 등 전체 전문 Agent 통합"
     },
     {
       "id": "T07",
@@ -690,7 +831,7 @@
       ],
       "requirements_original_text": "LG17-02, CM04, RV02~03, AG16-05",
       "source_line": 1152,
-      "status": "NOT_STARTED",
+      "status": "IN_PROGRESS",
       "phase": "FOUNDATION",
       "sources": [
         {
@@ -729,12 +870,30 @@
         "원장 명령 중복 0 및 비용/시간 복구 측정"
       ],
       "scope_and_completion": "Checkpointer는 원장 transaction·멱등성의 대체물이 아니다.",
-      "verification_commands": [],
-      "execution_evidence": [],
-      "actual_implementation_paths": [],
+      "verification_commands": [
+        ".venv/bin/python -m unittest discover -s tests -q (dedicated TEST_DATABASE_URL; actual PostgreSQL/Neo4j/Runner)"
+      ],
+      "execution_evidence": [
+        {
+          "record": "docs/handoff/SERVICE-AGENT-20261108.md",
+          "scope": "Fake 기반 제한된 읽기 Agent·로컬 관측·영속 복구·Mac UI 검증. 실제 모델 성공은 BLOCKED, 전체 부모 Task 미완료.",
+          "status": "VERIFIED",
+          "parent_complete": false,
+          "verification_ids": [
+            "AGENT-RECOVERY"
+          ],
+          "actual_model_verification": "BLOCKED"
+        }
+      ],
+      "actual_implementation_paths": [
+        "service/agent_workflow.py",
+        "service/agent_store.py",
+        "migrations/006_agent_workflow.sql"
+      ],
       "actual_api_or_tool_contract": null,
       "blockers": [],
-      "goal_summary": "영속 Checkpointer·interrupt/resume; 재개 시 신원·권한·버전·예산 검사; 원장 상태 대사와 취소/복구 처리"
+      "goal_summary": "영속 Checkpointer·interrupt/resume; 재개 시 신원·권한·버전·예산 검사; 원장 상태 대사와 취소/복구 처리",
+      "remaining_acceptance": "업무 쓰기 승인 HITL·원장 효과 대사 및 전체 복구 인수"
     },
     {
       "id": "T08",
@@ -899,6 +1058,36 @@
           "record": "docs/handoff/SERVICE-BOM-MAC-20261108.md",
           "scope": "Mac arm64 actual Runner/source registration and conditional five-item ledger slice; 182 Python tests PASS / 0 SKIP; manual UI, independent preservation and restart PASS; no parent completion",
           "parent_complete": false
+        },
+        {
+          "record": "docs/handoff/SERVICE-BOM-UI-20261109.md",
+          "scope": "DEC-H32 BOM review UI only: actual stored-document read checks22, isolated synthetic pending/error/retry checks16, Node18 PASS. Shared review page and warning evidence; no new source intake, business ledger mutation or model call.",
+          "parent_complete": false
+        },
+        {
+          "record": "docs/handoff/SERVICE-BOM-REVIEW-20261109.md",
+          "status": "VERIFIED",
+          "verification_ids": [
+            "BOM-REVIEW-SERVER",
+            "BOM-REVIEW-NODE",
+            "BOM-REVIEW-BROWSER",
+            "BOM-REVIEW-PRESERVE"
+          ],
+          "scope": "DEC-H33 read-only exact-version BOM comparison, evidence-based progress and explicit select-based row review; no original business write or model call. Full manufacturing acceptance remains incomplete.",
+          "parent_complete": false
+        },
+        {
+          "record": "docs/handoff/SERVICE-BOM-FOCUS-20261109.md",
+          "status": "VERIFIED",
+          "verification_ids": [
+            "BOM-FOCUS-SERVER",
+            "BOM-FOCUS-NODE",
+            "BOM-FOCUS-PENDING",
+            "BOM-FOCUS-BROWSER",
+            "BOM-FOCUS-PRESERVE"
+          ],
+          "scope": "DEC-H34 stored-source shortcut and reference-style summary/filter UI; same-source display-only row focus, whole source and decisions preserved; no original business/model writes or graph layout changes.",
+          "parent_complete": false
         }
       ],
       "actual_implementation_paths": [
@@ -908,7 +1097,12 @@
         "migrations/004_bom.sql",
         "web/mks2/bom.js",
         "tests/test_bom.py",
-        "tests/test_bom_api.py"
+        "tests/test_bom_api.py",
+        "tests/test_bom_ui.mjs",
+        "service/bom_compare.py",
+        "tests/test_bom_compare.py",
+        "service/bom_focus.py",
+        "tests/test_bom_focus.py"
       ],
       "actual_api_or_tool_contract": "Typed BOM source/document routes under /api/mks2/bom; create, revise, review, approve, post; exact document version/hash and current ledger version; stored original source retrieval. The actual Mac source slice is verified; full technical review and overall service acceptance remain separate.",
       "blockers": [],
@@ -1005,6 +1199,46 @@
           "record": "docs/handoff/SERVICE-BOM-MAC-20261108.md",
           "scope": "Mac arm64 actual Runner/source registration and conditional five-item ledger slice; 182 Python tests PASS / 0 SKIP; manual UI, independent preservation and restart PASS; no parent completion",
           "parent_complete": false
+        },
+        {
+          "record": "docs/handoff/SERVICE-LEDGER-FEED-20261109.md",
+          "status": "VERIFIED",
+          "verification_ids": [
+            "LEDGER-FEED-SERVER",
+            "LEDGER-FEED-API",
+            "LEDGER-FEED-NODE",
+            "LEDGER-FEED-BROWSER",
+            "LEDGER-FEED-PRESERVE"
+          ],
+          "scope": "DEC-H35 reference-style committed-event feed and allowlisted exact document evidence; no original business/model writes. Full realtime/recovery acceptance remains incomplete.",
+          "parent_complete": false
+        },
+        {
+          "record": "docs/handoff/SERVICE-GRAPH-25D-20261110.md",
+          "status": "VERIFIED",
+          "verification_ids": [
+            "GRAPH-25D-LAYOUT",
+            "GRAPH-25D-ANSWER",
+            "GRAPH-25D-API",
+            "GRAPH-25D-BROWSER",
+            "GRAPH-25D-MOTION",
+            "GRAPH-25D-PRESERVE"
+          ],
+          "scope": "DEC-H36 2.5D presentation and same-version delivery CQ evidence; all nodes/edges and database preserved. Full trace/history/Agent/scale acceptance remains incomplete.",
+          "parent_complete": false,
+          "verified_code_commit": "451ec959209dcbb7686cb9921ad5cd61a0070037"
+        },
+        {
+          "record": "docs/handoff/SERVICE-MATERIAL-CARD-20261110.md",
+          "status": "VERIFIED",
+          "verification_ids": [
+            "MATERIAL-CARD-NODE",
+            "MATERIAL-CARD-BROWSER",
+            "MATERIAL-CARD-PRESERVE"
+          ],
+          "scope": "DEC-H37 reference material coverage bars from unchanged server quantities; UNKNOWN and exact shortages preserved. Display-only slice.",
+          "verified_code_commit": "cf42c2d",
+          "parent_complete": false
         }
       ],
       "actual_implementation_paths": [
@@ -1017,7 +1251,11 @@
         "tests/test_ledger.py",
         "tests/test_projections.py",
         "service/views.py",
-        "tests/test_bom_projection.py"
+        "tests/test_bom_projection.py",
+        "web/mks2/dashboard.js",
+        "web/mks2/dashboard.css",
+        "tests/test_ledger_event_views.py",
+        "tests/test_ledger_events_ui.mjs"
       ],
       "actual_api_or_tool_contract": null,
       "blockers": [],
@@ -1056,7 +1294,7 @@
       ],
       "requirements_original_text": "EV01~02, AG16, AI03",
       "source_line": 1156,
-      "status": "NOT_STARTED",
+      "status": "IN_PROGRESS",
       "phase": "PHASE1_SLICE_AND_RETAINED_FULL",
       "sources": [
         {
@@ -1097,11 +1335,53 @@
       ],
       "scope_and_completion": "선택적 검색 전략은 측정 후 채택하되 기본 Hybrid RAG 연결을 생략하지 않는다.",
       "verification_commands": [],
-      "execution_evidence": [],
-      "actual_implementation_paths": [],
-      "actual_api_or_tool_contract": null,
+      "execution_evidence": [
+        {
+          "record": "docs/handoff/SERVICE-MATERIAL-FLOW-20261109.md",
+          "status": "VERIFIED",
+          "verification_ids": [
+            "MAT-RAG",
+            "MAT-REGRESSION",
+            "MAT-PRESERVE"
+          ],
+          "verified_code_commit": "8ba67fd80b8adeed0bf82bdba05aaa4a91b6f25e",
+          "scope": "권한·시점·버전의 R0/R1/R3 로컬 검색과 과거 근거 재열기. 광범위 검색 품질·전체 corpus와 R2/R4/R5 실험은 잔여.",
+          "parent_complete": false
+        },
+        {
+          "record": "docs/handoff/SERVICE-GRAPH-25D-20261110.md",
+          "status": "VERIFIED",
+          "verification_ids": [
+            "GRAPH-25D-LAYOUT",
+            "GRAPH-25D-ANSWER",
+            "GRAPH-25D-API",
+            "GRAPH-25D-BROWSER",
+            "GRAPH-25D-MOTION",
+            "GRAPH-25D-PRESERVE"
+          ],
+          "scope": "DEC-H36 2.5D presentation and same-version delivery CQ evidence; all nodes/edges and database preserved. Full trace/history/Agent/scale acceptance remains incomplete.",
+          "parent_complete": false,
+          "verified_code_commit": "451ec959209dcbb7686cb9921ad5cd61a0070037"
+        }
+      ],
+      "actual_implementation_paths": [
+        "service/retrieval.py",
+        "service/retrieval_embedding.py",
+        "service/material_api.py",
+        "tests/test_retrieval.py",
+        "tests/test_retrieval_embedding.py"
+      ],
+      "actual_api_or_tool_contract": "retrieval.search/evidence with host-owned snapshot and identity",
       "blockers": [],
-      "goal_summary": "권한·동일버전 exact/lexical/vector 검색; 융합과 선택적 rerank/graph/rewrite profile; 원문 locator·evidence refs·ContextBuilder"
+      "goal_summary": "권한·동일버전 exact/lexical/vector 검색; 융합과 선택적 rerank/graph/rewrite profile; 원문 locator·evidence refs·ContextBuilder",
+      "remaining_acceptance": "권한·시점·버전의 R0/R1/R3 로컬 검색과 과거 근거 재열기. 광범위 검색 품질·전체 corpus와 R2/R4/R5 실험은 잔여.",
+      "current_material_flow_slice": {
+        "record": "docs/handoff/SERVICE-MATERIAL-FLOW-20261109.md",
+        "status": "VERIFIED",
+        "original_ledger_unchanged": true,
+        "isolated_actual_source_workflow": "VERIFIED",
+        "parent_complete": false
+      }
     },
     {
       "id": "T12",
@@ -1113,7 +1393,7 @@
       ],
       "requirements_original_text": "REG-01~04, AG16-02, AI01~03",
       "source_line": 1157,
-      "status": "NOT_STARTED",
+      "status": "IN_PROGRESS",
       "phase": "PHASE1_SLICE_AND_RETAINED_FULL",
       "sources": [
         {
@@ -1153,11 +1433,71 @@
       ],
       "scope_and_completion": "L1 먼저 연결하고 전체 모델/형식 일반화는 부모 Task 잔여로 보존한다.",
       "verification_commands": [],
-      "execution_evidence": [],
-      "actual_implementation_paths": [],
-      "actual_api_or_tool_contract": null,
+      "execution_evidence": [
+        {
+          "record": "docs/handoff/SERVICE-MATERIAL-FLOW-20261109.md",
+          "status": "VERIFIED",
+          "verification_ids": [
+            "MAT-PRODUCT",
+            "MAT-REGRESSION",
+            "MAT-PRESERVE"
+          ],
+          "verified_code_commit": "8ba67fd80b8adeed0bf82bdba05aaa4a91b6f25e",
+          "scope": "기존 BOM8단계 내 후보 검토·정확 초안/원장 버전·모호성·원문 보존. 전체 형식·실제 AI 추출 품질·기술검수는 잔여.",
+          "parent_complete": false
+        },
+        {
+          "record": "docs/handoff/SERVICE-BOM-UI-20261109.md",
+          "scope": "DEC-H32 BOM review UI only: actual stored-document read checks22, isolated synthetic pending/error/retry checks16, Node18 PASS. Shared review page and warning evidence; no new source intake, business ledger mutation or model call.",
+          "parent_complete": false
+        },
+        {
+          "record": "docs/handoff/SERVICE-BOM-REVIEW-20261109.md",
+          "status": "VERIFIED",
+          "verification_ids": [
+            "BOM-REVIEW-SERVER",
+            "BOM-REVIEW-NODE",
+            "BOM-REVIEW-BROWSER",
+            "BOM-REVIEW-PRESERVE"
+          ],
+          "scope": "DEC-H33 read-only exact-version BOM comparison, evidence-based progress and explicit select-based row review; no original business write or model call. Full manufacturing acceptance remains incomplete.",
+          "parent_complete": false
+        },
+        {
+          "record": "docs/handoff/SERVICE-BOM-FOCUS-20261109.md",
+          "status": "VERIFIED",
+          "verification_ids": [
+            "BOM-FOCUS-SERVER",
+            "BOM-FOCUS-NODE",
+            "BOM-FOCUS-PENDING",
+            "BOM-FOCUS-BROWSER",
+            "BOM-FOCUS-PRESERVE"
+          ],
+          "scope": "DEC-H34 stored-source shortcut and reference-style summary/filter UI; same-source display-only row focus, whole source and decisions preserved; no original business/model writes or graph layout changes.",
+          "parent_complete": false
+        }
+      ],
+      "actual_implementation_paths": [
+        "service/product.py",
+        "service/product_contracts.py",
+        "service/agents/product.py",
+        "web/mks2/product.js",
+        "web/mks2/bom.js",
+        "tests/test_product.py",
+        "tests/test_product_workflow.py",
+        "tests/test_bom_ui.mjs"
+      ],
+      "actual_api_or_tool_contract": "product.review + typed product_review Agent; existing BOM inline review",
       "blockers": [],
-      "goal_summary": "Product pipeline·Extraction/Mapping typed capability; 파서 결과 재사용·원문 근거·모호성/미확인 처리"
+      "goal_summary": "Product pipeline·Extraction/Mapping typed capability; 파서 결과 재사용·원문 근거·모호성/미확인 처리",
+      "remaining_acceptance": "기존 BOM8단계 내 후보 검토·정확 초안/원장 버전·모호성·원문 보존. 전체 형식·실제 AI 추출 품질·기술검수는 잔여.",
+      "current_material_flow_slice": {
+        "record": "docs/handoff/SERVICE-MATERIAL-FLOW-20261109.md",
+        "status": "VERIFIED",
+        "original_ledger_unchanged": true,
+        "isolated_actual_source_workflow": "VERIFIED",
+        "parent_complete": false
+      }
     },
     {
       "id": "T13",
@@ -1244,6 +1584,30 @@
           "automated_server_verification": "VERIFIED",
           "automated_server_scope": "Mac actual PostgreSQL/Neo4j/Runner suite223PASS in28.650s; live read-only API9PASS,ledger/projectionv2,model calls0,ledger mutations0,business snapshot unchanged,stale version409.",
           "verified_code_commit": "aecd23add18615c33a051b43686a75a426929d01"
+        },
+        {
+          "record": "docs/handoff/SERVICE-MATERIAL-FLOW-20261109.md",
+          "status": "VERIFIED",
+          "verification_ids": [
+            "MAT-STOCK",
+            "MAT-REGRESSION",
+            "MAT-PRESERVE"
+          ],
+          "verified_code_commit": "8ba67fd80b8adeed0bf82bdba05aaa4a91b6f25e",
+          "scope": "기초 원장을 보존한 입하/검사 현재 재고·품목/LOT 근거 계산. 69행 UNRESOLVED·실제 재고·동시 예약/불출/소비/반납·일반 대체 승인은 잔여.",
+          "parent_complete": false
+        },
+        {
+          "record": "docs/handoff/SERVICE-MATERIAL-CARD-20261110.md",
+          "status": "VERIFIED",
+          "verification_ids": [
+            "MATERIAL-CARD-NODE",
+            "MATERIAL-CARD-BROWSER",
+            "MATERIAL-CARD-PRESERVE"
+          ],
+          "scope": "DEC-H37 reference material coverage bars from unchanged server quantities; UNKNOWN and exact shortages preserved. Display-only slice.",
+          "verified_code_commit": "cf42c2d",
+          "parent_complete": false
         }
       ],
       "actual_implementation_paths": [
@@ -1253,7 +1617,8 @@
         "web/mks2/dashboard.js",
         "tests/test_materials.py",
         "service/query_answers.py",
-        "tests/test_query_answers.py"
+        "tests/test_query_answers.py",
+        "tests/test_query_inventory.py"
       ],
       "actual_api_or_tool_contract": "requirements_for_snapshot() feeds MK-S2 snapshot/query; full row decisions, aggregated same-item requirements, conditional yield, and UNKNOWN shortages.",
       "blockers": [],
@@ -1269,7 +1634,7 @@
         "screen_connection_scope": "이번 Mac 실제74행·선택5품목 조건부 범위의 수동 CUA 확인. UI 자동 suite나 전체 서비스 수용과 구분. 재시작 및 독립 보존 확인.",
         "implementation_note": "해당 직접 경로만 실행 확인. 원문 등록 승인은 제조 기술검수·전체 자재 확보가 아님"
       },
-      "remaining_acceptance": "선택5품목 조건부 소요/부족 서버 산술 대조 확인. 69행 UNRESOLVED·현장 재고·T06/T11 전문 기능과 수급 전체 수용은 잔여",
+      "remaining_acceptance": "기초 원장을 보존한 입하/검사 현재 재고·품목/LOT 근거 계산. 69행 UNRESOLVED·실제 재고·동시 예약/불출/소비/반납·일반 대체 승인은 잔여.",
       "application_check_history": [
         {
           "record": "docs/handoff/SERVICE-BOM-20261108.md",
@@ -1292,6 +1657,13 @@
         "screen_verification": "VERIFIED",
         "restart_verification": "VERIFIED",
         "verified_code_commit": "aecd23add18615c33a051b43686a75a426929d01"
+      },
+      "current_material_flow_slice": {
+        "record": "docs/handoff/SERVICE-MATERIAL-FLOW-20261109.md",
+        "status": "VERIFIED",
+        "original_ledger_unchanged": true,
+        "isolated_actual_source_workflow": "VERIFIED",
+        "parent_complete": false
       }
     },
     {
@@ -1302,7 +1674,7 @@
       ],
       "requirements_original_text": "PLN-04~06, R12-PUR, AG16-02",
       "source_line": 1159,
-      "status": "NOT_STARTED",
+      "status": "IN_PROGRESS",
       "phase": "PHASE1_SLICE_AND_RETAINED_FULL",
       "sources": [
         {
@@ -1349,11 +1721,40 @@
       ],
       "scope_and_completion": "1차 대표 업무의 끝은 자재 확보. 고객 도착이 없으면 잔여 약속68을 유지한다. 다품목/다업무 일반화 잔여는 부모 Task에 남긴다.",
       "verification_commands": [],
-      "execution_evidence": [],
-      "actual_implementation_paths": [],
-      "actual_api_or_tool_contract": null,
+      "execution_evidence": [
+        {
+          "record": "docs/handoff/SERVICE-MATERIAL-FLOW-20261109.md",
+          "status": "VERIFIED",
+          "verification_ids": [
+            "MAT-PROC",
+            "MAT-REGRESSION",
+            "MAT-PRESERVE"
+          ],
+          "verified_code_commit": "8ba67fd80b8adeed0bf82bdba05aaa4a91b6f25e",
+          "scope": "격리 실제74행 복제에서 견적/PR/PO/모의확인/입하/IQC·부분수량/반려/취소·exact 승인·재고/Neo4j 연결. 다업무 일반화·운영 역할·영속 쓰기 Agent HITL·전체 예외는 잔여.",
+          "parent_complete": false
+        }
+      ],
+      "actual_implementation_paths": [
+        "service/procurement.py",
+        "service/procurement_contracts.py",
+        "service/procurement_state.py",
+        "service/procurement_api.py",
+        "migrations/008_procurement.sql",
+        "web/mks2/procurement.js",
+        "tests/test_procurement.py"
+      ],
+      "actual_api_or_tool_contract": "procurement.options/create/revise/review/reject/approve/post; internal simulated event workflow",
       "blockers": [],
-      "goal_summary": "Procurement 기능·MOQ/배수/비용/유효기간 계산; PR/PO·공급확인·입하·검사 사건과 상태; 부분수량·품질·가용 전환 및 실시간 상태"
+      "goal_summary": "Procurement 기능·MOQ/배수/비용/유효기간 계산; PR/PO·공급확인·입하·검사 사건과 상태; 부분수량·품질·가용 전환 및 실시간 상태",
+      "remaining_acceptance": "격리 실제74행 복제에서 견적/PR/PO/모의확인/입하/IQC·부분수량/반려/취소·exact 승인·재고/Neo4j 연결. 다업무 일반화·운영 역할·영속 쓰기 Agent HITL·전체 예외는 잔여.",
+      "current_material_flow_slice": {
+        "record": "docs/handoff/SERVICE-MATERIAL-FLOW-20261109.md",
+        "status": "VERIFIED",
+        "original_ledger_unchanged": true,
+        "isolated_actual_source_workflow": "VERIFIED",
+        "parent_complete": false
+      }
     },
     {
       "id": "T15",
@@ -1676,6 +2077,33 @@
           "automated_server_scope": "Mac actual PostgreSQL/Neo4j/Runner suite223PASS in28.650s; live read-only API9PASS,ledger/projectionv2,model calls0,ledger mutations0,business snapshot unchanged,stale version409.",
           "verified_code_commit": "aecd23add18615c33a051b43686a75a426929d01",
           "screen_restart_preservation_scope": "Node11PASS; native Chrome authorA query/provenance/replay/What-if checks; final8870 health/API/UI; reference7files and fullontology preserved."
+        },
+        {
+          "record": "docs/handoff/SERVICE-GRAPH-25D-20261110.md",
+          "status": "VERIFIED",
+          "verification_ids": [
+            "GRAPH-25D-LAYOUT",
+            "GRAPH-25D-ANSWER",
+            "GRAPH-25D-API",
+            "GRAPH-25D-BROWSER",
+            "GRAPH-25D-MOTION",
+            "GRAPH-25D-PRESERVE"
+          ],
+          "scope": "DEC-H36 2.5D presentation and same-version delivery CQ evidence; all nodes/edges and database preserved. Full trace/history/Agent/scale acceptance remains incomplete.",
+          "parent_complete": false,
+          "verified_code_commit": "451ec959209dcbb7686cb9921ad5cd61a0070037"
+        },
+        {
+          "record": "docs/handoff/SERVICE-MATERIAL-CARD-20261110.md",
+          "status": "VERIFIED",
+          "verification_ids": [
+            "MATERIAL-CARD-NODE",
+            "MATERIAL-CARD-BROWSER",
+            "MATERIAL-CARD-PRESERVE"
+          ],
+          "scope": "DEC-H37 reference material coverage bars from unchanged server quantities; UNKNOWN and exact shortages preserved. Display-only slice.",
+          "verified_code_commit": "cf42c2d",
+          "parent_complete": false
         }
       ],
       "actual_implementation_paths": [
@@ -2046,91 +2474,83 @@
     }
   ],
   "source_access_rule": "공개 저장소에는 요약 인계와 참조 ID만 둔다. 실제 원본은 Git 밖 private_inputs에 별도 보관한다. 원본 접근이 없는 Cloud는 T00 원문·해시 전수 대조를 완료할 수 없으며 T09 원본 처리는 BLOCKED다. 허용된 공개 계약 기반 T01 준비 부분은 독립 진행하되 T00 완료나 T01 전체 수용으로 기록하지 않는다.",
-  "current_execution_record": "docs/handoff/SERVICE-CQ-NL-20261108.md",
+  "current_execution_record": "docs/handoff/SERVICE-MATERIAL-FLOW-20261109.md",
   "current_work_scope": {
-    "decision": "DEC-H27",
-    "branch": "codex/cq68-natural-language",
-    "base_main": "2e6f24c",
-    "status": "VERIFIED",
-    "scope": "기존 CQ의 제한된 규칙 기반 자연어 읽기: 같은 서버 snapshot의 이행·추가 양품/가정 투입·소요/부족·재고와 납기 근거 부족을 구조화해 표시한다. 명시적 목표/수율 What-if는 읽기 전용이다.",
-    "prior_execution_record": "docs/handoff/SERVICE-BOM-MAC-20261108.md",
-    "implementation": "VERIFIED",
-    "verification": "VERIFIED",
-    "screen_verification": "VERIFIED",
+    "decision": "DEC-H31",
+    "branch": "codex/phase1-material-flow",
+    "base_main": "848fe79f3dae60148bf90fababbbd0b9639d8124",
+    "status": "IN_PROGRESS",
+    "scope": "T11/T12 local evidence + existing BOM candidate flow; T13 current stock; T14 internal purchasing/receipt/IQC and read specialists.",
+    "record": "docs/handoff/SERVICE-MATERIAL-FLOW-20261109.md",
     "no_parent_completion_from_partial_check": true,
-    "existing_cq_refs": [
-      "DEMO-CQ-01",
-      "DEMO-CQ-02",
-      "CQ09",
-      "B-CQ01",
-      "B-CQ02",
-      "B-CQ03",
-      "B-CQ04"
-    ],
-    "verification_ids": [
-      "CQ-NL-FUL",
-      "CQ-NL-PLAN",
-      "CQ-NL-MAT",
-      "CQ-NL-INV",
-      "CQ-NL-DELIVERY",
-      "CQ-NL-SCOPE",
-      "CQ-NL-UI",
-      "CQ-NL-API",
-      "CQ-NL-MAC",
-      "CQ-NL-PRESERVE",
-      "CQ-NL-RESTART"
-    ],
-    "provenance_contract": "실제 BOM 원문 / 합성 초기 원장 / 조건부 시연 가정 / 질문에서 지정한 가정 / 미확인을 구분한다.",
-    "delivery_contract": "전체 응답 PARTIAL, 실제 납기 가능성 UNKNOWN. 전체 BOM 기술검수·실재고·조달·일정/능력·검사·달력·운송·계약 기한 근거가 없으면 ETA를 만들지 않는다.",
-    "proposed_schedule_activated": false,
     "domain_writes": false,
-    "model_call_path": false,
-    "actual_model_verification": "NOT_RUN",
+    "model_call_path": true,
+    "budget_scope": "mks2-agent-20261108",
+    "historical_spend": "PRESERVED_UNKNOWN",
+    "approved_new_budget_usd": "10",
+    "actual_model_verification": "VERIFIED",
     "merge": {
       "automatic_authorization": false,
       "status": "NOT_STARTED"
     },
-    "remaining_acceptance": "범용 자연어 품질·ModelGateway·LangGraph/영속 Agent·관측·Hybrid RAG·전체 CQ20 및 공식 부모 Task 수용은 미완료. 기존 모델 예산은 초기화하지 않는다.",
-    "automated_server_verification": {
+    "current_runtime_mode": "live",
+    "live_dispatched_attempts": 5,
+    "live_successful_responses": 3,
+    "live_hold_reason": null,
+    "bounded_fake_read_verification": "VERIFIED",
+    "python_tests_passed": 345,
+    "node_tests_passed": 18,
+    "actual_model_scope": "Single approved live fulfillment routing + deterministic ledger read; general semantic quality and full Agent acceptance remain incomplete.",
+    "live_unknown_attempts": 2,
+    "latest_connection_record": "docs/handoff/SERVICE-MODEL-20261109.md",
+    "latest_connection_decision": "DEC-H30",
+    "original_domain_writes": false,
+    "isolated_domain_writes": true,
+    "new_live_model_calls": 0,
+    "known_cost_usd": "0.00128",
+    "held_usd": "0.010932",
+    "runtime_ledger_version": 2,
+    "isolated_verified_ledger_version": 8,
+    "latest_bom_review": {
+      "decision": "DEC-H33",
+      "record": "docs/handoff/SERVICE-BOM-REVIEW-20261109.md",
       "status": "VERIFIED",
-      "environment": "Mac with actual PostgreSQL, Neo4j and enforced Runner",
-      "python_tests_passed": 223,
-      "python_elapsed_seconds": 28.65,
-      "live_readonly_api_queries_passed": 9,
-      "ledger_version": 2,
-      "projection_version": 2,
-      "model_calls": 0,
-      "ledger_mutations": 0,
-      "business_snapshot_unchanged": true,
-      "full_ontology_schema_counts": {
-        "classes": 52,
-        "relations": 74,
-        "shapes": 79
-      },
-      "stale_version_http_status": 409
+      "read_only_comparison": true,
+      "original_domain_writes": false,
+      "new_live_model_calls": 0,
+      "parent_complete": false
     },
-    "node_verification": "VERIFIED",
-    "restart_verification": "VERIFIED",
-    "final_preservation_verification": "VERIFIED",
-    "verified_code_commit": "aecd23add18615c33a051b43686a75a426929d01",
-    "node_verification_result": {
-      "command": "node --test tests/*.mjs",
-      "passed": 11,
-      "failed": 0,
-      "skipped": 0
+    "latest_bom_focus": {
+      "decision": "DEC-H34",
+      "record": "docs/handoff/SERVICE-BOM-FOCUS-20261109.md",
+      "status": "VERIFIED",
+      "original_domain_writes": false,
+      "new_live_model_calls": 0,
+      "parent_complete": false
     },
-    "verification_commands": [
-      ".venv/bin/python dev/verify_service.py --runtime-file <private runtime; environment injected without logging>",
-      "node --test tests/*.mjs",
-      "git diff --check"
-    ],
-    "screen_verification_scope": "Native Chrome 작성자 A: 출처/가정/UNKNOWN 카드,68대 납기+자재 PARTIAL,40/94%→43,50/90%→56 What-if와 원장 목표40 보존,즉시 답변·새 질문의 이전 재생 취소·두 답변/v2 메타데이터 유지·캡처 배치 확인. 최종8870 응답도 확인하고 열어 둠.",
-    "restart_verification_scope": "최종 코드8870 health HTTP200;9읽기 질의 PASS,기존8응답 동일;확인용8871 종료.",
-    "preservation_verification_scope": "업무 snapshot 전체 필드 동일;승인 BOM hash·전체74행·반영v2 유지;전체 T-Box/SHACL 동형 및52/74/79;보존화면7파일 b3ee599와 byte 동일;자격증명 파일 hash 동일.",
-    "evidence_sha256": {
-      "python_suite": "ec7a92939309c3742fa775185b6007b522147bd8939777501dcd26b1a9c46339",
-      "final_restart_live_queries_preservation": "9e52976fca4a67346d03230c95a44e3a648b7cc4b3cb1e552ed9a08bc8b6176f",
-      "native_browser": "3c82e6cd0fded7ff883038be69bdd476fb97367b3f10c6fde3f58302aad65f22"
+    "latest_ledger_feed": {
+      "decision": "DEC-H35",
+      "record": "docs/handoff/SERVICE-LEDGER-FEED-20261109.md",
+      "status": "VERIFIED",
+      "original_domain_writes": false,
+      "new_live_model_calls": 0,
+      "parent_complete": false
+    },
+    "latest_graph_25d": {
+      "decision": "DEC-H36",
+      "record": "docs/handoff/SERVICE-GRAPH-25D-20261110.md",
+      "status": "VERIFIED",
+      "original_domain_writes": false,
+      "new_live_model_calls": 0,
+      "parent_complete": false
+    },
+    "latest_material_card": {
+      "decision": "DEC-H37",
+      "record": "docs/handoff/SERVICE-MATERIAL-CARD-20261110.md",
+      "status": "VERIFIED",
+      "original_domain_writes": false,
+      "new_live_model_calls": 0,
+      "parent_complete": false
     }
   },
   "retained_foundation_batch": [
@@ -2177,6 +2597,122 @@
       "remaining_acceptance": "Configuration conflict, full technical review, real stock evidence, other models, Agent and overall service acceptance remain incomplete.",
       "cq68_observation": "Read-only current quantities and selected5 conditional scope verified; full CQ20 and natural-language coverage not accepted.",
       "execution_record": "docs/handoff/SERVICE-BOM-MAC-20261108.md"
+    },
+    {
+      "decision": "DEC-H27",
+      "branch": "codex/cq68-natural-language",
+      "base_main": "2e6f24c",
+      "status": "VERIFIED",
+      "scope": "기존 CQ의 제한된 규칙 기반 자연어 읽기: 같은 서버 snapshot의 이행·추가 양품/가정 투입·소요/부족·재고와 납기 근거 부족을 구조화해 표시한다. 명시적 목표/수율 What-if는 읽기 전용이다.",
+      "prior_execution_record": "docs/handoff/SERVICE-BOM-MAC-20261108.md",
+      "implementation": "VERIFIED",
+      "verification": "VERIFIED",
+      "screen_verification": "VERIFIED",
+      "no_parent_completion_from_partial_check": true,
+      "existing_cq_refs": [
+        "DEMO-CQ-01",
+        "DEMO-CQ-02",
+        "CQ09",
+        "B-CQ01",
+        "B-CQ02",
+        "B-CQ03",
+        "B-CQ04"
+      ],
+      "verification_ids": [
+        "CQ-NL-FUL",
+        "CQ-NL-PLAN",
+        "CQ-NL-MAT",
+        "CQ-NL-INV",
+        "CQ-NL-DELIVERY",
+        "CQ-NL-SCOPE",
+        "CQ-NL-UI",
+        "CQ-NL-API",
+        "CQ-NL-MAC",
+        "CQ-NL-PRESERVE",
+        "CQ-NL-RESTART"
+      ],
+      "provenance_contract": "실제 BOM 원문 / 합성 초기 원장 / 조건부 시연 가정 / 질문에서 지정한 가정 / 미확인을 구분한다.",
+      "delivery_contract": "전체 응답 PARTIAL, 실제 납기 가능성 UNKNOWN. 전체 BOM 기술검수·실재고·조달·일정/능력·검사·달력·운송·계약 기한 근거가 없으면 ETA를 만들지 않는다.",
+      "proposed_schedule_activated": false,
+      "domain_writes": false,
+      "model_call_path": false,
+      "actual_model_verification": "NOT_RUN",
+      "merge": {
+        "automatic_authorization": false,
+        "status": "NOT_STARTED"
+      },
+      "remaining_acceptance": "범용 자연어 품질·ModelGateway·LangGraph/영속 Agent·관측·Hybrid RAG·전체 CQ20 및 공식 부모 Task 수용은 미완료. 기존 모델 예산은 초기화하지 않는다.",
+      "automated_server_verification": {
+        "status": "VERIFIED",
+        "environment": "Mac with actual PostgreSQL, Neo4j and enforced Runner",
+        "python_tests_passed": 223,
+        "python_elapsed_seconds": 28.65,
+        "live_readonly_api_queries_passed": 9,
+        "ledger_version": 2,
+        "projection_version": 2,
+        "model_calls": 0,
+        "ledger_mutations": 0,
+        "business_snapshot_unchanged": true,
+        "full_ontology_schema_counts": {
+          "classes": 52,
+          "relations": 74,
+          "shapes": 79
+        },
+        "stale_version_http_status": 409
+      },
+      "node_verification": "VERIFIED",
+      "restart_verification": "VERIFIED",
+      "final_preservation_verification": "VERIFIED",
+      "verified_code_commit": "aecd23add18615c33a051b43686a75a426929d01",
+      "node_verification_result": {
+        "command": "node --test tests/*.mjs",
+        "passed": 11,
+        "failed": 0,
+        "skipped": 0
+      },
+      "verification_commands": [
+        ".venv/bin/python dev/verify_service.py --runtime-file <private runtime; environment injected without logging>",
+        "node --test tests/*.mjs",
+        "git diff --check"
+      ],
+      "screen_verification_scope": "Native Chrome 작성자 A: 출처/가정/UNKNOWN 카드,68대 납기+자재 PARTIAL,40/94%→43,50/90%→56 What-if와 원장 목표40 보존,즉시 답변·새 질문의 이전 재생 취소·두 답변/v2 메타데이터 유지·캡처 배치 확인. 최종8870 응답도 확인하고 열어 둠.",
+      "restart_verification_scope": "최종 코드8870 health HTTP200;9읽기 질의 PASS,기존8응답 동일;확인용8871 종료.",
+      "preservation_verification_scope": "업무 snapshot 전체 필드 동일;승인 BOM hash·전체74행·반영v2 유지;전체 T-Box/SHACL 동형 및52/74/79;보존화면7파일 b3ee599와 byte 동일;자격증명 파일 hash 동일.",
+      "evidence_sha256": {
+        "python_suite": "ec7a92939309c3742fa775185b6007b522147bd8939777501dcd26b1a9c46339",
+        "final_restart_live_queries_preservation": "9e52976fca4a67346d03230c95a44e3a648b7cc4b3cb1e552ed9a08bc8b6176f",
+        "native_browser": "3c82e6cd0fded7ff883038be69bdd476fb97367b3f10c6fde3f58302aad65f22"
+      }
+    },
+    {
+      "decision": "DEC-H29",
+      "branch": "codex/agent-foundation",
+      "base_main": "848fe79f3dae60148bf90fababbbd0b9639d8124",
+      "status": "IN_PROGRESS",
+      "scope": "T04~T07 제한된 읽기 Agent: typed ports, canonical model accounting, local observation, LangGraph two specialist subgraphs, persistent clarification/recovery.",
+      "record": "docs/handoff/SERVICE-AGENT-20261108.md",
+      "no_parent_completion_from_partial_check": true,
+      "domain_writes": false,
+      "model_call_path": true,
+      "budget_scope": "mks2-agent-20261108",
+      "historical_spend": "PRESERVED_UNKNOWN",
+      "approved_new_budget_usd": "10",
+      "actual_model_verification": "VERIFIED",
+      "merge": {
+        "automatic_authorization": false,
+        "status": "NOT_STARTED"
+      },
+      "current_runtime_mode": "live",
+      "live_dispatched_attempts": 3,
+      "live_successful_responses": 1,
+      "live_hold_reason": null,
+      "bounded_fake_read_verification": "VERIFIED",
+      "python_tests_passed": 286,
+      "node_tests_passed": 12,
+      "actual_model_scope": "Single approved live fulfillment routing + deterministic ledger read; general semantic quality and full Agent acceptance remain incomplete.",
+      "live_unknown_attempts": 2,
+      "latest_connection_record": "docs/handoff/SERVICE-MODEL-20261109.md",
+      "latest_connection_decision": "DEC-H30"
     }
   ]
 }

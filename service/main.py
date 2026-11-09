@@ -15,7 +15,7 @@ import psycopg
 from dev.preview_server import CSP, REPO_ROOT, STATIC_FILES, PreviewServer, PreviewUnavailable
 from service.contracts import Contract, CreateDocument, DocumentAction, ReviseDocument
 from service.bom import BomService
-from service.bom_contracts import BomCreate, BomRevise, BomReview
+from service.bom_contracts import BomCompare, BomCreate, BomRevise, BomReview, BomReviewFocus
 from service.bom_runner import BomRunner
 from service.domain import DomainService
 from service.errors import ServiceError
@@ -25,6 +25,7 @@ from service.ledger import LedgerReader
 from service.ontology import OntologyCatalog
 from service.projections import ProjectionError
 from service.views import answer_query, ontology_view, snapshot_view
+from service.agent_api import mount_agent_api
 
 
 MAX_REQUEST_BYTES = 128 * 1024
@@ -46,7 +47,8 @@ class Snapshot(Contract):
 
 
 def create_app(db, *, private_root: str, origin="http://127.0.0.1:8870", dev_mode=False,
-               reference_preview=False, catalog=None,projector=None,bom_runner=None):
+               reference_preview=False, catalog=None,projector=None,bom_runner=None,agent_settings=None,
+               agent_receipt_path=None, retrieval_embedding=None):
     parsed=urlsplit(origin)
     if parsed.scheme != "http" or parsed.hostname not in {"localhost","127.0.0.1"} or parsed.username or parsed.password or not parsed.port or parsed.path or parsed.query or parsed.fragment:
         raise ServiceError("LOCAL_ORIGIN_REQUIRED",503)
@@ -159,6 +161,9 @@ def create_app(db, *, private_root: str, origin="http://127.0.0.1:8870", dev_mod
             raise ServiceError("SNAPSHOT_MISMATCH")
         view=snapshot_view(payload)
         view["meta"]["identity_revision"]=actor.identity_revision
+        view["capabilities"].update({"product_review": "READ_ONLY", "retrieval": "LOCAL_HYBRID" if retrieval_embedding else "LOCAL_LEXICAL",
+            "purchase_write": "INTERNAL_DEVELOPMENT_ONLY", "bom_upload": "CHECK_RUNNER_ON_UPLOAD",
+            "agent": "ENABLED" if workflow else "DISABLED", "model": model_summary()["mode"]})
         return ToolOutput(data=view,snapshot=ctx,evidence_refs=[EvidenceRef(evidence_id=ctx.read_snapshot_id,source_version=str(ctx.ledger_version),content_hash=payload["metadata"]["source_sha256"])])
 
     def query_handler(actor,args,ctx):
@@ -203,11 +208,59 @@ def create_app(db, *, private_root: str, origin="http://127.0.0.1:8870", dev_mod
         ("post",DocumentAction,BomActionCall,"document.post"),
     ):
         gateway.register(ToolSpec("bom."+action,permission,True,input_model,bom_handler(action,model)))
+
+    def compare_bom_handler(actor, args, ctx):
+        result = bom.compare(actor, actor.company_id, args)
+        refs = [EvidenceRef(evidence_id=ref["document_id"], source_version=str(ref["version"]),
+                            content_hash=ref["payload_hash"])
+                for ref in (result["left"], result["right"]) if ref is not None]
+        return ToolOutput(status="needs_review" if result["status"] == "NEEDS_REVIEW" else "completed",
+                          data=result, snapshot=ctx, evidence_refs=refs)
+
+    gateway.register(ToolSpec("bom.compare", "document.read", False, BomCompare, compare_bom_handler))
+
+    def review_focus_handler(actor, args, ctx):
+        result = bom.review_focus(actor, actor.company_id, args)
+        refs = [EvidenceRef(evidence_id=ref["document_id"], source_version=str(ref["version"]),
+                            content_hash=ref["payload_hash"])
+                for ref in (result["document"], result["reference"]) if ref is not None]
+        return ToolOutput(status="needs_review" if result["status"] == "NEEDS_REVIEW" else "completed",
+                          data=result, snapshot=ctx, evidence_refs=refs)
+
+    gateway.register(ToolSpec("bom.review_focus", "document.read", False, BomReviewFocus, review_focus_handler))
     app.state.gateway=gateway
+
+    from service.material_api import mount_material_api
+    mount_material_api(app, identity=identity, ledger=ledger, bom=bom, gateway=gateway, principal=principal,
+                       context=context, verified_payload=verified_payload, embedding=retrieval_embedding)
+    from service.procurement_api import mount_procurement_api
+    mount_procurement_api(app, db=db, identity=identity, ledger=ledger, gateway=gateway,
+                         principal=principal, context=context, verified_payload=verified_payload)
+
+    workflow, observer = None, None
+    def model_summary(execution_id=None):
+        return {"mode": "disabled", "live_calls": 0, "fake_calls": 0}
+    if agent_settings is not None and agent_settings.mode != "disabled":
+        from service.agent_host import build_agent_host
+
+        def agent_context(actor, execution_id):
+            payload = ledger.read(actor)
+            ctx = context(actor, payload)
+            verified_payload(actor, ctx.ledger_version)
+            return ctx.model_copy(update={"execution_id": execution_id})
+
+        workflow, model_summary, observer = build_agent_host(db, identity, gateway, agent_context,
+            agent_settings, receipt_path=agent_receipt_path)
+    app.state.agent_workflow, app.state.agent_observer = workflow, observer
+    mount_agent_api(app, principal, workflow, model_summary)
 
     @app.get("/health")
     def health():
-        return {"status":"ok","mode":"local-development","database":db.health(),"serviceConnected":True,"model_calls":0}
+        model = model_summary()
+        return {"status":"ok","mode":"local-development","database":db.health(),"serviceConnected":True,
+                "model_calls":model["live_calls"], "agent":model,
+                "observability":{"exported":observer.exported,"failed":observer.failed,"invalid":observer.invalid}
+                if observer else {"enabled":False}}
 
     @app.get("/api/mks2/session")
     def get_session(request:Request):
@@ -317,6 +370,14 @@ def create_app(db, *, private_root: str, origin="http://127.0.0.1:8870", dev_mod
     @app.post("/api/mks2/bom/documents")
     def create_bom(request:Request,body:BomCreate):
         return execute_bom(request,"create",body)
+
+    @app.post("/api/mks2/bom/compare")
+    def compare_bom(request:Request,body:BomCompare):
+        return execute_bom(request,"compare",body)
+
+    @app.post("/api/mks2/bom/review-focus")
+    def bom_review_focus(request:Request,body:BomReviewFocus):
+        return execute_bom(request,"review_focus",body)
 
     @app.get("/api/mks2/bom/documents/{bom_id}")
     def get_bom(request:Request,bom_id:str):

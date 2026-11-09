@@ -25,6 +25,32 @@ def payload(rows=None):
 
 
 class MaterialRequirementsTests(unittest.TestCase):
+    def test_current_inventory_is_used_without_changing_opening_balance(self):
+        data = payload()
+        original = deepcopy(data)
+        data["current_inventory"] = [{**data["opening_balance"]["inventory"][0],
+                                      "on_hand_qty": 22, "available_qty": 16}]
+        result = requirements_for_snapshot(data)
+        self.assertEqual(result["items"][0]["available_qty"], "16")
+        self.assertEqual(data["opening_balance"], original["opening_balance"])
+        data["current_inventory"] = []
+        result = requirements_for_snapshot(data)
+        self.assertIsNone(result["items"][0]["available_qty"])
+        self.assertEqual(result["items"][0]["quantity_status"], "UNKNOWN")
+
+    def test_rule_and_readable_item_do_not_promote_demo_input_to_approval(self):
+        data = payload([row("one", unit="EA")])
+        data["opening_balance"]["inventory"][0]["unit"] = "EA"
+        data["entities"][0]["attributes"] = {"display_name": "Synthetic connector"}
+        result = requirements_for_snapshot(data)
+        item = result["items"][0]
+        self.assertEqual(item["item_name"], "Synthetic connector")
+        self.assertEqual(item["unit_label"], "개 (EA)")
+        self.assertEqual(item["quantity_status"], "COVERED")
+        self.assertTrue(item["conditional"])
+        self.assertEqual(result["manufacturing_feasibility"], "UNKNOWN")
+        self.assertEqual(result["calculation_policy"]["company_policy_approval"], "NOT_RECORDED")
+
     def test_duplicate_item_rows_are_aggregated_before_stock_is_compared(self):
         result = requirements_for_snapshot(payload([row("one", quantity="1"), row("two", quantity="0.5")]))
         self.assertEqual(len(result["items"]), 1)
