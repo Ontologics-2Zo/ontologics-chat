@@ -1,6 +1,7 @@
 import { mountDashboard } from './dashboard.js';
 import { mountGraph } from './graph.js';
 import { renderQueryAnswer } from './query.js';
+import { mountTwin } from './twin.js';
 
 // UI state is ephemeral. Identity, quantities, versions and answers come from the server.
 const $ = id => document.getElementById(id);
@@ -14,8 +15,8 @@ function button(text, action, className = 'btn sm') {
   const node = element('button', className, text);
   node.type = 'button'; node.addEventListener('click', action); return node;
 }
-let snapshot, ontology, graph, dashboard, identity, csrfToken;
-let contextId, noticeTimer, generation = 0, replayGeneration = 0, schemaMode = false;
+let snapshot, ontology, graph, dashboard, twin, identity, csrfToken;
+let contextId, twinContextId, noticeTimer, generation = 0, replayGeneration = 0, schemaMode = false;
 let requests = new AbortController();
 let polling = false, latestVersion = null;
 let agentMode = 'disabled';
@@ -23,7 +24,8 @@ const refreshButton = button('최신 원장 조회', refreshSnapshot);
 refreshButton.id = 'refresh-ledger'; refreshButton.hidden = true;
 $('reset').before(refreshButton);
 const panels = {};
-const currentScreen = () => location.hash === '#dashboard' ? 'dashboard' : 'graph';
+const SCREENS = ['graph', 'dashboard', 'twin'];
+const currentScreen = () => SCREENS.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'graph';
 const labelFor = id => snapshot?.graph?.data?.nodes?.find(node => (node.node_id || node.id) === id)?.display_id || id;
 function notify(text) {
   $('notice').textContent = text; $('notice').hidden = false;
@@ -62,19 +64,32 @@ function errorText(error) {
 }
 function route() {
   if (!snapshot) return;
-  for (const name of ['graph', 'dashboard']) {
+  for (const name of SCREENS) {
     $(`${name}-view`).hidden = currentScreen() !== name;
     $(`tab-${name}`).setAttribute('aria-current', currentScreen() === name ? 'page' : 'false');
   }
   if (currentScreen() === 'graph') requestAnimationFrame(() => graph?.resize());
+  updateTwinActivity();
+}
+function updateTwinActivity() {
+  twin?.setActive(currentScreen() === 'twin' && !document.hidden
+    && (!window.frameElement || window.frameElement.getBoundingClientRect().height > 0));
 }
 function setContext(value) {
   contextId = typeof value === 'string' ? value : value?.node_id ?? value?.id;
   if (!contextId) return;
-  for (const panel of Object.values(panels)) {
+  for (const name of ['graph', 'dashboard']) {
+    const panel = panels[name];
     panel.context.replaceChildren(document.createTextNode('맥락 '), button(labelFor(contextId), () => focusEvidence(contextId), 'chip'),
       document.createTextNode(` 원장 v${snapshot.meta.ledger_version}`));
   }
+}
+function setTwinContext(value) {
+  twinContextId = typeof value === 'string' ? value : value?.node_id ?? value?.id;
+  if (!twinContextId || !panels.twin) return;
+  const selected = twinContextId;
+  panels.twin.context.replaceChildren(document.createTextNode('맥락 '), button(labelFor(selected), () => focusEvidence(selected), 'chip'),
+    document.createTextNode(` 원장 v${snapshot.meta.ledger_version}`));
 }
 function focusEvidence(id) {
   cancelPendingReplay();
@@ -111,7 +126,7 @@ function createPanel(name) {
   clearAgentWaiting(panels[name]);
   const root = $(`${name}-panel`); root.replaceChildren();
   const heading = element('div', 'panel-heading');
-  heading.append(element('h2', '', name === 'graph' ? '업무 AI 질의' : '업무 에이전트'), element('span', 'tag', '원장 근거 조회'));
+  heading.append(element('h2', '', name === 'dashboard' ? '업무 에이전트' : '업무 AI 질의'), element('span', 'tag', '원장 근거 조회'));
   const context = element('div', 'panel-context', `원장 v${snapshot.meta.ledger_version}`);
   const messages = element('div', 'messages');
   messages.setAttribute('aria-live', 'polite'); messages.setAttribute('aria-relevant', 'additions');
@@ -122,9 +137,9 @@ function createPanel(name) {
   const suggestions = element('div', 'suggestions');
   updateSuggestions(suggestions, name);
   const form = element('form', 'question-form'), input = element('input');
-  input.autocomplete = 'off'; input.setAttribute('aria-label', name === 'graph' ? '질문' : '에이전트에게 질문');
+  input.autocomplete = 'off'; input.setAttribute('aria-label', name === 'dashboard' ? '에이전트에게 질문' : '질문');
   input.placeholder = '질문하면 같은 버전의 원장 근거를 조회합니다';
-  const submit = element('button', 'btn pri', name === 'graph' ? '보내기' : '실행'); submit.type = 'submit';
+  const submit = element('button', 'btn pri', name === 'dashboard' ? '실행' : '보내기'); submit.type = 'submit';
   form.append(input, submit);
   form.addEventListener('submit', event => {
     event.preventDefault(); const question = input.value.trim();
@@ -245,18 +260,22 @@ async function runQuery(name, question) {
     const answer = name === 'dashboard' && agentMode !== 'disabled'
       ? await agentQuery(panel, question, message, requestGeneration)
       : await api('/api/mks2/query', { question, ledger_version: snapshot.meta.ledger_version,
-        context_entity_id: contextId || undefined });
+        context_entity_id: (name === 'twin' ? twinContextId : contextId) || undefined });
     if (!answer) return;
     if (generation !== requestGeneration) return;
     if (answer.meta?.identity_revision !== identity?.identity_revision || answer.meta?.company_id !== identity?.company_id) {
       identity = null; csrfToken = null; invalidateView(); throw new Error('IDENTITY_CHANGED');
     }
-    if (answer.meta?.ledger_version !== snapshot.meta.ledger_version || answer.meta?.projection_version !== snapshot.meta.projection_version) {
+    if (!answerSnapshotMatches(answer)) {
       const error = new Error('SNAPSHOT_MISMATCH'); error.status = 409; throw error;
     }
     const hops = answer.graph_path || [], ids = [...new Set([...hops.flat(), ...(answer.evidence_node_ids || [])])];
+    twin?.highlight({ nodeIds: ids, edgeIds: answer.evidence_edge_ids || [],
+      ledgerVersion: answer.meta.ledger_version, projectionVersion: answer.meta.projection_version,
+      snapshotId: answer.meta.snapshot_id ?? answer.meta.read_snapshot_id,
+      companyId: answer.meta.company_id, identityRevision: answer.meta.identity_revision });
     const evidenceAtVersion = action => {
-      if (snapshot.meta.ledger_version !== answer.meta.ledger_version || snapshot.meta.projection_version !== answer.meta.projection_version) { notify('과거 원장 버전의 답변입니다. 최신 근거가 필요하면 질문을 다시 실행해 주세요.'); return; }
+      if (!answerSnapshotMatches(answer)) { notify('과거 원장 버전의 답변입니다. 최신 근거가 필요하면 질문을 다시 실행해 주세요.'); return; }
       action();
     };
     let activeReplay = null;
@@ -289,6 +308,14 @@ async function runQuery(name, question) {
     }
   }
 }
+function answerSnapshotMatches(answer) {
+  const meta = answer?.meta, current = snapshot?.meta;
+  return !!meta && !!current && !!identity
+    && meta.identity_revision === identity.identity_revision && meta.company_id === identity.company_id
+    && (meta.snapshot_id ?? meta.read_snapshot_id) === current.snapshot_id
+    && meta.ledger_version === current.ledger_version && meta.projection_version === current.projection_version
+    && meta.ontology_version === current.ontology_version;
+}
 function mountCurrentGraph() {
   cancelPendingReplay(); graph?.destroy();
   const selected = schemaMode ? ontology.graph : snapshot.graph;
@@ -302,8 +329,8 @@ function mountCurrentGraph() {
 function invalidateView() {
   for (const panel of Object.values(panels)) clearAgentWaiting(panel);
   generation++; requests.abort(); requests = new AbortController(); cancelPendingReplay();
-  graph?.destroy(); dashboard?.destroy(); graph = null; dashboard = null; snapshot = null; ontology = null;
-  for (const name of ['graph', 'dashboard']) { $(`${name}-view`).hidden = true; $(`${name}-panel`).replaceChildren(); }
+  graph?.destroy(); dashboard?.destroy(); twin?.destroy(); graph = null; dashboard = null; twin = null; snapshot = null; ontology = null; twinContextId = null;
+  for (const name of SCREENS) { $(`${name}-view`).hidden = true; $(`${name}-panel`).replaceChildren(); }
   $('load-state').hidden = false; $('load-state').textContent = '서버의 개발 계정을 선택해 원장을 조회하세요.';
   $('versions').textContent = '계정 확인 필요'; latestVersion = null; refreshButton.hidden = true;
 }
@@ -323,12 +350,13 @@ async function loadSnapshot({ preserveMessages = false } = {}) {
     || data.graph.meta?.ledger_version !== data.meta.ledger_version || data.graph.meta?.projection_version !== data.meta.projection_version) {
     const error = new Error('SNAPSHOT_MISMATCH'); error.status = 409; throw error;
   }
-  if (!schema.graph?.data?.nodes || !schema.graph?.data?.edges) throw new Error('ONTOLOGY_UNAVAILABLE');
+  if (!schema.graph?.data?.nodes || !schema.graph?.data?.edges
+    || schema.meta?.ontology_version !== data.meta.ontology_version) throw new Error('ONTOLOGY_UNAVAILABLE');
   snapshot = data; ontology = schema; schemaMode = false;
   $('versions').replaceChildren(document.createTextNode('원장 '), element('b', '', `v${data.meta.ledger_version}`),
     document.createTextNode(' · 그래프 '), element('b', '', `v${data.meta.projection_version}`), element('span', 'pill ok', '서버 연결'));
   $('versions').title = `원천 버전 ${data.meta.source_ledger_version ?? '미확인'} · ${data.meta.snapshot_id ?? ''}`;
-  if (!preserveMessages) { createPanel('graph'); createPanel('dashboard'); }
+  if (!preserveMessages) { for (const name of SCREENS) createPanel(name); }
   else for (const [name, panel] of Object.entries(panels)) {
     clearAgentWaiting(panel);
     panel.context.textContent = `현재 원장 v${data.meta.ledger_version} · 이전 답변은 각 답변의 기준 버전을 유지합니다.`;
@@ -341,9 +369,14 @@ async function loadSnapshot({ preserveMessages = false } = {}) {
     onAsk: text => fillQuestion(text, 'dashboard'), onGraph: focusEvidence, api, getIdentity: () => identity,
     onPosted: () => { refreshButton.textContent = '업무 반영 · 최신 원장 조회'; notify('업무 사건이 반영됐습니다. 그래프 준비 후 최신 원장을 조회해 주세요.'); }, onRefresh: refreshSnapshot });
   mountCurrentGraph();
+  twin?.destroy();
+  twin = mountTwin($('twin-stage'), { snapshot, ontology, labelFor, onSelect: setTwinContext,
+    onAsk: text => fillQuestion(text, 'twin'), onGraph: focusEvidence });
   const initialNode = data.graph.data.nodes.find(node => node.entity_ref?.entity_type === 'delivery_round' || node.type === 'DeliveryRound');
   const initialContext = initialNode?.node_id || initialNode?.id;
   if (initialContext) setContext(initialContext);
+  if (!data.graph.data.nodes.some(node => (node.node_id || node.id) === twinContextId)) twinContextId = initialContext;
+  if (twinContextId) setTwinContext(twinContextId);
   $('load-state').hidden = true; $('workspace').setAttribute('aria-busy', 'false'); route();
 }
 async function refreshSnapshot() {
@@ -356,6 +389,7 @@ async function refreshSnapshot() {
   finally { refreshButton.disabled = false; }
 }
 async function pollChanges() {
+  updateTwinActivity();
   if (polling || !snapshot || !identity || document.hidden || (window.frameElement && !window.frameElement.getBoundingClientRect().height)) return;
   polling = true; const requestGeneration = generation;
   try {
@@ -416,6 +450,9 @@ $('actor').addEventListener('change', () => {
   else if (identity) signOut();
 });
 window.addEventListener('hashchange', route);
+window.addEventListener('resize', updateTwinActivity);
+document.addEventListener('visibilitychange', updateTwinActivity);
+if (typeof ResizeObserver === 'function') new ResizeObserver(updateTwinActivity).observe($('workspace'));
 $('theme').addEventListener('click', () => {
   const dark = document.documentElement.dataset.theme !== 'dark'; document.documentElement.dataset.theme = dark ? 'dark' : 'light';
   $('theme').setAttribute('aria-label', dark ? '밝은 테마로 전환' : '어두운 테마로 전환');
@@ -423,7 +460,8 @@ $('theme').addEventListener('click', () => {
 $('reset').addEventListener('click', () => {
   if (!snapshot) return;
   generation++; requests.abort(); requests = new AbortController();
-  cancelPendingReplay(); graph.reset(); dashboard.select(null); createPanel('graph'); createPanel('dashboard');
+  cancelPendingReplay(); graph.reset(); dashboard.select(null); twin?.reset(); twinContextId = null;
+  for (const name of SCREENS) createPanel(name);
   notify('화면 선택과 대화를 초기화했습니다. 원장은 유지됩니다.');
 });
 start();

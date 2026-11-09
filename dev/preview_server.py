@@ -42,6 +42,11 @@ STATIC_FILES = {
     "/mks2/graph.js": ("mks2/graph.js", "text/javascript; charset=utf-8"),
     "/mks2/graph-layout.js": ("mks2/graph-layout.js", "text/javascript; charset=utf-8"),
     "/mks2/graph.css": ("mks2/graph.css", "text/css; charset=utf-8"),
+    "/mks2/twin.js": ("mks2/twin.js", "text/javascript; charset=utf-8"),
+    "/mks2/twin.css": ("mks2/twin.css", "text/css; charset=utf-8"),
+    "/mks2/vendor/three/three.module.min.js": ("mks2/vendor/three/three.module.min.js", "text/javascript; charset=utf-8"),
+    "/mks2/vendor/three/OrbitControls.js": ("mks2/vendor/three/OrbitControls.js", "text/javascript; charset=utf-8"),
+    "/mks2/vendor/three/CSS2DRenderer.js": ("mks2/vendor/three/CSS2DRenderer.js", "text/javascript; charset=utf-8"),
 }
 FIXTURE_FILES = {
     "session": "00_session.json",
