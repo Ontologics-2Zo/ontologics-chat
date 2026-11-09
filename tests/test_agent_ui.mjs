@@ -43,7 +43,7 @@ function stateAt(snapshot, { execution_id = 'synthetic-execution', revision = 2,
     result: status === 'COMPLETED' ? { answer: '합성 조회 결과', status: 'ANSWERED', meta: { ...snapshot.meta } } : null };
 }
 async function setup() {
-  const elements = new Map(), requests = [], twins = [], answers = [], documentEvents = {};
+  const elements = new Map(), requests = [], twins = [], answers = [], bomOpens = [], documentEvents = {};
   let data = snapshotAt(), handler = null, serial = 0;
   const get = id => { if (!elements.has(id)) elements.set(id, new Element('div')); return elements.get(id); };
   const context = vm.createContext({
@@ -54,7 +54,7 @@ async function setup() {
     AbortController, crypto: { randomUUID: () => `synthetic-key-${++serial}` },
     setTimeout: () => 1, clearTimeout() {}, setInterval: () => 1, clearInterval() {},
     requestAnimationFrame: callback => callback(),
-    mountDashboard: () => ({ destroy() {}, select() {}, openBom() {} }),
+    mountDashboard: () => ({ destroy() {}, select() {}, openBom(step) { bomOpens.push(step); } }),
     mountGraph: () => ({ destroy() {}, cancelReplay() {}, resize() {}, reset() {}, focus() {}, replay() {} }),
     mountTwin: (stage, options) => {
       const instance = { options, highlights: [], active: [], destroyed: false, resets: 0,
@@ -89,7 +89,7 @@ async function setup() {
       twinPanel: () => panels.twin, graphPanel: () => panels.graph, generation: () => generation,
       route: name => { location.hash = '#' + name; route(); }, invalidate: invalidateView,
       load: loadSnapshot, setContext, setTwinContext, twinActive: updateTwinActivity };`, context);
-  return { requests, app: context.app, twins, answers, document: context.document, window: context.window,
+  return { requests, app: context.app, twins, answers, bomOpens, document: context.document, window: context.window, location: context.location,
     documentEvents, element: get, setHandler(value) { handler = value; },
     snapshot: () => data, setNextSnapshot(value) { data = value; } };
 }
@@ -262,4 +262,28 @@ test('screen reset clears twin presentation state without requests or ledger cha
   h.element('reset').dispatchClick();
   assert.equal(twin.resets, 1); assert.equal(h.app.twinPanel().input.value, '');
   assert.equal(h.requests.length, count); assert.equal(JSON.stringify(h.snapshot()), before);
+});
+
+test('the current answer BOM action opens source reception without changing tabs or issuing a command', async () => {
+  const h = await setup(); await h.app.load(); h.app.route('twin');
+  h.setHandler(() => ({ ...twinAnswer(h), calculation: {
+    material_requirements: { state: 'BLOCKED_BOM', bom_id: null } } }));
+  await h.app.askTwin('합성 미등록 질문');
+  assert.equal(h.bomOpens.length, 0);
+  const count = h.requests.length, before = JSON.stringify(h.snapshot());
+  h.answers[0].options.onOpenBom();
+  assert.deepEqual(h.bomOpens, [0]); assert.equal(h.requests.length, count);
+  assert.equal(h.location.hash, '#twin'); assert.equal(JSON.stringify(h.snapshot()), before);
+});
+
+test('an old answer cannot reopen BOM registration after refresh or identity invalidation', async () => {
+  const h = await setup(); await h.app.load(); h.setHandler(() => twinAnswer(h));
+  await h.app.askTwin('합성 이전 질문');
+  h.setNextSnapshot(snapshotAt(8)); await h.app.refresh();
+  const count = h.requests.length;
+  h.answers[0].options.onOpenBom();
+  assert.deepEqual(h.bomOpens, []); assert.equal(h.requests.length, count);
+  assert.match(h.element('notice').textContent, /과거 원장 버전/);
+  h.app.invalidate(); h.answers[0].options.onOpenBom();
+  assert.deepEqual(h.bomOpens, []); assert.equal(h.requests.length, count);
 });

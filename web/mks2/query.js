@@ -145,7 +145,7 @@ function evidenceFlow(answer, suppliedEdges, labelFor, onEvidence, onReplay) {
 
 export function renderQueryAnswer(message, answer, {
   evidenceIds = [], evidenceEdges = [], labelFor = id => id, onEvidence = () => {},
-  onReplay = () => {}, onCancel = () => {},
+  onReplay = () => {}, onCancel = () => {}, onOpenBom = () => {},
 } = {}) {
   message.replaceChildren();
   const sectionData = (Array.isArray(answer.sections) ? answer.sections : []).filter(section => section && typeof section === 'object');
@@ -160,6 +160,12 @@ export function renderQueryAnswer(message, answer, {
   if (summary.children.length) verdict.append(summary);
   if (text(answer.conclusion)) verdict.append(node('p', 'query-conclusion', answer.conclusion));
   verdict.append(node('p', 'answer', text(answer.answer) || text(answer.answer?.text) || '확인된 답변이 없습니다.'));
+  const requirements = answer.calculation?.material_requirements;
+  if (requirements?.state === 'BLOCKED_BOM' && requirements.bom_id == null) {
+    const register = action('BOM 원본 등록', onOpenBom, 'btn pri sm');
+    register.dataset.queryAction = 'bom-register';
+    verdict.append(register);
+  }
   if (delivery) {
     message.append(verdict);
     const metrics = deliveryMetrics(sectionData);

@@ -61,6 +61,35 @@ test('sections distinguish source, synthetic ledger, assumptions and unknowns', 
   } finally { restore(); }
 });
 
+test('an explicitly missing BOM offers only the existing registration entry after a click', () => {
+  const { message, restore } = setup();
+  try {
+    const data = response(); data.intent = ['delivery'];
+    data.calculation = { actual_delivery_feasibility: 'UNKNOWN',
+      material_requirements: { state: 'BLOCKED_BOM', bom_id: null } };
+    const before = JSON.stringify(data); let opens = 0;
+    renderQueryAnswer(message, data, { onOpenBom: () => { opens++; } });
+    const controls = descendants(message).filter(item => item.dataset.queryAction === 'bom-register');
+    assert.equal(controls.length, 1); assert.equal(controls[0].textContent, 'BOM 원본 등록');
+    assert.equal(controls[0].className, 'btn pri sm'); assert.equal(controls[0].type, 'button');
+    assert.equal(opens, 0); controls[0].click(); assert.equal(opens, 1);
+    assert.equal(JSON.stringify(data), before);
+  } finally { restore(); }
+});
+
+test('registered, partial, unknown and absent BOM calculations do not offer registration from an answer', () => {
+  const { message, restore } = setup();
+  try {
+    for (const requirements of [undefined, {}, { state: 'UNKNOWN', bom_id: null },
+      { state: 'PARTIAL', bom_id: 'synthetic-bom' }, { state: 'CALCULATED', bom_id: 'synthetic-bom' },
+      { state: 'BLOCKED_BOM', bom_id: 'synthetic-bom' }]) {
+      const data = response(); data.calculation = { material_requirements: requirements };
+      renderQueryAnswer(message, data);
+      assert.equal(descendants(message).filter(item => item.dataset.queryAction === 'bom-register').length, 0);
+    }
+  } finally { restore(); }
+});
+
 test('untrusted server strings stay literal text without HTML or unsafe classes', () => {
   const { message, restore } = setup();
   try {

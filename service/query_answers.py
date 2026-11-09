@@ -337,6 +337,9 @@ def answer_query(question, view, ontology, *, context_entity_id=None):
         ], "UNKNOWN"))
         answers.insert(0, "현재 근거로는 남은 물량의 납기 내 고객 도착 가능 여부를 확정할 수 없습니다.")
         status, conclusion = "PARTIAL", "현재 수량·조건부 부족은 확인 · 실제 납기는 판단 보류"
+        if req["state"] == "BLOCKED_BOM" and req["bom_id"] is None:
+            conclusion = "현재 수량 확인 · BOM 등록 후 소요·부족 계산 · 납기 판단 보류"
+            answers.insert(1, "BOM 원본을 등록하고 검토·승인·원장 반영을 마친 뒤 소요·부족을 계산해야 합니다.")
 
     if "ontology" in intents:
         counts = ontology["counts"]
