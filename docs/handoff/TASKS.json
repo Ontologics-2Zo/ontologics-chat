@@ -1227,6 +1227,18 @@
           "scope": "DEC-H36 2.5D presentation and same-version delivery CQ evidence; all nodes/edges and database preserved. Full trace/history/Agent/scale acceptance remains incomplete.",
           "parent_complete": false,
           "verified_code_commit": "451ec959209dcbb7686cb9921ad5cd61a0070037"
+        },
+        {
+          "record": "docs/handoff/SERVICE-MATERIAL-CARD-20261110.md",
+          "status": "VERIFIED",
+          "verification_ids": [
+            "MATERIAL-CARD-NODE",
+            "MATERIAL-CARD-BROWSER",
+            "MATERIAL-CARD-PRESERVE"
+          ],
+          "scope": "DEC-H37 reference material coverage bars from unchanged server quantities; UNKNOWN and exact shortages preserved. Display-only slice.",
+          "verified_code_commit": "cf42c2d",
+          "parent_complete": false
         }
       ],
       "actual_implementation_paths": [
@@ -1583,6 +1595,18 @@
           ],
           "verified_code_commit": "8ba67fd80b8adeed0bf82bdba05aaa4a91b6f25e",
           "scope": "기초 원장을 보존한 입하/검사 현재 재고·품목/LOT 근거 계산. 69행 UNRESOLVED·실제 재고·동시 예약/불출/소비/반납·일반 대체 승인은 잔여.",
+          "parent_complete": false
+        },
+        {
+          "record": "docs/handoff/SERVICE-MATERIAL-CARD-20261110.md",
+          "status": "VERIFIED",
+          "verification_ids": [
+            "MATERIAL-CARD-NODE",
+            "MATERIAL-CARD-BROWSER",
+            "MATERIAL-CARD-PRESERVE"
+          ],
+          "scope": "DEC-H37 reference material coverage bars from unchanged server quantities; UNKNOWN and exact shortages preserved. Display-only slice.",
+          "verified_code_commit": "cf42c2d",
           "parent_complete": false
         }
       ],
@@ -2068,6 +2092,18 @@
           "scope": "DEC-H36 2.5D presentation and same-version delivery CQ evidence; all nodes/edges and database preserved. Full trace/history/Agent/scale acceptance remains incomplete.",
           "parent_complete": false,
           "verified_code_commit": "451ec959209dcbb7686cb9921ad5cd61a0070037"
+        },
+        {
+          "record": "docs/handoff/SERVICE-MATERIAL-CARD-20261110.md",
+          "status": "VERIFIED",
+          "verification_ids": [
+            "MATERIAL-CARD-NODE",
+            "MATERIAL-CARD-BROWSER",
+            "MATERIAL-CARD-PRESERVE"
+          ],
+          "scope": "DEC-H37 reference material coverage bars from unchanged server quantities; UNKNOWN and exact shortages preserved. Display-only slice.",
+          "verified_code_commit": "cf42c2d",
+          "parent_complete": false
         }
       ],
       "actual_implementation_paths": [
@@ -2503,6 +2539,14 @@
     "latest_graph_25d": {
       "decision": "DEC-H36",
       "record": "docs/handoff/SERVICE-GRAPH-25D-20261110.md",
+      "status": "VERIFIED",
+      "original_domain_writes": false,
+      "new_live_model_calls": 0,
+      "parent_complete": false
+    },
+    "latest_material_card": {
+      "decision": "DEC-H37",
+      "record": "docs/handoff/SERVICE-MATERIAL-CARD-20261110.md",
       "status": "VERIFIED",
       "original_domain_writes": false,
       "new_live_model_calls": 0,
