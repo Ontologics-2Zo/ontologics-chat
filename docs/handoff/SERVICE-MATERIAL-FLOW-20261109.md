@@ -52,11 +52,13 @@ Mac arm64, Python3.12 `.venv`, 실제 PostgreSQL/Neo4j/Docker Runner, 로컬 ONN
 
 ## 원래 Mac 앱 보존
 
-`8ba67fd`로 8870 앱만 재시작했고 `/health` 정상, 원래 업무 원장/투영 **v2**, 176노드/252관계다. 실제 BOM74행·기존 문서·전체 온톨로지52클래스/74관계/79shape를 보존했다. 기존 CQ 읽기9건, 새 Product 후보·로컬 dense 검색·빈 구매 목록의 읽기 API PASS, 조회 전후 snapshot 불변. 기존74행을 다시 등록하거나 승인/반영하지 않았다.
+`8ba67fd`로 8870 앱만 재시작했고 `/health` 정상, 원래 업무 원장/투영 **v2**, 176노드/252관계다. 실제 BOM74행·기존 문서·전체 온톨로지52클래스/74관계/79shape를 보존했다. 기존 CQ 읽기9건, 새 Product 후보·로컬 dense 검색·빈 구매 목록의 읽기 API PASS, 조회 전후 snapshot 불변. 기존74행을 다시 등록하거나 승인/반영하지 않았다. 원래DB에는 migration008의 신규 구매 테이블·nullable 참조열·제약만 추가했고, 기존 업무 행의 값과 원장 버전은 보존했다. 추가 참조열은 기존 사건 전부 NULL이다. 전체 DB의 byte/hash 불변을 주장하지 않는다.
 
 `web/` 직속7개 보존 화면은 `b3ee599`와 동일하다. 기존 runtime/Runner 설정과 기존 컨테이너14개·볼륨18개가 유지됐다. `.env`를 변경하지 않았다. 기존 `.idea/workspace.xml`의 동시 변경이 관측되어 그 상태를 그대로 보존했고, 에이전트는 `.idea`를 편집하거나 Git에 추가하지 않았다. 이를 hash 불변 PASS로 기록하지 않는다.
 
 브라우저에서 작성자A의 v2 원장/그래프/대시보드, 품목명·단위·40/43 기준, 기존 BOM8단계 안의 후보 조회를 확인했다. 격리8871에서도 합격23→가용43과 기존74행 화면을 확인했다. 브라우저 수동 확인은 자동 전체 업무 UI 인수나 픽셀 동일의 증거가 아니다.
+
+검증 종료 후 이번 작업이 만든8871 앱·복제DB·임시Neo4j·전용2볼륨만 정리했다. 기존14컨테이너/18볼륨 목록, 원래DB의 기존열 값, runtime·백업·상세증거가 보존됐고8870 health200을 다시 확인했다.
 
 ## 예산과 원본 경계
 
@@ -76,3 +78,4 @@ Mac arm64, Python3.12 `.venv`, 실제 PostgreSQL/Neo4j/Docker Runner, 로컬 ONN
 | MAT-E2E | `55350f90e31dfb08ea417f4655b905f4c9d1f509c3906c6c1a3180e577b394c6` |
 | MAT-HISTORICAL-READ | `8f85f8e2d38e449c3ce3d5b48cde373a87b80dd30bed00b415567868f6c244e7` |
 | MAT-AGENT | `3510f818dc6e29c8595e4af94e246388c16e81de6af6d6058afdb28bfb55b7ec` |
+| MAT-CLEANUP | `4c3da69b3546237587cb02bd60dca2d41427782df1ea6d70ac51d17ad128856f` |
