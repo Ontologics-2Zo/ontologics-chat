@@ -12,7 +12,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
@@ -141,6 +141,33 @@ class ServiceApiIntegrationTests(unittest.TestCase):
             broken = self.client.get("/health")
         self.error(broken, 503, "SERVICE_UNAVAILABLE")
         self.assertNotIn("PRIVATE_DIAGNOSTIC_SENTINEL", broken.text)
+
+    def test_observability_health_and_shutdown_failures_are_isolated(self):
+        from service.agent_config import AgentSettings
+
+        summary = {"mode": "fake", "live_calls": 0, "fake_calls": 0}
+        for close_failure in (False, True):
+            with self.subTest(close_failure=close_failure):
+                observer = Mock(exported=3, failed=0, invalid=0)
+                observer.langsmith_status.return_value = {
+                    "enabled": True, "content_policy": "metadata_only",
+                    "states": {"exported": 3, "failed_or_unknown": 1},
+                }
+                if close_failure:
+                    observer.close.side_effect = RuntimeError("PRIVATE_OBSERVATION_FAILURE")
+                with patch("service.agent_host.build_agent_host", return_value=(object(), lambda: summary, observer)):
+                    app = create_app(self.db, private_root=str(self.private), origin=ORIGIN,
+                        dev_mode=True, catalog=self.catalog, projector=self.projector,
+                        agent_settings=AgentSettings())
+                with TestClient(app, base_url=ORIGIN) as client:
+                    response = client.get("/health")
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(response.json()["observability"]["langsmith"], observer.langsmith_status.return_value)
+                    self.assertEqual(response.json()["model_calls"], 0)
+                    self.assertNotIn("PRIVATE_OBSERVATION_FAILURE", response.text)
+                    observer.close.assert_not_called()
+                observer.close.assert_called_once_with()
+                self.assertEqual(self.client.get("/health").status_code, 200)
 
     def test_retrieval_evidence_is_authorized_versioned_read_without_mutation(self):
         session = self.select()

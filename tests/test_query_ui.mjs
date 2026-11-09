@@ -3,8 +3,8 @@ import test from 'node:test';
 import { renderQueryAnswer } from '../web/mks2/query.js';
 
 class Element {
-  constructor(tag) { this.tagName = tag.toUpperCase(); this.children = []; this.dataset = {}; this.attributes = {}; this.events = {}; this._text = ''; }
-  set textContent(value) { this._text = String(value); this.children = []; }
+  constructor(tag) { this.tagName = tag.toUpperCase(); this.children = []; this.dataset = {}; this.attributes = {}; this.events = {}; this._text = ''; this.textWrites = 0; }
+  set textContent(value) { this._text = String(value); this.children = []; this.textWrites++; }
   get textContent() { return this._text + this.children.map(child => child.textContent).join(''); }
   set innerHTML(_) { throw Error('Server content must never be interpreted as HTML'); }
   append(...children) { this.children.push(...children); }
@@ -166,8 +166,10 @@ test('all evidence stays accessible and past answer metadata does not change', (
     const ids = Array.from({ length: 10 }, (_, index) => `synthetic-evidence-${index}`);
     renderQueryAnswer(message, data, { evidenceIds: [...ids, ids[0]], onEvidence: id => selected.push(id) });
     assert.equal(withClass(message, 'chip').length, 10);
-    assert.equal(withClass(message, 'query-more-evidence').length, 0);
-    assert.equal(withClass(message, 'evidence-path')[0].children.filter(item => item.tagName === 'BUTTON').length, 10);
+    assert.equal(withClass(message, 'query-more-evidence').length, 1);
+    assert.notEqual(withClass(message, 'query-more-evidence')[0].open, true);
+    assert.equal(withClass(message, 'evidence-path')[0].children.filter(item => item.tagName === 'BUTTON').length, 6);
+    assert.match(withClass(message, 'query-more-evidence')[0].textContent, /전체 근거 10개 보기 · 나머지 4개/);
     assert.equal(withClass(message, 'query-evidence-count')[0].textContent, '거친 노드 10개');
     withClass(message, 'chip')[9].click();
     assert.deepEqual(selected, [ids[9]]);
@@ -176,6 +178,44 @@ test('all evidence stays accessible and past answer metadata does not change', (
     renderQueryAnswer(new Element('div'), data);
     assert.equal(message.textContent, original);
     assert.ok(message.textContent.includes('원장 v7'));
+  } finally { restore(); }
+});
+
+test('large evidence shows six actual business nodes first and preserves every remaining source node', () => {
+  const { message, restore } = setup();
+  try {
+    const sourceIds = Array.from({ length: 159 }, (_, i) => `synthetic-source-${i}`);
+    const types = ['contract_line', 'delivery_round', 'production_job', 'configuration', 'product_model', 'BOMSnapshot'];
+    const core = types.map((type, i) => ({ node_id: `synthetic-core-${i}`, entity_ref: { entity_type: type } }));
+    const nodes = [...sourceIds.map(id => ({ node_id: id, entity_ref: { entity_type: 'SourceRow' } })), ...core,
+      { node_id: 'outside-evidence', entity_ref: { entity_type: 'contract_line' } }];
+    const ids = [...sourceIds, ...core.map(value => value.node_id)], selected = [];
+    const data = response(), before = JSON.stringify({ data, ids, nodes });
+    renderQueryAnswer(message, data, { evidenceIds: [...ids, ids[0]], evidenceNodes: nodes, onEvidence: id => selected.push(id) });
+    const evidence = withClass(message, 'evidence-path')[0], more = withClass(evidence, 'query-more-evidence')[0];
+    assert.deepEqual(evidence.children.filter(item => item.tagName === 'BUTTON').map(item => item.dataset.evidenceId), core.map(value => value.node_id));
+    assert.equal(withClass(evidence, 'chip').length, 165);
+    assert.equal(withClass(more, 'chip').length, 159); assert.notEqual(more.open, true);
+    assert.equal(more.children[0].textContent, '전체 근거 165개 보기 · 나머지 159개');
+    assert.ok(!evidence.textContent.includes('outside-evidence'));
+    for (const chip of withClass(evidence, 'chip')) chip.click();
+    assert.deepEqual(new Set(selected), new Set(ids));
+    assert.equal(JSON.stringify({ data, ids, nodes }), before);
+  } finally { restore(); }
+});
+
+test('missing type metadata uses stable evidence order and labels never infer a core type or execute markup', () => {
+  const { message, restore } = setup();
+  try {
+    const attack = '<img src=x onerror=bad()>', ids = ['n0', 'n1', 'n2', 'n3', 'n4', 'n5', 'contract_line', attack];
+    const selected = [];
+    renderQueryAnswer(message, response(), { evidenceIds: ids, evidenceNodes: [], labelFor: id => `${attack}${id}`,
+      onEvidence: id => selected.push(id) });
+    const evidence = withClass(message, 'evidence-path')[0];
+    assert.deepEqual(evidence.children.filter(item => item.tagName === 'BUTTON').map(item => item.dataset.evidenceId), ids.slice(0, 6));
+    assert.equal(descendants(message).filter(item => item.tagName === 'IMG').length, 0);
+    withClass(evidence, 'chip').at(-1).click(); assert.deepEqual(selected, [attack]);
+    assert.equal(withClass(evidence, 'chip').length, ids.length);
   } finally { restore(); }
 });
 
@@ -470,6 +510,51 @@ function animationSetup({ reduced = false } = {}) {
   } };
 }
 
+test('confirmed steps progress one at a time before prose without inventing Agent or model activity', async () => {
+  const fixture = animationSetup();
+  try {
+    const data = { ...response(), sections: [], steps: ['합성 원장 조회', '합성 버전 확인', '합성 근거 확인'],
+      answer: '합성 답변의 수량은 7대입니다.' };
+    const before = JSON.stringify(data), view = renderQueryAnswer(fixture.message, data, { animate: true });
+    const steps = withClass(fixture.message, 'trace-steps')[0], prose = withClass(fixture.message, 'query-prose')[0];
+    const states = () => steps.children.map(item => item.dataset.displayState);
+    assert.deepEqual(steps.children.map(item => item.textContent), data.steps);
+    assert.equal(steps.dataset.presentation, 'confirmed-results');
+    assert.match(steps.attributes.title, /표시 효과는 실제 처리 진행률이 아닙니다/);
+    assert.equal(withClass(fixture.message, 'query-typing-status')[0].textContent, '확인한 조회 과정 표시 중');
+    assert.deepEqual(states(), ['active', 'pending', 'pending']);
+    fixture.advance(0); fixture.advance(599); assert.equal(prose.textContent, '');
+    fixture.advance(600); assert.deepEqual(states(), ['done', 'active', 'pending']); assert.equal(prose.textContent, '');
+    fixture.advance(1200); assert.deepEqual(states(), ['done', 'done', 'active']); assert.equal(prose.textContent, '');
+    fixture.advance(1800); assert.deepEqual(states(), ['done', 'done', 'done']);
+    assert.equal(fixture.message.dataset.answerDisplayState, 'typing');
+    const liveStatus = withClass(fixture.message, 'query-typing-status')[0], transitionWrites = liveStatus.textWrites;
+    fixture.advance(1900); assert.ok(prose.textContent.length > 0);
+    fixture.advance(1950); assert.equal(liveStatus.textWrites, transitionWrites, 'the live status is not replaced on every text frame');
+    fixture.advance(8000); assert.deepEqual(await view.finished, { completed: true });
+    assert.equal(prose.textContent, data.answer); assert.equal(fixture.frames.size, 0);
+    assert.match(withClass(fixture.message, 'answer-footer')[0].textContent, /모델 호출 0회/);
+    assert.equal(JSON.stringify(data), before);
+  } finally { fixture.restore(); }
+});
+
+test('no confirmed steps skips the step effect and many steps still finish within the shared eight-second limit', async () => {
+  for (const count of [0, 40]) {
+    const fixture = animationSetup();
+    try {
+      const data = { ...response(), sections: [], answer: '합성 문장 '.repeat(500),
+        steps: Array.from({ length: count }, (_, i) => `서버 확인 ${i}`) };
+      const view = renderQueryAnswer(fixture.message, data, { animate: true });
+      assert.equal(fixture.message.dataset.answerDisplayState, count ? 'steps' : 'typing');
+      fixture.advance(0); fixture.advance(8000);
+      assert.deepEqual(await view.finished, { completed: true });
+      assert.equal(withClass(fixture.message, 'done').length, count);
+      assert.equal(withClass(fixture.message, 'query-prose')[0].textContent, data.answer);
+      assert.equal(fixture.frames.size, 0);
+    } finally { fixture.restore(); }
+  }
+});
+
 test('explicit animation reveals whole graphemes with one accessible answer and completes within eight seconds', async () => {
   const fixture = animationSetup();
   try {
@@ -477,10 +562,10 @@ test('explicit animation reveals whole graphemes with one accessible answer and 
     const view = renderQueryAnswer(fixture.message, data, { animate: true });
     const prose = withClass(fixture.message, 'query-prose')[0], accessible = withClass(fixture.message, 'query-accessible-answer')[0];
     assert.equal(prose.attributes['aria-hidden'], 'true'); assert.equal(accessible.textContent, data.answer);
-    assert.equal(fixture.message.dataset.answerDisplayState, 'typing'); assert.equal(prose.textContent, '');
+    assert.equal(fixture.message.dataset.answerDisplayState, 'steps'); assert.equal(prose.textContent, '');
     const characters = [...new Intl.Segmenter('ko', { granularity: 'grapheme' }).segment(data.answer)].map(item => item.segment);
     const validPrefixes = new Set(characters.map((_, index) => characters.slice(0, index + 1).join(''))); validPrefixes.add('');
-    for (const time of [0, 30, 75, 130, 220]) { fixture.advance(time); assert.ok(validPrefixes.has(prose.textContent)); assert.equal(accessible.textContent, data.answer); }
+    for (const time of [0, 600, 1200, 1230, 1275, 1330, 1420]) { fixture.advance(time); assert.ok(validPrefixes.has(prose.textContent)); assert.equal(accessible.textContent, data.answer); }
     fixture.advance(8000);
     assert.deepEqual(await view.finished, { completed: true });
     assert.equal(prose.textContent, data.answer); assert.equal(fixture.message.dataset.answerDisplayState, 'complete');
@@ -497,21 +582,24 @@ test('show all and finish are idempotent, preserve the complete answer and relea
     assert.equal(fixture.message.textContent, complete); assert.equal(fixture.frames.size, 0);
     assert.deepEqual(await view.finished, { completed: true });
     assert.equal(withClass(fixture.message, 'answer')[0].textContent, data.answer);
+    assert.equal(withClass(fixture.message, 'done').length, data.steps.length);
   } finally { fixture.restore(); }
 });
 
 test('dispose cancels typing and prevents stale frames, replay results and later finish from changing DOM', async () => {
+  for (const elapsed of [70, 1300]) {
   const fixture = animationSetup();
   try {
     const view = renderQueryAnswer(fixture.message, response(), { animate: true }), pending = deferred();
     const playback = view.play(() => pending.promise), late = [...fixture.frames.values()][0];
-    fixture.advance(0); fixture.advance(70); view.dispose();
+    fixture.advance(0); fixture.advance(elapsed); view.dispose();
     const before = fixture.message.textContent;
     view.dispose(); view.finish(); late(8000); pending.resolve({ completed: true }); await playback;
     await view.play(() => { throw Error('disposed playback must not run'); });
     assert.deepEqual(await view.finished, { completed: false, disposed: true });
     assert.equal(fixture.message.textContent, before); assert.equal(fixture.frames.size, 0);
   } finally { fixture.restore(); }
+  }
 });
 
 test('reduced motion and default rendering show the full confirmed answer without scheduling frames', async () => {
@@ -528,13 +616,13 @@ test('reduced motion and default rendering show the full confirmed answer withou
 });
 
 test('frame scheduling failure restores the complete confirmed body instead of leaving partial text', async () => {
-  for (const during of [false, true]) {
+  for (const during of [false, 30, 1300]) {
     const fixture = animationSetup();
     try {
       if (!during) globalThis.requestAnimationFrame = () => { throw Error('synthetic scheduler failure'); };
       const data = response(), view = renderQueryAnswer(fixture.message, data, { animate: true });
       if (during) {
-        fixture.advance(0); globalThis.requestAnimationFrame = () => { throw Error('synthetic scheduler failure'); }; fixture.advance(30);
+        fixture.advance(0); globalThis.requestAnimationFrame = () => { throw Error('synthetic scheduler failure'); }; fixture.advance(during);
       }
       assert.deepEqual(await view.finished, { completed: true });
       assert.equal(withClass(fixture.message, 'answer')[0].textContent, data.answer);

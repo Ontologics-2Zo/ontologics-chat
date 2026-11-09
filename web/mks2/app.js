@@ -311,6 +311,7 @@ async function runQuery(name, question) {
     const presentation = renderQueryAnswer(message, answer, {
       animate: answerVisible(name),
       evidenceIds: ids, labelFor, evidenceEdges: snapshot.graph.data.edges,
+      evidenceNodes: snapshot.graph.data.nodes,
       onEvidence: id => evidenceAtVersion(() => focusEvidence(id)),
       onOpenBom: () => evidenceAtVersion(() => { settleAnswer(panel); cancelPendingReplay(); dashboard.openBom(0); }),
       onReplay: () => replayEvidence(true),

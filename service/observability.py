@@ -24,6 +24,8 @@ from urllib.parse import urlsplit
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
+from service.langsmith_exporter import MetadataObservation, TraceMetadata
+
 
 _LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:/-]{0,159}\Z")
 _ERROR = re.compile(r"[A-Z][A-Z0-9_]{0,79}\Z")
@@ -373,7 +375,7 @@ def otel_span_id(execution_id: str, identity: str) -> str:
 class MetadataObserver:
     """Best-effort sink: observability errors never change a domain outcome."""
     def __init__(self, exporter=None, *, receipt_path: str | Path | None = None,
-                 content_enabled=False, purpose="interactive", redact_values=()):
+                 content_enabled=False, purpose="interactive", redact_values=(), langsmith_exporter=None):
         if type(content_enabled) is not bool or purpose not in {"interactive", "evaluation"}:
             raise ValueError("OBSERVABILITY_CONTENT_POLICY_INVALID")
         self.content_enabled = content_enabled and purpose == "interactive"
@@ -384,7 +386,40 @@ class MetadataObserver:
         self.failed = 0
         self.duplicates = 0
         self.invalid = 0
-        self.langsmith_enabled = False
+        self.langsmith_exporter = langsmith_exporter
+        self.langsmith_enabled = langsmith_exporter is not None
+        self.langsmith_invalid = 0
+
+    def _remote_metadata(self, execution_id, span_id, parent_span_id, name, kind, status, clean, start, end):
+        if self.langsmith_exporter is None:
+            return
+        try:
+            # A newly constructed typed envelope is the only remote input.
+            # In particular the local span/IO/receipt dictionary never crosses
+            # this boundary, even when local full content is opted in.
+            values = {key: value for key, value in clean.items() if key in TraceMetadata.model_fields}
+            value = MetadataObservation(execution_id=execution_id, span_id=span_id, parent_span_id=parent_span_id,
+                name=name, kind=kind, status=status, start_ns=start, end_ns=end, metadata=TraceMetadata(**values))
+            encoded = value.model_dump_json()
+            if any(secret in encoded for secret in self._redact_values):
+                raise ValueError("OBSERVABILITY_SECRET_IN_METADATA")
+            self.langsmith_exporter.submit(value)
+        except Exception:
+            self.langsmith_invalid += 1
+
+    def langsmith_status(self):
+        if self.langsmith_exporter is None:
+            return {"enabled": False, "content_policy": "metadata_only"}
+        try:
+            return {**self.langsmith_exporter.summary(), "invalid_envelopes": self.langsmith_invalid}
+        except Exception:
+            return {"enabled": True, "content_policy": "metadata_only", "status": "unavailable"}
+
+    def flush(self, timeout=1.0):
+        try:
+            return self.langsmith_exporter.flush(timeout) if self.langsmith_exporter else True
+        except Exception:
+            return False
 
     def emit_span(self, execution_id, span_id, parent_span_id, name, kind, status,
                   metadata, started_at, ended_at, *, input=None, output=None,
@@ -399,6 +434,9 @@ class MetadataObserver:
             clean["execution_id"] = execution_id
             safe_input = safe_io(input, content_enabled=self.content_enabled, secrets=self._redact_values)
             safe_output = safe_io(output, content_enabled=self.content_enabled, secrets=self._redact_values)
+            if type(output) in {ModelObservationOutput, WorkflowObservationOutput} and output.capability is not None:
+                # Only the schema-checked capability enum, never the IO object.
+                clean["capability"] = output.capability
             if terminal_summary and (span_id != EXECUTION_ROOT_SPAN or parent_span_id is not None
                     or status not in {"completed", "failed", "cancelled"}
                     or type(input) is not WorkflowObservationInput or input.stage != "execution"
@@ -409,6 +447,7 @@ class MetadataObserver:
             if end < start:
                 self.invalid += 1
                 return False
+            self._remote_metadata(execution_id, span_id, parent_span_id, name, kind, status, clean, start, end)
             span = {"trace_id": trace_id(execution_id),
                     "span_id": otel_span_id(execution_id, span_id),
                     "parent_span_id": otel_span_id(execution_id, parent_span_id)
@@ -453,6 +492,11 @@ class MetadataObserver:
         )
 
     def close(self):
-        self.receipts.close()
-        if self.exporter:
-            self.exporter.close()
+        for sink in (self.langsmith_exporter, self.receipts, self.exporter):
+            if sink is not None:
+                try:
+                    sink.close()
+                except Exception:
+                    # Independent destinations must not block each other's
+                    # flush/cleanup or application shutdown.
+                    pass

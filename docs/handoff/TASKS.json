@@ -723,18 +723,25 @@
           "scope": "승인 모델의 고정 Azure ZDR 경로 실제 기능 선택1회·원장 조회·재요청 중복0. 전체 실제 AI 의미 품질 인수 아님.",
           "status": "VERIFIED",
           "parent_complete": false
+        },
+        {
+          "record": "docs/handoff/SERVICE-PHASE1-PROGRESS-20261110.md",
+          "scope": "DEC-H44 LangSmith 명시 metadata-only exporter; 격리 합성 Fake의 Langfuse/LangSmith 실제 readback 6개씩·같은 execution/attempt/부모 관계·본문 원격 제외. 실모델 0. 전체 관측/AI 품질 완료 아님.",
+          "status": "VERIFIED",
+          "parent_complete": false
         }
       ],
       "actual_implementation_paths": [
         "service/model_gateway.py",
         "service/model_store.py",
         "service/observability.py",
-        "service/agent_config.py"
+        "service/agent_config.py",
+        "service/langsmith_exporter.py"
       ],
       "actual_api_or_tool_contract": null,
       "blockers": [],
       "goal_summary": "ModelGateway·provider 어댑터 경계; canonical attempt usage·local sink·redaction; local Langfuse 실제 수집·Tree/Timeline",
-      "remaining_acceptance": "전체 검색/재시도 관측·LangSmith 비교 및 전체 AI 평가"
+      "remaining_acceptance": "전체 검색/재시도/장기 대기·재개 관측 비교 및 전체 AI 의미 품질; 명시 LangSmith 연결의 제한된 실제 readback은 DEC-H44로 검증"
     },
     {
       "id": "T06",
@@ -2762,5 +2769,32 @@
     "browser_assertions_pass": 17,
     "runner_controls_pass": 16,
     "langfuse_fake_readback": "6 observations with real stored IO and hierarchy; paid calls 0"
+  },
+  "phase1_progress_20261110": {
+    "decision": "DEC-H44",
+    "record": "docs/handoff/SERVICE-PHASE1-PROGRESS-20261110.md",
+    "branch": "codex/service-progress-evidence",
+    "base_main": "3a6079ee24971d39538f21f8d01fafdde0a9e9d0",
+    "status": "IN_PROGRESS",
+    "parent_complete": false,
+    "automatic_merge_authorized": false,
+    "preserve_original_files_and_database": true,
+    "budget_scope": "mks2-agent-20261108",
+    "scope": [
+      "T05",
+      "T06",
+      "T10.1",
+      "T19.1",
+      "T22.1"
+    ],
+    "python_tests_pass": 426,
+    "python_skipped": 0,
+    "node_tests_pass": 161,
+    "browser_assertions_pass": 25,
+    "evidence_ui": "6 primary / 159 collapsed of 165; all node IDs/clicks retained",
+    "graph": "1.45s core relation; 2.4s simultaneous BOM group; browser measured 16.459s with 482 nodes and 704 edges unchanged",
+    "langsmith": "explicit metadata only; actual isolated Fake readback 6 runs matches 6 local Langfuse observations",
+    "actual_model_calls_this_scope": 0,
+    "mac_restart_verification": "IN_PROGRESS"
   }
 }

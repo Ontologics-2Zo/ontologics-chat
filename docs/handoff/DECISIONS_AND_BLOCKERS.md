@@ -175,3 +175,7 @@ GitHub 자동 검사가 구성되지 않은 상태이므로 격리된 전체 서
 Input/Output 표시 범위를 확인한 사용자 답변은 가능한 모두 확인하고 싶다는 것이었다. 로컬 Langfuse에 실제 질문/최종 답변/확인 요청과 선택된 실행 요약을 기록하는 명시 옵션을 추가한다. 실제 모델 단계에는 전송한 기능 플래그와 모델의 capability 결과를 표시하며, 서버 계산 답변을 LLM이 생성한 것으로 바꾸지 않는다. 첨부 BOM 원문·평가 gold·키·전체 임의 tool/artifact·외부 tracing은 포함하지 않는다. 기존 모델 예산·전송 범위·fallback OFF·실패 예약은 유지한다. 본문 기록은 기본 off, evaluation host에서는 강제 off이며 원래 .env/runtime를 덮어쓰지 않고 별도 실행 옵션으로 활성화한다. 과거 metadata-only trace는 보존하며 새 내용으로 재구성하지 않는다.
 
 검증 후 원래 두 Mac 서비스를 main 코드로 재시작하되 import/reset하지 않는다. 새 시연은 여전히 Agent disabled/모델키 없음이다. [실행 기록](SERVICE-PR5-REVIEW-20261110.md)에 실제 최종검토·머지/재시작·보존 결과를 기록한다. 전체 서비스 인수/배포/공급사 송신/운영 원장 변경 승인은 아니다.
+
+## DEC-H44 · 남은 1차 작업과 근거 진행·LangSmith
+
+2026-11-10 사용자는 MD잔여1차 구현 지속, 기존파일/DB와 같은 US$10 잔여 예산 보존, 느린그래프재생·BOM일괄연결·거친노드접기·확인단계순차표시와 LangSmith확인을 요청했다. 기존DEC-H19의 합성/비식별메타데이터 승인은 유지하며 외부LangSmith본문전송으로 확대하지않는다. 기존local프로젝트와명시옵션의별도exporter를사용하고 자동tracing은OFF다. 새PR반영/로컬검증범위이며 새main자동 병합·배포·운영원장변경은포함하지않는다. 실행증거는 [SERVICE-PHASE1-PROGRESS-20261110](SERVICE-PHASE1-PROGRESS-20261110.md)에기록한다.

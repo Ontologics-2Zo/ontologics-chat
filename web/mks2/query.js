@@ -182,8 +182,31 @@ function quantityRuns(paragraph, value, runs, segmenter) {
   append(value.slice(offset), false);
 }
 
+function evidencePreview(ids, suppliedNodes) {
+  // These are exact-snapshot server types, never guesses from an identifier or
+  // display label. Source rows remain available in the collapsed remainder.
+  const types = new Map((Array.isArray(suppliedNodes) ? suppliedNodes : [])
+    .filter(value => value && typeof value === 'object')
+    .map(value => [text(value.node_id) || text(value.id),
+      text(value.entity_ref?.entity_type || value.type || value.node_type).replace(/[^a-z0-9]/gi, '').toLowerCase()]));
+  const priority = new Map([
+    ['contractline', 0], ['deliveryround', 1], ['productionjob', 2],
+    ['configuration', 3], ['productconfiguration', 3], ['productmodel', 4],
+    ['bom', 5], ['bomsnapshot', 5], ['item', 6], ['internalitem', 6],
+    ['lot', 7], ['partlot', 7], ['reservation', 8], ['inventoryreservation', 8],
+    ['shipment', 9], ['arrival', 10], ['quotation', 11], ['supplierquote', 11],
+    ['purchaserequest', 12], ['purchaseorder', 13], ['customer', 14],
+    ['sourcedocument', 15], ['sourcesnapshot', 15], ['sourcerow', 100], ['bomline', 100],
+  ]);
+  if (ids.length <= 6) return { visible: ids, remaining: [] };
+  const visible = ids.map((id, index) => ({ id, index, rank: priority.get(types.get(id)) ?? 50 }))
+    .sort((a, b) => a.rank - b.rank || a.index - b.index).slice(0, 6).map(value => value.id);
+  const selected = new Set(visible);
+  return { visible, remaining: ids.filter(id => !selected.has(id)) };
+}
+
 export function renderQueryAnswer(message, answer, {
-  evidenceIds = [], evidenceEdges = [], labelFor = id => id, onEvidence = () => {},
+  evidenceIds = [], evidenceEdges = [], evidenceNodes = [], labelFor = id => id, onEvidence = () => {},
   onReplay = () => {}, onCancel = () => {}, onOpenBom = () => {}, animate = false,
 } = {}) {
   let disposed = false, typingComplete = false, frame = null, startedAt = null, settled = false;
@@ -197,8 +220,10 @@ export function renderQueryAnswer(message, answer, {
   const delivery = Array.isArray(answer.intent) && answer.intent.includes('delivery') && answer.status !== 'NEEDS_CLARIFICATION';
   message.dataset.queryPresentation = delivery ? 'delivery' : 'standard';
   const steps = node('ol', 'trace-steps');
-  steps.setAttribute('aria-label', '완료된 원장 조회 과정');
-  for (const step of Array.isArray(answer.steps) ? answer.steps : []) if (text(step)) steps.append(node('li', 'done', step));
+  steps.setAttribute('aria-label', '서버가 완료한 원장 조회 과정의 순차 표시');
+  steps.setAttribute('title', '서버가 완료한 조회 결과입니다. 표시 효과는 실제 처리 진행률이 아닙니다.');
+  steps.dataset.presentation = 'confirmed-results';
+  for (const step of Array.isArray(answer.steps) ? answer.steps : []) if (text(step)) steps.append(node('li', 'pending', step));
   if (steps.children.length) message.append(steps);
   const verdict = node('div', delivery ? 'query-verdict' : 'query-body');
   const summary = node('div', 'query-summary');
@@ -216,7 +241,9 @@ export function renderQueryAnswer(message, answer, {
   const reduced = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches
     || globalThis.window?.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
   const typing = animate === true && !reduced && segmenter && typeof requestAnimationFrame === 'function' && typeof cancelAnimationFrame === 'function';
-  message.dataset.answerDisplayState = typing ? 'typing' : 'complete';
+  const stepNodes = [...steps.children];
+  const stepDuration = typing ? Math.min(2400, stepNodes.length * 600) : 0;
+  message.dataset.answerDisplayState = typing ? (stepDuration ? 'steps' : 'typing') : 'complete';
   const visibleBody = node('div', 'query-prose');
   if (typing) {
     visibleBody.setAttribute('aria-hidden', 'true');
@@ -275,12 +302,22 @@ export function renderQueryAnswer(message, answer, {
   if (snapshot) basis.append(node('p', 'query-snapshot', `스냅샷 · ${snapshot}`));
   details.append(basis);
   const evidence = node('div', 'evidence-path');
-  const ids = [...new Set(evidenceIds.filter(id => typeof id === 'string'))];
+  const ids = [...new Set((Array.isArray(evidenceIds) ? evidenceIds : []).filter(id => typeof id === 'string' && id))];
   if (ids.length) evidence.append(node('span', 'query-evidence-count', `거친 노드 ${ids.length}개`));
-  ids.forEach(id => {
+  const preview = evidencePreview(ids, evidenceNodes);
+  const evidenceChip = id => {
     const chip = action(labelFor(id), () => onEvidence(id), 'chip');
-    evidence.append(chip);
-  });
+    chip.dataset.evidenceId = id;
+    return chip;
+  };
+  preview.visible.forEach(id => evidence.append(evidenceChip(id)));
+  if (preview.remaining.length) {
+    const more = node('details', 'query-more-evidence');
+    const rest = node('div', 'query-evidence-remainder');
+    rest.append(...preview.remaining.map(evidenceChip));
+    more.append(node('summary', '', `전체 근거 ${ids.length}개 보기 · 나머지 ${preview.remaining.length}개`), rest);
+    evidence.append(more);
+  }
   message.append(evidence);
 
   const footer = node('div', 'answer-footer');
@@ -296,7 +333,17 @@ export function renderQueryAnswer(message, answer, {
   let playVersion = 0;
 
   const total = runs.reduce((sum, run) => sum + run.characters.length, 0);
-  const duration = Math.min(8000, Math.max(300, total * 18));
+  const duration = Math.min(8000 - stepDuration, Math.max(300, total * 18));
+  let displayedStep = -1;
+  function drawSteps(active) {
+    if (disposed || displayedStep === active) return;
+    displayedStep = active;
+    stepNodes.forEach((step, index) => {
+      const state = index < active ? 'done' : index === active ? 'active' : 'pending';
+      step.className = state; step.dataset.displayState = state;
+      step.setAttribute('aria-current', state === 'active' ? 'step' : 'false');
+    });
+  }
   function draw(count) {
     if (disposed) return;
     for (const run of runs) {
@@ -311,6 +358,7 @@ export function renderQueryAnswer(message, answer, {
   function finish() {
     if (disposed || typingComplete) return;
     clearFrame();
+    drawSteps(stepNodes.length);
     try { draw(total); }
     catch { visibleBody.replaceChildren(...paragraphs.map((value, index) => node('p', index ? 'query-paragraph' : 'answer', value))); }
     typingComplete = true; showAll.hidden = true;
@@ -328,13 +376,27 @@ export function renderQueryAnswer(message, answer, {
     try {
       if (!Number.isFinite(time)) { finish(); return; }
       if (startedAt === null) startedAt = time;
-      const count = Math.floor(total * Math.min(1, Math.max(0, (time - startedAt) / duration)));
+      const elapsed = Math.max(0, time - startedAt);
+      if (elapsed < stepDuration) {
+        drawSteps(Math.min(stepNodes.length - 1, Math.floor(elapsed / (stepDuration / stepNodes.length))));
+        frame = requestAnimationFrame(tick); return;
+      }
+      drawSteps(stepNodes.length);
+      if (message.dataset.answerDisplayState !== 'typing') {
+        message.dataset.answerDisplayState = 'typing';
+        typingStatus.textContent = '서버에서 확인된 답변 표시 중';
+      }
+      const count = Math.floor(total * Math.min(1, Math.max(0, (elapsed - stepDuration) / duration)));
       draw(count);
       if (count >= total) finish(); else frame = requestAnimationFrame(tick);
     } catch { finish(); }
   }
   if (typing && total) {
-    try { draw(0); typingStatus.textContent = '서버에서 확인된 답변 표시 중'; frame = requestAnimationFrame(tick); }
+    try {
+      draw(0); drawSteps(stepDuration ? 0 : stepNodes.length);
+      typingStatus.textContent = stepDuration ? '확인한 조회 과정 표시 중' : '서버에서 확인된 답변 표시 중';
+      frame = requestAnimationFrame(tick);
+    }
     catch { finish(); }
   } else finish();
 

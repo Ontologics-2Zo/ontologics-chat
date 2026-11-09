@@ -221,6 +221,7 @@ test('digital twin queries the read API and forwards exact answer evidence and i
     snapshotId: 'synthetic-snapshot-7', companyId: principal.company_id, identityRevision: principal.identity_revision,
   });
   assert.match(h.app.twinPanel().messages.textContent, /합성 트윈 조회 결과/);
+  assert.equal(h.answers[0].options.evidenceNodes, h.snapshot().graph.data.nodes);
 });
 
 test('same ledger number with a different snapshot cannot highlight the digital twin', async () => {

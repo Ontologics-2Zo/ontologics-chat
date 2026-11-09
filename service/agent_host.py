@@ -1,6 +1,7 @@
 """Host composition; credentials, database and provider objects stay here."""
 
 from decimal import Decimal
+from pathlib import Path
 import re
 
 import httpx
@@ -13,6 +14,7 @@ from service.model_gateway import (FakeRouteProvider, GatewayPolicy, ModelContex
                                    ModelGateway, ModelRequest, OpenRouterRouteProvider)
 from service.model_store import PostgresModelStore
 from service.observability import LangfuseConfig, LangfuseExporter, MetadataObserver
+from service.langsmith_exporter import LangSmithConfig, LangSmithMetadataExporter
 
 
 def verified_prices(model):
@@ -90,18 +92,11 @@ class _ModelGuard:
 
 
 def build_agent_host(db, identity, gateway, context_provider, settings, *, receipt_path=None):
+    if settings.langsmith_enabled and receipt_path is None:
+        raise ServiceError("LANGSMITH_DURABLE_RECEIPT_REQUIRED", 503)
     store = PostgresModelStore(db)
     store.initialize_budget(settings.budget_id, prior_spend_usd=settings.prior_spend_usd,
                             authorization_ref=settings.budget_authorization_ref)
-    exporter = (LangfuseExporter(LangfuseConfig(settings.langfuse_base_url,
-                  settings.langfuse_public_key, settings.langfuse_secret_key))
-                if settings.langfuse_enabled else None)
-    observer = MetadataObserver(exporter, receipt_path=receipt_path,
-        content_enabled=settings.langfuse_enabled and settings.langfuse_content_enabled,
-        purpose=settings.observability_purpose,
-        redact_values=(settings.openrouter_api_key, settings.openai_api_key,
-                       settings.langsmith_api_key, settings.langfuse_public_key,
-                       settings.langfuse_secret_key))
     options = {"budget_id": settings.budget_id}
     if settings.mode == "live":
         if not settings.openrouter_api_key:
@@ -122,6 +117,20 @@ def build_agent_host(db, identity, gateway, context_provider, settings, *, recei
                        pricing_version=content_hash({"catalog": digest, "endpoint": endpoint_digest}))
     else:
         provider = FakeRouteProvider()
+    exporter = (LangfuseExporter(LangfuseConfig(settings.langfuse_base_url,
+                  settings.langfuse_public_key, settings.langfuse_secret_key))
+                if settings.langfuse_enabled else None)
+    smith = (LangSmithMetadataExporter(LangSmithConfig(api_key=settings.langsmith_api_key,
+                project_id=settings.langsmith_project_id, endpoint=settings.langsmith_endpoint,
+                workspace_id=settings.langsmith_workspace_id),
+                receipt_path=Path(receipt_path).with_name(Path(receipt_path).name + ".langsmith.sqlite3"))
+             if settings.langsmith_enabled else None)
+    observer = MetadataObserver(exporter, receipt_path=receipt_path, langsmith_exporter=smith,
+        content_enabled=settings.langfuse_enabled and settings.langfuse_content_enabled,
+        purpose=settings.observability_purpose,
+        redact_values=(settings.openrouter_api_key, settings.openai_api_key,
+                       settings.langsmith_api_key, settings.langfuse_public_key,
+                       settings.langfuse_secret_key))
     models = ModelGateway(store, provider, identity.authorize, observer=observer,
                           policy=GatewayPolicy(**options))
 
@@ -137,7 +146,11 @@ def build_agent_host(db, identity, gateway, context_provider, settings, *, recei
 
     workflow = AgentWorkflow(db, identity, gateway, context_provider,
                              route_model=route, observer=observer)
-    workflow.setup()
+    try:
+        workflow.setup()
+    except Exception:
+        observer.close()
+        raise
 
     def summary(execution_id=None):
         return {"mode": settings.mode, **store.execution_summary(execution_id)}

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { layoutGraph, routeEdges, graphBounds, planEvidenceReplay, fitGraphBounds, interpolateView } from '../web/mks2/graph-layout.js';
+import { layoutGraph, routeEdges, graphBounds, planEvidenceReplay, replayStepTiming, fitGraphBounds, interpolateView } from '../web/mks2/graph-layout.js';
 import { mountGraph } from '../web/mks2/graph.js';
 
 const node = (id, type) => ({ node_id: id, node_type: ['item', 'configuration'].includes(type) ? 'design' : 'doc', entity_ref: { entity_type: type }, label: id });
@@ -79,6 +79,21 @@ test('a parallel or reversed hop cannot fabricate an evidence edge', () => {
   assert.deepEqual(new Set(exact.edgeIds), new Set(['two', 'reverse']));
 });
 
+test('large evidence remains complete while its readable playback has a finite duration', () => {
+  const nodes = [...Array.from({ length: 90 }, (_, i) => node(`core-${i}`, 'item')), ...rows];
+  const edges = [...Array.from({ length: 89 }, (_, i) => edge(`core-link-${i}`, `core-${i}`, `core-${i + 1}`)),
+    ...Array.from({ length: 90 }, (_, i) => edge(`row-link-${i}`, `source-${i}`, `line-${i}`))];
+  const plan = planEvidenceReplay(nodes, edges, { edgeIds: edges.map(e => e.edge_id) });
+  assert.deepEqual(new Set(plan.steps.flatMap(s => s.edgeIds)), new Set(edges.map(e => e.edge_id)));
+  assert.equal(plan.steps.flatMap(s => s.edgeIds).length, edges.length);
+  assert.ok(plan.steps.filter(s => s.kind === 'relation').length <= 14);
+  assert.equal(plan.steps.filter(s => s.kind === 'bom').length, 1);
+  assert.ok(plan.steps.reduce((sum, step) => sum + replayStepTiming(step.kind).duration, 0) < 27000);
+  for (const step of plan.steps.filter(s => s.kind === 'relation')) assert.ok(replayStepTiming(step.kind).duration >= 1200);
+  const bulk = replayStepTiming('bom');
+  assert.ok(bulk.drawDuration >= 1200 && bulk.duration > bulk.drawDelay + bulk.drawDuration);
+});
+
 test('parallel, reverse and self relations have distinct paths and unchanged identities', () => {
   const nodes = layoutGraph([node('a', 'item'), node('b', 'lot')]).nodes;
   const edges = [edge('one', 'a', 'b'), edge('two', 'a', 'b'), edge('reverse', 'b', 'a'), edge('loop', 'a', 'a'), edge('loop2', 'a', 'a')];
@@ -112,7 +127,7 @@ test('negative animation timestamps cannot produce invalid viewBox dimensions', 
 });
 
 class Element {
-  constructor(tag) { this.tagName = tag.toUpperCase(); this.children = []; this.attributes = {}; this.dataset = {}; this.events = {}; this.className = ''; this._text = ''; this.viewHistory = []; }
+  constructor(tag) { this.tagName = tag.toUpperCase(); this.children = []; this.attributes = {}; this.dataset = {}; this.events = {}; this.className = ''; this._text = ''; this.viewHistory = []; this.style = { setProperty(name, value) { this[name] = value; }, getPropertyValue(name) { return this[name]; } }; }
   set textContent(value) { this._text = String(value); this.children = []; }
   get textContent() { return this._text + this.children.map(child => child.textContent).join(''); }
   append(...children) { for (const child of children) { child.parent = this; this.children.push(child); } }
@@ -140,7 +155,7 @@ function graphHarness({ reduced = false } = {}) {
     window: { matchMedia: () => ({ matches: reduced }), addEventListener: (name, fn) => listeners.set(name, fn), removeEventListener: name => listeners.delete(name) },
     ResizeObserver: class { constructor(fn) { resizeCallback = fn; } observe() {} disconnect() { resizeCallback = null; } },
     requestAnimationFrame: fn => { frames.set(++serial, fn); return serial; }, cancelAnimationFrame: id => frames.delete(id),
-    setTimeout: fn => { timers.set(++serial, fn); return serial; }, clearTimeout: id => timers.delete(id), performance: { now: () => now },
+    setTimeout: (fn, delay) => { timers.set(++serial, { fn, at: now + delay }); return serial; }, clearTimeout: id => timers.delete(id), performance: { now: () => now },
   };
   for (const [name, value] of Object.entries(globals)) Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
   const container = new Element('div');
@@ -150,10 +165,10 @@ function graphHarness({ reduced = false } = {}) {
   const view = mountGraph(container, { bundle });
   const svg = classed(container, 'mks-graph-svg')[0];
   const evidence = { nodeIds: inputNodes.map(n => n.node_id), edgeIds: inputEdges.map(e => e.edge_id), hops: inputEdges.map(e => [e.source_node_id, e.target_node_id]) };
-  function frame() { now += 520; const pending = [...frames.values()]; frames.clear(); pending.forEach(fn => fn(now)); }
+  function frame(delta = 520) { now += delta; const pending = [...frames.values()]; frames.clear(); pending.forEach(fn => fn(now)); }
   return { container, svg, view, frames, timers, listeners, evidence, frame,
     resize: () => resizeCallback?.(),
-    async step() { frame(); const pending = [...timers.values()]; timers.clear(); pending.forEach(fn => fn()); await Promise.resolve(); },
+    async step(delta = 3000) { frame(delta); const pending = [...timers.entries()].filter(([, timer]) => timer.at <= now); pending.forEach(([id, timer]) => { timers.delete(id); timer.fn(); }); await Promise.resolve(); },
     restore() { view.destroy(); for (const name of names) { const descriptor = previous.get(name); if (descriptor) Object.defineProperty(globalThis, name, descriptor); else delete globalThis[name]; } },
   };
 }
@@ -166,7 +181,7 @@ test('mounted replay refocuses each core step and one BOM batch while retaining 
     const beforeViews = h.svg.viewHistory.length, playback = h.view.replay(h.evidence);
     for (let i = 0; i < 3; i++) {
       assert.equal(classed(h.container, 'mks-node').length, 5); assert.equal(classed(h.container, 'mks-edge').length, 4);
-      assert.ok(classed(h.container, 'mks-edge').filter(n => n.className.includes('mks-active-step')).length <= 1);
+      if (h.svg.dataset.replayKind === 'relation') assert.equal(classed(h.container, 'mks-edge').filter(n => n.className.includes('mks-active-step')).length, 1);
       await h.step();
     }
     assert.deepEqual(await playback, { completed: true }); h.frame();
@@ -182,6 +197,59 @@ test('mounted replay refocuses each core step and one BOM batch while retaining 
       descendants(h.container).find(n => n.tagName === 'BUTTON' && n.textContent === label).click(); h.frame();
       assert.equal(classed(h.container, 'mks-node').length, 5); assert.equal(classed(h.container, 'mks-edge').length, 4);
     }
+  } finally { h.restore(); }
+});
+
+test('core playback lingers and BOM lines draw concurrently on one clock without replacing any base relation', async () => {
+  const h = graphHarness();
+  try {
+    h.frame(); const playback = h.view.replay(h.evidence);
+    await h.step(250);
+    assert.equal(h.svg.dataset.replayKind, 'relation');
+    assert.equal(h.svg.dataset.replayProgress, '0');
+    await h.step(400);
+    assert.equal(h.svg.dataset.replayKind, 'relation');
+    assert.ok(Number(h.svg.dataset.replayProgress) > 0 && Number(h.svg.dataset.replayProgress) < 1);
+    assert.equal(classed(h.container, 'mks-edge-progress').length, 1);
+    await h.step(800); // First core relation gets the entire 1.45s.
+    assert.equal(h.svg.dataset.replayKind, 'relation');
+    await h.step(1450);
+    assert.equal(h.svg.dataset.replayKind, 'bom');
+    const overlays = classed(h.container, 'mks-edge-progress');
+    assert.equal(overlays.length, 2);
+    assert.equal(classed(h.container, 'mks-edge-line').length, 4);
+    assert.equal(classed(h.container, 'mks-node').length, 5);
+    assert.ok(overlays.every(path => path.attributes.pathLength === '1' && path.attributes['aria-hidden'] === 'true'));
+    const basePaths = classed(h.container, 'mks-edge-line').map(path => path.attributes.d);
+    assert.ok(overlays.every(path => basePaths.includes(path.attributes.d)));
+    await h.step(1350);
+    assert.equal(h.svg.dataset.replayState, 'playing');
+    assert.equal(Number(h.svg.style.getPropertyValue('--mks-reveal-offset')), .5);
+    assert.ok(h.frames.size <= 1, 'all BOM paths share one progress frame after camera settles');
+    await h.step(1050);
+    assert.deepEqual(await playback, { completed: true });
+    assert.equal(h.svg.dataset.replayState, 'complete');
+    assert.equal(classed(h.container, 'mks-edge-progress').length, 0);
+    assert.equal(classed(h.container, 'mks-edge-line').length, 4);
+    assert.equal(h.frames.size, 0); assert.equal(h.timers.size, 0);
+  } finally { h.restore(); }
+});
+
+test('cancelling a partly drawn BOM batch clears shared motion and late frames cannot revive it', async () => {
+  const h = graphHarness();
+  try {
+    h.frame(); const playback = h.view.replay(h.evidence);
+    await h.step(1450); await h.step(1450); await h.step(1350);
+    assert.equal(h.svg.dataset.replayKind, 'bom');
+    const late = [...h.frames.values()];
+    h.view.cancelReplay();
+    assert.deepEqual(await playback, { completed: false });
+    const before = { view: h.svg.attributes.viewBox, progress: h.svg.dataset.replayProgress };
+    late.forEach(fn => fn(1000000));
+    assert.deepEqual({ view: h.svg.attributes.viewBox, progress: h.svg.dataset.replayProgress }, before);
+    assert.equal(classed(h.container, 'mks-edge-progress').length, 0);
+    assert.equal(classed(h.container, 'mks-edge-line').length, 4);
+    assert.equal(h.frames.size, 0); assert.equal(h.timers.size, 0);
   } finally { h.restore(); }
 });
 
