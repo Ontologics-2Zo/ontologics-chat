@@ -1,6 +1,6 @@
 # 로컬 실행과 Codex Cloud 환경 안내
 
-> 현재 인계: PR #3 main `848fe79` 이후 로컬 `codex/agent-foundation`에서 작업 중이며 main 미병합이다. 2026-11-09 충전 후 승인 모델의 Azure ZDR 단일 경로를 검증했고 앱은8870/live다. 기존 `.env`·DB runtime·예산 이력을 보존한다. 최신 연결 결과는 [SERVICE-MODEL-20261109](SERVICE-MODEL-20261109.md)을 따른다.
+> 최신 인계(2026-11-10): DEC-H38은 PR #4 최종 검토·검증 후 main 병합과 기존 설정의 Mac 앱 확인 범위다. [검토 기록](SERVICE-PR4-REVIEW-20261110.md)과 [GitHub PR #4](https://github.com/Ontologics-2Zo/ontologics-chat/pull/4)의 실제 병합 결과를 먼저 확인한다. 병합 완료 후 main으로 이어가며 `.env`·DB runtime·예산 이력을 보존한다. 아래 이전 실행 수치는 당시 증거다.
 
 
 2026-11-09 갱신. 초기 원장·실제 BOM·자연어 CQ는 PR #1~#3으로 `main`에 병합됐다. PR #2 기준은 `2e6f24c`, PR #3 기준은 `848fe79`이며 CQ의 병합·Mac main 재시작 증거는 [CQ 실행 기록](SERVICE-CQ-NL-20261108.md)에 보존한다. Agent의 선행 280 Python·12 Node/Fake 관측 증거를 보존하며, 최신 연결 수정의 286 Python 검사와 실제 모델1회·원장 조회를 확인했다. T04~T07 부모는 모두 IN_PROGRESS이며 T00~T23 전체 집계는 IN_PROGRESS 14 / NOT_STARTED 10 / VERIFIED 0이다. 과거 초기화·환경 Publish 절차를 현재 재시작에 적용하지 않는다.
@@ -24,7 +24,7 @@ git clone --branch main https://github.com/Ontologics-2Zo/ontologics-chat.git
 cd ontologics-chat
 ```
 
-이미 받은 저장소는 먼저 실제 작업 트리를 확인한다. 현재 Agent 변경은 로컬 브랜치에 있으므로 `main`으로 전환하거나 pull해서 이어받는 절차가 아니다. 미커밋 변경을 보존하며 강제 초기화하지 않는다.
+이미 받은 저장소는 먼저 실제 작업 트리와 PR #4 병합 여부를 확인한다. 미커밋·미추적 파일을 보존하며 강제 초기화하지 않는다.
 
 ```bash
 git status --short
@@ -32,7 +32,7 @@ git branch --show-current
 git log -1 --oneline
 ```
 
-현재 작업을 계속할 때는 기존 `codex/agent-foundation` 작업 트리를 사용한다. 다른 브랜치에 있다면 그 변경을 보존한 뒤 로컬 Agent 브랜치로 전환한다. 이후 로컬 커밋 여부는 Git으로 확인하고, 원격 업로드나 main 병합 완료를 추정하지 않는다.
+PR #4가 병합됐다면 기존 변경을 보존한 상태에서 main과 origin/main을 대조하고 fast-forward 가능한 경우에만 갱신한다. 병합 전이라면 PR의 실제 head 브랜치에서 이어간다. 과거 `codex/agent-foundation`으로 돌아가거나 기존 DB를 초기화하지 않는다. 앱 재시작은 현재 runtime·환경 파일과 영속 예산을 그대로 사용한다.
 
 ```bash
 git switch codex/agent-foundation
