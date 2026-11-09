@@ -197,6 +197,46 @@ class LangSmithExporterTests(unittest.TestCase):
         self.assertTrue(second.flush())
         self.assertEqual(len(self.requests), 2)
 
+    def test_late_root_recovers_saturated_waiting_queue_and_future_trace_exports(self):
+        exporter = self.exporter(config=LangSmithConfig(api_key=self.config.api_key,
+            project_id=self.config.project_id, max_pending=2))
+        self.assertTrue(exporter.submit(observation("child1", "root")))
+        self.assertTrue(exporter.submit(observation("child2", "root")))
+        self.assertFalse(exporter.flush(.02))
+        self.assertTrue(exporter.submit(observation()))
+        self.assertTrue(exporter.flush())
+        self.assertEqual(exporter.summary()["states"], {"exported": 1, "dropped_capacity": 2})
+        self.assertTrue(exporter.submit(observation("next-root")))
+        self.assertTrue(exporter.flush())
+        self.assertEqual(len(self.requests), 2)
+
+    def test_duplicate_root_never_evicts_pending_rows(self):
+        exporter = self.exporter(config=LangSmithConfig(api_key=self.config.api_key,
+            project_id=self.config.project_id, max_pending=2))
+        self.assertTrue(exporter.submit(observation()))
+        self.assertTrue(exporter.flush())
+        self.assertTrue(exporter.submit(observation("child1", "future-root")))
+        self.assertTrue(exporter.submit(observation("child2", "future-root")))
+        self.assertFalse(exporter.submit(observation()))
+        self.assertEqual(exporter.summary()["states"], {"exported": 1, "queued": 2})
+        self.assertEqual(len(self.requests), 1)
+
+    def test_dropped_parent_descendants_terminate_instead_of_blocking_queue(self):
+        exporter = self.exporter(config=LangSmithConfig(api_key=self.config.api_key,
+            project_id=self.config.project_id, max_pending=1))
+        self.assertTrue(exporter.submit(observation("waiting", "root")))
+        self.assertFalse(exporter.submit(observation("lost-parent", "root")))
+        self.assertTrue(exporter.submit(observation()))
+        self.assertTrue(exporter.flush())
+        self.assertTrue(exporter.submit(observation("child", "lost-parent")))
+        self.assertTrue(exporter.flush())
+        self.assertTrue(exporter.submit(observation("grandchild", "child")))
+        self.assertTrue(exporter.flush())
+        self.assertEqual(exporter.summary()["states"], {"exported": 1, "dropped_capacity": 2, "dropped_parent": 2})
+        self.assertTrue(exporter.submit(observation("future-root")))
+        self.assertTrue(exporter.flush())
+        self.assertEqual(len(self.requests), 2)
+
     def test_remote_receipts_independent_of_local_failure_and_duplicates(self):
         local = LocalSink(fail=True)
         first = MetadataObserver(local, receipt_path=Path(self.tmp.name) / "local.sqlite3")

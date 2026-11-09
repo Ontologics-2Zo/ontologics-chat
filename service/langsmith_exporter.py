@@ -191,8 +191,27 @@ class LangSmithMetadataExporter:
                 raise ValueError("LANGSMITH_METADATA_INVALID")
             with self._lock, self._db:
                 self._db.execute("BEGIN IMMEDIATE")
+                # Duplicate observations must not evict unrelated pending work.
+                if self._db.execute("SELECT 1 FROM langsmith_exports WHERE destination=? AND execution_id=? AND span_id=?",
+                        (self.config.destination, value.execution_id, value.span_id)).fetchone():
+                    return False
                 count = self._db.execute("SELECT count(*) FROM langsmith_exports WHERE destination=? AND state='queued'",
                                          (self.config.destination,)).fetchone()[0]
+                if count >= self.config.max_pending and value.parent_span_id is None:
+                    # Workflow roots arrive last. Missing roots (WAITING or a
+                    # lost process) must not permanently fill the bounded queue.
+                    # Sacrifice only never-dispatched queued observations, as
+                    # an explicit whole-execution loss, preferring older other
+                    # executions. Claimed/failed/exported receipts stay intact.
+                    victim = self._db.execute("""SELECT execution_id FROM langsmith_exports
+                        WHERE destination=? AND state='queued'
+                        ORDER BY (execution_id=?),start_ns,execution_id LIMIT 1""",
+                        (self.config.destination, value.execution_id)).fetchone()
+                    self._db.execute("""UPDATE langsmith_exports SET state='dropped_capacity'
+                        WHERE destination=? AND execution_id=? AND state='queued'""",
+                        (self.config.destination, victim[0]))
+                    count = self._db.execute("SELECT count(*) FROM langsmith_exports WHERE destination=? AND state='queued'",
+                                            (self.config.destination,)).fetchone()[0]
                 state = "queued" if count < self.config.max_pending else "dropped_capacity"
                 cursor = self._db.execute("INSERT OR IGNORE INTO langsmith_exports VALUES (?,?,?,?,?,?,?)",
                     (self.config.destination, value.execution_id, value.span_id, value.parent_span_id, value.start_ns, encoded, state))
@@ -217,6 +236,11 @@ class LangSmithMetadataExporter:
                     seen.add(parent)
                     row = self._db.execute("SELECT payload,state FROM langsmith_exports WHERE destination=? AND execution_id=? AND span_id=?",
                                            (self.config.destination, execution, parent)).fetchone()
+                    if row is not None and row[1] in {"dropped_capacity", "dropped_parent"}:
+                        self._db.execute("""UPDATE langsmith_exports SET state='dropped_parent'
+                            WHERE destination=? AND execution_id=? AND span_id=? AND state='queued'""",
+                            (self.config.destination, execution, identity))
+                        break
                     if row is None or row[1] not in {"exported", "failed_or_unknown"}:
                         break
                     ancestor = MetadataObservation.model_validate_json(row[0])
