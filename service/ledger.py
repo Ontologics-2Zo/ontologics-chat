@@ -9,13 +9,86 @@ from the PostgreSQL ledger sequence.
 from copy import deepcopy
 from datetime import datetime
 from hashlib import sha256
-from uuid import uuid4
+from uuid import UUID, uuid4
+
+from pydantic import Field, ValidationError
 
 from psycopg.types.json import Jsonb
 
-from service.contracts import canonical_bytes, content_hash
+from service.contracts import Contract, canonical_bytes, content_hash
 from service.errors import ServiceError
 from service.imports import InitialInputError, validate_initial
+
+
+class _EventDocumentReference(Contract):
+    id: str
+    version: int = Field(ge=1)
+    payload_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+_EVENT_COLUMNS = "event_id,company_id,ledger_version,event_type,recorded_at,document_id,bom_document_id,procurement_document_id,payload"
+_PROCUREMENT_EVENT_LABELS = {
+    "QUOTE": "견적 기록", "PR": "구매 요청", "PO": "발주 기록",
+    "SUPPLY_CONFIRMATION": "공급 확인 기록", "RECEIPT": "입하 기록",
+    "IQC": "수입검사 기록", "CANCEL": "취소 기록",
+}
+
+
+def ledger_event_view(event, company_id):
+    """Project a committed event, never its notes, source rows or actor identity.
+
+    Stored FK, typed version/hash and exact content must agree before adding a
+    document reference. Unknown or inconsistent metadata stays explicitly
+    unverified without hiding the existing event's sequence and timestamp.
+    """
+    result = {"event_id": str(event["event_id"]), "ledger_version": event["ledger_version"],
+              "event_type": event["event_type"], "recorded_at": event["recorded_at"].isoformat(),
+              "summary": "원장 사건 · 근거 확인 필요", "document_kind": None,
+              "document_ref": None, "origin": "unknown"}
+    try:
+        if event["company_id"] != company_id:
+            return result
+        payload = event["payload"]
+        if not isinstance(payload, dict):
+            return result
+        reference_keys = ("document_id", "bom_document_id", "procurement_document_id")
+        if event["event_type"] == "OPENING_BALANCE_IMPORTED":
+            if (event["ledger_version"] == 1 and payload.get("record_type") == "opening_balance"
+                    and payload.get("opening_balance") is True and payload.get("run_id") == "INITIAL"
+                    and not any(event.get(key) is not None for key in reference_keys)):
+                result.update(summary="기초 잔액 이관 · 합성 초기자료", origin="synthetic_initial")
+            return result
+        if (payload.get("event_type") != event["event_type"] or payload.get("company_id") != company_id
+                or type(payload.get("ledger_version")) is not int
+                or payload["ledger_version"] != event["ledger_version"]):
+            return result
+        content = payload["content"]
+        if not isinstance(content, dict) or content_hash(content) != payload.get("payload_hash"):
+            return result
+        if (event["event_type"] == "BomRegistered" and content.get("kind") == "bom_registration"
+                and isinstance(content.get("source"), dict) and content["source"].get("source_kind") == "actual_bom"):
+            fk, identifier, version = "bom_document_id", payload["bom_id"], payload["bom_version"]
+            kind, document_type, label, origin = "BOM", "bom", "BOM 원본 등록", "actual_source_registration"
+        elif event["event_type"] == "EvidenceDocumentPosted" and content.get("kind") == "evidence_note":
+            fk, identifier, version = "document_id", payload["document_id"], payload["document_version"]
+            kind, document_type, label, origin = "EVIDENCE_NOTE", "evidence", "근거 문서", "internal_development"
+        elif event["event_type"] == "ProcurementPosted" and content.get("kind") in _PROCUREMENT_EVENT_LABELS:
+            fk, identifier, version = "procurement_document_id", payload["document_id"], payload["document_version"]
+            kind, document_type = content["kind"], "procurement"
+            label, origin = _PROCUREMENT_EVENT_LABELS[kind], "internal_development"
+        else:
+            return result
+        ref = _EventDocumentReference.model_validate({"id": identifier, "version": version,
+                                                      "payload_hash": payload["payload_hash"]})
+        if (str(UUID(ref.id)) != ref.id or str(event.get(fk)) != ref.id
+                or any(event.get(key) is not None for key in reference_keys if key != fk)):
+            return result
+        result.update(summary=f"{label} 반영 · 문서 {ref.id[:8]} / v{ref.version}",
+                      document_kind=kind, document_ref={**ref.model_dump(), "type": document_type}, origin=origin)
+    except (KeyError, TypeError, ValueError, AttributeError, ValidationError):
+        # No parsing error or private payload fragment enters the read response.
+        pass
+    return result
 
 
 def _import_hash(payload):
@@ -243,8 +316,8 @@ class LedgerReader:
             current = conn.execute("SELECT version FROM ledger_state WHERE company_id=%s", (principal.company_id,)).fetchone()["version"]
             result = deepcopy(row["payload"])
             result["projection"] = row["projection"]
-            events=conn.execute("SELECT event_id,ledger_version,event_type,recorded_at FROM ledger_events WHERE company_id=%s AND ledger_version<=%s ORDER BY ledger_version DESC LIMIT 100", (principal.company_id,row["ledger_version"])).fetchall()
-            result["events"]=[{**event,"event_id":str(event["event_id"]),"recorded_at":event["recorded_at"].isoformat()} for event in events]
+            events=conn.execute("SELECT " + _EVENT_COLUMNS + " FROM ledger_events WHERE company_id=%s AND ledger_version<=%s ORDER BY ledger_version DESC LIMIT 100", (principal.company_id,row["ledger_version"])).fetchall()
+            result["events"]=[ledger_event_view(event, principal.company_id) for event in events]
             result["event_count"]=conn.execute("SELECT count(*) AS n FROM ledger_events WHERE company_id=%s AND ledger_version<=%s", (principal.company_id,row["ledger_version"])).fetchone()["n"]
             result["metadata"]["server_ledger_version"] = row["ledger_version"]
             result["metadata"]["current_ledger_version"] = current
@@ -364,5 +437,5 @@ class LedgerReader:
             raise ServiceError("INVALID_EVENT_CURSOR", 422)
         with self.db.connect() as conn:
             self.identity.require(principal, "ledger.read", conn, principal.company_id)
-            rows=conn.execute("SELECT event_id,ledger_version,event_type,recorded_at FROM ledger_events WHERE company_id=%s AND ledger_version>%s ORDER BY ledger_version LIMIT 100", (principal.company_id,after)).fetchall()
-            return [{**row,"event_id":str(row["event_id"]),"recorded_at":row["recorded_at"].isoformat()} for row in rows]
+            rows=conn.execute("SELECT " + _EVENT_COLUMNS + " FROM ledger_events WHERE company_id=%s AND ledger_version>%s ORDER BY ledger_version LIMIT 100", (principal.company_id,after)).fetchall()
+            return [ledger_event_view(row, principal.company_id) for row in rows]

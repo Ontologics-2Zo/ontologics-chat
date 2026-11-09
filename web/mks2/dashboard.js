@@ -23,6 +23,75 @@ const tone = value => ['ok','warn','bad','info','mute'].includes(value) ? value 
 const tag = (label, kind='mute') => `<span class="mk-pill ${tone(kind)}">${esc(label)}</span>`;
 const button = (label, action, primary=false, extra='') => `<button type="button" class="mk-btn${primary ? ' primary' : ''}" data-action="${action}" ${extra}>${esc(label)}</button>`;
 const originLabel = origin => ({ actual_source: '실제 BOM 원문', development_workflow: '개발 원장 등록·승인', synthetic_assumption: '시연 적용 가정', reviewed_application: '검토된 적용 판단', synthetic_operation: '합성 기초 이관' })[origin] || '출처 확인 필요';
+const eventCursors = new WeakMap();
+const eventLabels = { OPENING_BALANCE_IMPORTED: '합성 기초 원장 이관', BomRegistered: 'BOM 원본 등록 반영',
+  ProcurementPosted: '구매 흐름 문서 원장 반영', EvidenceDocumentPosted: '근거 문서 원장 반영' };
+const eventOriginLabels = { synthetic_initial: '합성 기초 이관', actual_source_registration: '실제 원본 등록',
+  internal_development: '내부 개발 원장', unknown: '출처 확인 필요' };
+const eventDocumentLabels = { BOM: 'BOM 등록', EVIDENCE_NOTE: '근거 문서', QUOTE: '견적', PR: '구매 요청', PO: '발주',
+  SUPPLY_CONFIRMATION: '내부 모의 공급 확인', RECEIPT: '입하', IQC: '수입검사', CANCEL: '취소' };
+const eventVersion = value => Number.isSafeInteger(value) && value > 0;
+const eventLabel = (labels, key) => Object.hasOwn(labels, key) ? labels[key] : null;
+
+export function formatLedgerEventTime(value) {
+  // Require an explicit zone; a browser-local interpretation would change the
+  // meaning of an unzoned server value. Reject dates Date.parse would normalize.
+  const match = typeof value === 'string' && /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,6})?(Z|[+-]\d{2}:\d{2})$/.exec(value);
+  const unknown = { short: '—', full: '기록 시각 미확인', datetime: null };
+  if (!match) return unknown;
+  const [, y, mo, d, h, mi, sec, zone] = match;
+  const year = Number(y), month = Number(mo), day = Number(d);
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  if (month < 1 || month > 12 || day < 1 || day > days[month - 1] || Number(h) > 23 || Number(mi) > 59
+      || Number(sec) > 59 || (zone !== 'Z' && (Number(zone.slice(1, 3)) > 23 || Number(zone.slice(4)) > 59))) return unknown;
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return unknown;
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Seoul',
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' })
+    .formatToParts(date).map(part => [part.type, part.value]));
+  return { short: `${parts.hour}:${parts.minute}`,
+    full: `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second} Asia/Seoul · 원본 ${value}`, datetime: value };
+}
+
+export function ledgerEventFreshIds(previous, snapshot) {
+  const current = snapshot.meta || {};
+  if (!previous || !current.company_id || !current.identity_revision || current.company_id !== previous.company_id
+      || current.identity_revision !== previous.identity_revision || !eventVersion(previous.ledger_version)
+      || !eventVersion(current.ledger_version) || current.ledger_version <= previous.ledger_version) return new Set();
+  return new Set((snapshot.events || []).filter(event => typeof event.event_id === 'string' && eventVersion(event.ledger_version)
+    && event.ledger_version > previous.ledger_version && event.ledger_version <= current.ledger_version).map(event => event.event_id));
+}
+
+export function renderLedgerEvents(snapshot, { freshIds = new Set() } = {}) {
+  const version = snapshot.meta?.ledger_version;
+  const supplied = Array.isArray(snapshot.events) ? snapshot.events : [];
+  const events = supplied.filter(event => event && typeof event === 'object'
+    && !(eventVersion(version) && eventVersion(event.ledger_version) && event.ledger_version > version));
+  const total = Number.isSafeInteger(snapshot.event_count) && snapshot.event_count >= events.length ? snapshot.event_count : null;
+  const detail = (name, value) => `<dt>${esc(name)}</dt><dd>${esc(value ?? '미확인')}</dd>`;
+  const rows = events.map(event => {
+    const time = formatLedgerEventTime(event.recorded_at);
+    const summary = typeof event.summary === 'string' && event.summary.trim() ? event.summary
+      : eventLabel(eventLabels, event.event_type) || `원장 사건 · ${event.event_type || '유형 미확인'}`;
+    const document = event.document_ref;
+    const reference = document && typeof document === 'object' ? detail('문서 종류', eventLabel(eventDocumentLabels, event.document_kind) || event.document_kind || document.type)
+      + detail('문서 ID', document.id) + detail('문서 버전', eventVersion(document.version) ? `v${document.version}` : null)
+      + detail('문서 hash', document.payload_hash) : '';
+    return `<li data-ledger-event-id="${esc(event.event_id)}"${freshIds.has(event.event_id) ? ' class="mk-event-fresh"' : ''}><time class="mk-event-time"${time.datetime ? ` datetime="${esc(time.datetime)}"` : ''} title="${esc(time.full)}" aria-label="${esc(time.full)}">${esc(time.short)}</time><span class="mk-event-version" aria-label="원장 버전 ${esc(eventVersion(event.ledger_version) ? event.ledger_version : '미확인')}">${eventVersion(event.ledger_version) ? `v${event.ledger_version}` : '미확인'}</span><details class="mk-event-detail"><summary aria-label="${esc(summary)} · 사건 근거 보기">${esc(summary)}</summary><dl>${detail('사건 ID', event.event_id)}${detail('사건 유형', event.event_type)}${detail('기록 시각', time.full)}${detail('출처', eventLabel(eventOriginLabels, event.origin) || '출처 확인 필요')}${reference}</dl></details></li>`;
+  }).join('');
+  return `<section class="mk-card" data-ledger-events><h3>원장 사건 ${tag(`${events.length} / ${total === null ? '미확인' : num(total)}`)}<span class="mk-spacer"></span>${tag(`원장 v${eventVersion(version) ? num(version) : '미확인'}`, 'info')}</h3><ul class="mk-event-list" data-ledger-event-list aria-label="확정 원장 사건">${rows || '<li class="mk-event-empty"><span>—</span><span>—</span><span>조회된 원장 사건이 없습니다.</span></li>'}</ul>${total !== null && total > events.length ? `<p class="mk-small-note">최근 ${num(events.length)}건 표시 · 전체 ${num(total)}건</p>` : ''}${supplied.length !== events.length ? '<p class="mk-small-note">조회 버전에 포함되지 않은 사건은 표시하지 않았습니다.</p>' : ''}</section>`;
+}
+
+export function createLedgerEventRenderer(snapshot, previous) {
+  let freshIds = ledgerEventFreshIds(previous, snapshot);
+  return () => {
+    const result = renderLedgerEvents(snapshot, { freshIds });
+    // Local repainting must not announce an old ledger commit as new again.
+    freshIds = new Set();
+    return result;
+  };
+}
 const segmentKeys = ['arrived_qty','transit_qty','warehouse_remaining_qty','good_not_received_qty','production_remaining_qty'];
 const segmentLabels = ['도착','운송 중','창고','입고 대기','남은 생산'];
 const segmentClass = ['arrived','transit','warehouse','pending','remaining'];
@@ -63,6 +132,12 @@ export function renderMaterialTableRows(items, { planned = false, targetQty } = 
 
 export function mountDashboard(container, { snapshot, onSelect = () => {}, onAsk = () => {}, onGraph = () => {}, api, getIdentity, onPosted, onRefresh }) {
   const summary = snapshot.summary || {}, meta = snapshot.meta || {};
+  const previousEvents = eventCursors.get(container);
+  const renderEvents = createLedgerEventRenderer(snapshot, previousEvents);
+  const sameEventScope = previousEvents?.company_id === meta.company_id && previousEvents?.identity_revision === meta.identity_revision;
+  eventCursors.set(container, { company_id: meta.company_id, identity_revision: meta.identity_revision,
+    ledger_version: sameEventScope && eventVersion(previousEvents?.ledger_version) && eventVersion(meta.ledger_version)
+      ? Math.max(previousEvents.ledger_version, meta.ledger_version) : meta.ledger_version });
   const entities = snapshot.entities || [];
   const rows = (snapshot.rounds || []).map(row => ({ ...row, id: row.id || row.node_id || entities.find(entity => entity.type === 'DeliveryRound' && entity.display_id === row.delivery_round_id)?.id }));
   const inventory = (snapshot.inventory || []).map(row => ({ ...row, reserved_qty: row.reserved_qty ?? row.reserved_other_qty, display_id: row.lot_id || row.display_id || row.item_id, id: row.id || row.node_id || entities.find(entity => entity.type === (row.scope === 'LOT' ? 'PartLot' : 'InternalItem') && entity.display_id === (row.lot_id || row.item_id))?.id }));
@@ -132,7 +207,7 @@ export function mountDashboard(container, { snapshot, onSelect = () => {}, onAsk
       <div class="mk-viz-grid"><section class="mk-card"><h3>자재 충족 현황<span class="mk-spacer"></span><span class="mk-toggle" role="group" aria-label="계산 기준"><button type="button" data-basis="production_remaining" aria-pressed="${basis === 'production_remaining'}">기본 소요 ${num(summary.production_remaining_qty)}대</button><button type="button" data-basis="planned" aria-pressed="${basis === 'planned'}">수율 반영 ${num(requirements.basis?.planned_input_qty)}대</button></span></h3><div data-region="materials">${materialContent()}</div></section>
       <section class="mk-card"><h3>회차별 이행 단계<span class="mk-spacer"></span>${tag('단위: 대')}</h3>${rows.map(row => `<button type="button" class="mk-round-bar" data-select="${esc(row.id || row.node_id)}"><span class="mk-round-label">${esc(row.delivery_round_id || row.display_id)}<small>${num(row.promised_qty ?? row.promise_qty)}대</small></span><span class="mk-bar-width">${bars(row, row.promised_qty ?? row.promise_qty)}</span><span class="mk-round-remaining">${num(row.promise_remaining_qty)}</span></button>`).join('')}<p class="mk-small-note">오른쪽 숫자는 남은 고객 도착 약속입니다.</p><div class="mk-inline-legend">${segmentLabels.map((label, i) => `<span><i class="${segmentClass[i]}"></i>${label}</span>`).join('')}</div></section></div>
       <section class="mk-card mk-rounds-card"><h3>계약 회차별 이행 현황 ${tag(num(rows.length))}<span class="mk-spacer"></span><span class="mk-toggle" role="group" aria-label="회차 상태">${[['all', '전체'], ['open', '미완료'], ['done', '납품 완료']].map(([id, label]) => `<button type="button" data-filter="${id}" aria-pressed="${filter === id}">${label}</button>`).join('')}</span></h3><div data-region="rounds">${roundContent()}</div></section>
-      <div class="mk-lower-grid"><section class="mk-card"><h3>공급 흐름<span class="mk-spacer"></span>${tag("개발 원장 · 외부 송신 없음")}</h3><div data-region="procurement"></div></section><section class="mk-card"><h3>원장 사건 ${tag(`${snapshot.events?.length ?? 0} / ${snapshot.event_count ?? snapshot.events?.length ?? 0}`)}<span class="mk-spacer"></span>${tag(`원장 v${num(version)}`, 'info')}</h3><ul class="mk-event-list">${(snapshot.events || []).map(event => `<li><span>${esc(event.recorded_at || '')}</span><span>${esc(event.summary || event.event_type || event.kind || '')}</span></li>`).join('') || '<li><span>기초 이관</span><span>기초 집계와 이후 서버 사건을 구분합니다.</span></li>'}</ul></section>
+      <div class="mk-lower-grid"><section class="mk-card"><h3>공급 흐름<span class="mk-spacer"></span>${tag("개발 원장 · 외부 송신 없음")}</h3><div data-region="procurement"></div></section>${renderEvents()}
       <section class="mk-card"><h3>품목별 재고<span class="mk-spacer"></span>${tag('원장 조회', 'info')}</h3><div class="mk-table-scroll"><table class="mk-round-table"><thead><tr><th>품목 / LOT</th><th>보유</th><th>예약</th><th>가용</th></tr></thead><tbody>${inventory.map(item => `<tr><td><button class="mk-link" type="button" data-graph="${esc(item.id || item.node_id)}">${esc(item.display_id || item.item_id)}</button></td><td>${num(item.on_hand_qty)}</td><td>${num(item.reserved_qty)}</td><td>${num(item.available_qty)}</td></tr>`).join('') || '<tr><td colspan="4">조회된 재고 근거가 없습니다.</td></tr>'}</tbody></table></div></section></div>
       <section class="mk-card"><h3>원장 객체 ${tag(num(entities.length))}<span class="mk-spacer"></span>${tag('동일 조회 버전')}</h3><div class="mk-table-scroll"><table class="mk-round-table" data-register="entities"><thead><tr><th>객체</th><th>종류</th><th>근거</th><th>상태</th></tr></thead><tbody>${entities.map(entity => `<tr><td><button type="button" class="mk-link" data-graph="${esc(entity.id)}">${esc(entity.display_id || entity.id)}</button></td><td>${esc(entity.type)}</td><td>${num(Array.isArray(entity.evidence) ? entity.evidence.length : entity.evidence ? 1 : entity.evidence_refs?.length)}</td><td>${esc(entity.attributes?.status || entity.attributes?.state || originLabel(entity.origin))}</td></tr>`).join('')}</tbody></table></div></section>`;
   }

@@ -463,6 +463,19 @@
           "record": "docs/handoff/SERVICE-BOM-MAC-20261108.md",
           "scope": "Mac arm64 actual Runner/source registration and conditional five-item ledger slice; 182 Python tests PASS / 0 SKIP; manual UI, independent preservation and restart PASS; no parent completion",
           "parent_complete": false
+        },
+        {
+          "record": "docs/handoff/SERVICE-LEDGER-FEED-20261109.md",
+          "status": "VERIFIED",
+          "verification_ids": [
+            "LEDGER-FEED-SERVER",
+            "LEDGER-FEED-API",
+            "LEDGER-FEED-NODE",
+            "LEDGER-FEED-BROWSER",
+            "LEDGER-FEED-PRESERVE"
+          ],
+          "scope": "DEC-H35 reference-style committed-event feed and allowlisted exact document evidence; no original business/model writes. Full realtime/recovery acceptance remains incomplete.",
+          "parent_complete": false
         }
       ],
       "actual_implementation_paths": [
@@ -473,7 +486,12 @@
         "service/bom_contracts.py",
         "migrations/004_bom.sql",
         "tests/test_bom.py",
-        "tests/test_bom_api.py"
+        "tests/test_bom_api.py",
+        "service/ledger.py",
+        "web/mks2/dashboard.js",
+        "web/mks2/dashboard.css",
+        "tests/test_ledger_event_views.py",
+        "tests/test_ledger_events_ui.mjs"
       ],
       "actual_api_or_tool_contract": "Typed BOM source/document routes under /api/mks2/bom; create, revise, review, approve, post; exact document version/hash and current ledger version; stored original source retrieval. The actual Mac source slice is verified; full technical review and overall service acceptance remain separate.",
       "blockers": [],
@@ -759,13 +777,31 @@
           "scope": "승인 모델의 고정 Azure ZDR 경로 실제 기능 선택1회·원장 조회·재요청 중복0. 전체 실제 AI 의미 품질 인수 아님.",
           "status": "VERIFIED",
           "parent_complete": false
+        },
+        {
+          "record": "docs/handoff/SERVICE-LEDGER-FEED-20261109.md",
+          "status": "VERIFIED",
+          "verification_ids": [
+            "LEDGER-FEED-SERVER",
+            "LEDGER-FEED-API",
+            "LEDGER-FEED-NODE",
+            "LEDGER-FEED-BROWSER",
+            "LEDGER-FEED-PRESERVE"
+          ],
+          "scope": "DEC-H35 reference-style committed-event feed and allowlisted exact document evidence; no original business/model writes. Full realtime/recovery acceptance remains incomplete.",
+          "parent_complete": false
         }
       ],
       "actual_implementation_paths": [
         "service/agent_workflow.py",
         "service/agent_host.py",
         "service/agent_api.py",
-        "web/mks2/app.js"
+        "web/mks2/app.js",
+        "service/ledger.py",
+        "web/mks2/dashboard.js",
+        "web/mks2/dashboard.css",
+        "tests/test_ledger_event_views.py",
+        "tests/test_ledger_events_ui.mjs"
       ],
       "actual_api_or_tool_contract": null,
       "blockers": [],
@@ -1148,6 +1184,19 @@
           "record": "docs/handoff/SERVICE-BOM-MAC-20261108.md",
           "scope": "Mac arm64 actual Runner/source registration and conditional five-item ledger slice; 182 Python tests PASS / 0 SKIP; manual UI, independent preservation and restart PASS; no parent completion",
           "parent_complete": false
+        },
+        {
+          "record": "docs/handoff/SERVICE-LEDGER-FEED-20261109.md",
+          "status": "VERIFIED",
+          "verification_ids": [
+            "LEDGER-FEED-SERVER",
+            "LEDGER-FEED-API",
+            "LEDGER-FEED-NODE",
+            "LEDGER-FEED-BROWSER",
+            "LEDGER-FEED-PRESERVE"
+          ],
+          "scope": "DEC-H35 reference-style committed-event feed and allowlisted exact document evidence; no original business/model writes. Full realtime/recovery acceptance remains incomplete.",
+          "parent_complete": false
         }
       ],
       "actual_implementation_paths": [
@@ -1160,7 +1209,11 @@
         "tests/test_ledger.py",
         "tests/test_projections.py",
         "service/views.py",
-        "tests/test_bom_projection.py"
+        "tests/test_bom_projection.py",
+        "web/mks2/dashboard.js",
+        "web/mks2/dashboard.css",
+        "tests/test_ledger_event_views.py",
+        "tests/test_ledger_events_ui.mjs"
       ],
       "actual_api_or_tool_contract": null,
       "blockers": [],
@@ -2374,6 +2427,14 @@
     "latest_bom_focus": {
       "decision": "DEC-H34",
       "record": "docs/handoff/SERVICE-BOM-FOCUS-20261109.md",
+      "status": "VERIFIED",
+      "original_domain_writes": false,
+      "new_live_model_calls": 0,
+      "parent_complete": false
+    },
+    "latest_ledger_feed": {
+      "decision": "DEC-H35",
+      "record": "docs/handoff/SERVICE-LEDGER-FEED-20261109.md",
       "status": "VERIFIED",
       "original_domain_writes": false,
       "new_live_model_calls": 0,
