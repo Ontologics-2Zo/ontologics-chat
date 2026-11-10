@@ -253,6 +253,22 @@ def create_app(db, *, private_root: str, origin="http://127.0.0.1:8870", dev_mod
     from service.procurement_api import mount_procurement_api
     mount_procurement_api(app, db=db, identity=identity, ledger=ledger, gateway=gateway,
                          principal=principal, context=context, verified_payload=verified_payload)
+    from service.reservations import ReservationCreate, ReservationService
+    reservations=ReservationService(db,identity)
+    app.state.reservations=reservations
+
+    @app.get("/api/mks2/inventory/reservations")
+    def list_reservations(request:Request):
+        actor=principal(request)
+        return {"reservations":reservations.list(actor,actor.company_id),"company_id":actor.company_id,
+                "identity_revision":actor.identity_revision}
+
+    @app.post("/api/mks2/inventory/reservations")
+    def create_reservation(request:Request,body:ReservationCreate):
+        # Explicit command of another demand's planner. It records a ledger
+        # event only; projection and UI refresh follow the committed event.
+        actor=principal(request,write=True)
+        return reservations.reserve(actor,actor.company_id,body)
 
     workflow, observer = None, None
     def model_summary(execution_id=None):
@@ -334,7 +350,7 @@ def create_app(db, *, private_root: str, origin="http://127.0.0.1:8870", dev_mod
     def events(request:Request,after:int=0):
         if after<0:raise ServiceError("INVALID_CURSOR",422)
         actor=principal(request);payload=ledger.read(actor)
-        return {"current_ledger_version":payload["metadata"]["current_ledger_version"],"projection_state":(payload.get("projection") or {}).get("state","PENDING"),"events":ledger.events(actor,after),"identity_revision":actor.identity_revision,"company_id":actor.company_id}
+        return {"current_ledger_version":payload["metadata"]["current_ledger_version"],"snapshot_ledger_version":payload["metadata"]["server_ledger_version"],"projection_state":(payload.get("projection") or {}).get("state","PENDING"),"events":ledger.events(actor,after),"identity_revision":actor.identity_revision,"company_id":actor.company_id}
 
     @app.get("/api/mks2/documents")
     def list_documents(request:Request):

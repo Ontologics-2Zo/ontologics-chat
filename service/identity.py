@@ -28,6 +28,9 @@ DEV_ACCOUNTS = (
     ("dev-warehouse-e", "actor-dev-e", "DEMO-A", "창고 담당 E", READ, True),
     ("dev-viewer-f", "actor-dev-f", "DEMO-A", "조회자 F", READ, True),
     ("dev-other-g", "actor-dev-g", "DEMO-B", "다른 회사 G", READ, True),
+    # DEC-H47: another synthetic demand's planner may reserve current stock.
+    # New account only; existing accounts' permission profiles stay unchanged.
+    ("dev-planner-h", "actor-dev-h", "DEMO-A", "다른 주문 담당 H", READ + ("inventory.reserve",), True),
     ("dev-disabled-x", "actor-dev-x", "DEMO-A", "비활성 계정 X", (), False),
 )
 

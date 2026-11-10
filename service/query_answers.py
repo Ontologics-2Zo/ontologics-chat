@@ -9,18 +9,22 @@ from copy import deepcopy
 from decimal import Decimal
 
 from service.materials import requirements_for_snapshot
+from service.procurement import quote_calculation
+from service.reservations import reservation_impacts
 from service.query_contracts import (PrerequisiteCounts, QueryAnswerBlock, QueryBomReference,
                                      QueryNextAction, QueryPrerequisite)
 from service.query_intents import interpret_question
 
 
 RULE_VERSION = "cq-read-analysis/2"
-LABELS = {"fulfillment": "납품 이행", "production": "추가 생산·투입",
+LABELS = {"change": "수량 변경 원인", "sourcing": "부족 자재 확보안 비교", "fulfillment": "납품 이행", "production": "추가 생산·투입",
           "materials": "자재 소요·부족", "inventory": "가용 재고",
           "delivery": "고객 도착·납기 판단", "ontology": "전체 온톨로지"}
 SYNTHETIC = "synthetic_opening_balance"
 DEMO = "conditional_demo"
-CQ_REFS = {"fulfillment": ("DEMO-CQ-01", "B-CQ02"), "production": ("DEMO-CQ-02", "B-CQ03"),
+# DEC-H47 branches explain existing material CQs; no new official CQ IDs.
+CQ_REFS = {"change": ("B-CQ01", "B-CQ04"), "sourcing": ("CQ09", "B-CQ01", "B-CQ04"),
+           "fulfillment": ("DEMO-CQ-01", "B-CQ02"), "production": ("DEMO-CQ-02", "B-CQ03"),
            "materials": ("CQ09", "B-CQ04"), "inventory": ("B-CQ01", "B-CQ04"),
            "delivery": ("DEMO-CQ-01", "B-CQ01", "B-CQ04"), "ontology": ()}
 
@@ -60,6 +64,8 @@ def inventory_origin(rows):
             origins.update((SYNTHETIC, "development_workflow"))
         else:
             origins.add(SYNTHETIC)
+        if row.get("reservation_ids"):
+            origins.add("development_workflow")
     return next(iter(origins)) if len(origins) == 1 else "mixed_sources" if origins else "unknown"
 
 
@@ -165,11 +171,18 @@ def _delivery_blocks(view, plan, sections, prerequisite, requirements):
                     if prerequisite.selected_item_ids and row["item_id"] not in prerequisite.selected_item_ids:
                         continue
                     stock_origin = inventory_origin([stock for stock in view["inventory"] if stock["item_id"] == row["item_id"]])
-                    stock_label = {SYNTHETIC: "합성 기초 원장", "development_workflow": "개발 입하·수입검사 원장",
-                                   "mixed_sources": "합성 기초 원장과 개발 입하·수입검사 원장", "unknown": "출처 미확인"}[stock_origin]
+                    stock_label = {SYNTHETIC: "합성 기초 원장", "development_workflow": "개발 원장 사건",
+                                   "mixed_sources": "합성 기초 원장과 개발 원장 사건(입하·검사·예약)", "unknown": "출처 미확인"}[stock_origin]
                     application.append(f"{row['item_id']}: 소요 {number(row['required_qty'])} {row['unit']} · 가용 {number(row['available_qty'])} {row['unit']} · 부족 {number(row['shortage_qty'])} {row['unit']}. 적용 매핑·수량은 {'시연 가정' if row['conditional'] else '검토된 적용 판단'}, 재고는 {stock_label}입니다.")
         elif prerequisite.selected_item_ids and selected_available == 0:
             application.append("선택 품목은 현재 BOM의 계산 가능한 품목에 연결되지 않았습니다. 다른 적용 품목의 계산과 구분합니다.")
+    change = by_id.get("material_change")
+    if change:
+        # The committed reservation changed the material basis of this answer.
+        entries = {row["label"]: row for row in change["items"]}
+        event, shortage = entries["변경 사건"], next(row for label, row in entries.items() if label == "계획 투입 기준 부족")
+        available = next(row for label, row in entries.items() if label.endswith("가용"))
+        application.append(f"자재 조건 변경: {event['value']}({event['detail']}) 이후 {available['label']} {available['value']}, 계획 투입 기준 부족 {shortage['value']}입니다. 기존 확보안은 재검토가 필요하며 공급사·초안은 자동으로 바뀌지 않습니다.")
     _, action = _prerequisite_text(prerequisite)
     next_steps = [action, "적용 BOM·실재고·조달과 생산·검사·운송 근거가 갖춰지기 전에는 실제 납기 판단을 보류합니다."]
     if prerequisite.bom:
@@ -182,7 +195,7 @@ def _delivery_blocks(view, plan, sections, prerequisite, requirements):
 
 
 def _result(view, plan, *, answer, status="ANSWERED", sections=(), kinds=(),
-            include_bom=False, selected_items=(), selected_lot=None, conclusion=None):
+            include_bom=False, selected_items=(), selected_lot=None, conclusion=None, offer_documents=None):
     """Bind claims to the current BOM only, while preserving graph history."""
     active = view.get("bom")
     selected_items = set(selected_items)
@@ -197,6 +210,8 @@ def _result(view, plan, *, answer, status="ANSWERED", sections=(), kinds=(),
     receipt_ids = {row["receipt_id"] for row in receipts}
     development_docs = receipt_ids | {row["id"] for row in procurement.get("documents", [])
         if row["kind"] == "IQC" and row["content"]["resolved"]["parent"]["id"] in receipt_ids}
+    if offer_documents is not None:
+        development_docs |= set(offer_documents)
     if receipts and set(plan.intents) & {"materials", "inventory", "delivery"}:
         kinds = set(kinds) | {"PartsReceiptLine", "InspectionResult", "DocumentVersion", "ApprovalGrant"}
     for node in view["entities"]:
@@ -204,6 +219,9 @@ def _result(view, plan, *, answer, status="ANSWERED", sections=(), kinds=(),
             continue
         evidence = node.get("evidence", {})
         if evidence.get("record_type") == "development_procurement" and evidence.get("document_id") not in development_docs:
+            continue
+        # A sourcing comparison cites only the offers it compared.
+        if offer_documents is not None and node["type"] == "SupplierOffer" and evidence.get("document_id") not in development_docs:
             continue
         if evidence.get("record_type") == "bom_registration":
             if not include_bom or not active or (evidence.get("bom_id"), evidence.get("bom_version")) != (active["bom_id"], active["bom_version"]):
@@ -228,7 +246,7 @@ def _result(view, plan, *, answer, status="ANSWERED", sections=(), kinds=(),
                      "payload_hash": active["payload_hash"], "snapshot_id": view["meta"]["snapshot_id"]})
     for node in view["entities"]:
         evidence = node.get("evidence", {})
-        if node["id"] in ids and evidence.get("record_type") == "development_procurement":
+        if node["id"] in ids and evidence.get("record_type") in {"development_procurement", "inventory_reservation"}:
             ref = {**deepcopy(evidence), "origin": "development_workflow", "snapshot_id": view["meta"]["snapshot_id"]}
             if ref not in refs:
                 refs.append(ref)
@@ -261,6 +279,11 @@ def _scope_error(plan, view, context_entity_id, ontology):
     known = {node["display_id"].casefold() for node in entities}
     known.update(str(view["summary"].get(k, "")).casefold() for k in
                  ("delivery_round_id", "production_job_id", "configuration_id"))
+    # The selected round ORD-xxxxx-NN belongs to order ORD-xxxxx; that order ID
+    # alone selects this same round, never another round or order.
+    round_id = str(view["summary"].get("delivery_round_id", ""))
+    if "-" in round_id and round_id.upper().startswith("ORD-"):
+        known.add(round_id.rsplit("-", 1)[0].casefold())
     if any(ref.casefold() not in known for ref in plan.target_references):
         return "질문의 대상이 현재 조회 회차·작업·구성과 일치하지 않습니다. 조회할 대상을 확인해 주세요."
     schema_ids = {node["node_id"] for node in ontology.get("graph", {}).get("data", {}).get("nodes", [])}
@@ -283,6 +306,15 @@ def _scope_error(plan, view, context_entity_id, ontology):
     if planned > 10**12:
         return "목표와 수율로 계산한 투입이 현재 계산 도구의 수량 범위를 초과합니다. 목표·수율을 확인해 주세요."
     current.add(Decimal(str(basis["planned_input_qty"])))
+    if set(plan.intents) & {"change", "sourcing"}:
+        requirements = view["material_requirements"]
+        for row in requirements.get("items", []):
+            current.update(Decimal(str(row[k])) for k in ("available_qty", "required_qty", "planned_required_qty",
+                           "shortage_qty", "planned_shortage_qty") if row.get(k) is not None)
+        for impact in reservation_impacts(requirements, view.get("reservations", [])):
+            current.update(Decimal(str(impact[k])) for k in ("quantity", "available_before", "available_after",
+                           "shortage_before", "shortage_after", "planned_shortage_before", "planned_shortage_after",
+                           "reserved_other_before", "reserved_other_after"))
     for mention in plan.quantity_mentions:
         if mention.role == "target_good" and plan.target_good_qty is not None:
             continue
@@ -332,6 +364,135 @@ def _requirements(view, plan):
     }, plan_yield=str(plan.yield_rate if plan.yield_rate is not None else basis["plan_yield"]))
 
 
+def _unit_word(unit):
+    return "개" if unit == "EA" else " " + unit
+
+
+def _quote_rows(view, item_id, unit):
+    documents = view.get("procurement", {}).get("documents", [])
+    return sorted((row for row in documents if row["kind"] == "QUOTE" and row["status"] == "POSTED"
+                   and not row.get("cancelled_by") and row["content"]["resolved"]["item_id"] == item_id
+                   and row["content"]["unit"] == unit), key=lambda row: row["content"]["quote_ref"])
+
+
+def _quote_view(row, shortage):
+    quote = row["content"]
+    calculation = quote_calculation(quote, shortage)
+    return {"quote_id": row["id"], "quote_ref": quote["quote_ref"], "supplier_id": quote["resolved"]["supplier_id"],
+            "moq": quote["moq"], "order_multiple": quote["order_multiple"], "supply_limit_qty": quote.get("supply_limit_qty"),
+            "unit_price": quote["unit_price"], "currency": quote["currency"], "freight": quote["freight"],
+            "lead_business_days": quote.get("lead_business_days"), "valid_until": quote["valid_until"],
+            "calculation": calculation, "schedule_status": "UNCONFIRMED", "supplier_confirmation": False,
+            "transmission_status": "NOT_SENT", "ledger_version": row["ledger_version"], "payload_hash": row["payload_hash"]}
+
+
+def _quote_sentence(entry, unit):
+    c, word = entry["calculation"], _unit_word(unit)
+    label = f"{entry['quote_ref']}({entry['supplier_id']})"
+    if c["quantity_condition"] == "MET":
+        return f"{label}는 주문 {c['recommended_qty']}{word}로 수량 조건을 충족합니다(여유 {c['margin_qty']}{word})."
+    if c["quantity_condition"] == "NOT_MET":
+        if c["recommended_qty"] > c["required_qty"]:
+            return f"{label}는 MOQ·주문배수로 {c['recommended_qty']}{word}를 주문해야 하지만 공급한도 {c['supply_limit_qty']}{word}를 넘어 미충족입니다."
+        return f"{label}는 필요 {c['required_qty']}{word}가 공급한도 {c['supply_limit_qty']}{word}보다 {c['limit_shortfall_qty']}{word} 많아 단독으로는 미충족입니다."
+    return f"{label}의 주문 {c['recommended_qty']}{word}는 산술값이며 공급한도가 확인되지 않아 판단을 보류합니다."
+
+
+def _material_change_answer(view, plan, req):
+    """Explain a recorded reservation's effect and re-compare recorded offers.
+
+    Every number is recomputed from the same snapshot: the shared requirement
+    calculation, the reservation event's exact before/after balance and posted
+    synthetic quotes. Quantity conditions never imply schedule, cost approval,
+    supplier commitment, selection or ordering.
+    """
+    s, intents = view["summary"], set(plan.intents)
+    calculated = [row for row in req["items"] if row["state"] == "CALCULATED"]
+    selected = [row["item_id"] for row in calculated if row["item_id"].casefold() in {v.casefold() for v in plan.item_ids}]
+    impacts = reservation_impacts(req, view.get("reservations", []))
+    focus_item = selected[0] if selected else (impacts[-1]["item_id"] if impacts else
+                  next((row["item_id"] for row in calculated if row.get("planned_shortage_qty") not in (None, "0")), None))
+    item_row = next((row for row in calculated if row["item_id"] == focus_item), None)
+    kinds = {"InternalItem", "PartLot", "BOMApplication", "BOMLine", "ProductConfiguration", "DeliveryRound", "ProductionJob"}
+    sections, answers, result_quotes, offer_documents = [], [], None, None
+    status, conclusion = "PARTIAL", "같은 원장 버전의 자재 변경·확보안 조회"
+    if item_row is None:
+        answer = "현재 BOM에서 소요·부족이 계산된 품목이 없어 변경 원인과 확보안을 비교할 수 없습니다. BOM 적용 검토가 먼저 필요합니다."
+        return _result(view, plan, answer=answer, status="UNKNOWN", conclusion="계산 가능한 품목 없음", kinds=kinds, include_bom=True)
+    unit, word = item_row["unit"], _unit_word(item_row["unit"])
+    item_impacts = [row for row in impacts if row["item_id"] == focus_item]
+    first, latest = (item_impacts[0], item_impacts[-1]) if item_impacts else (None, None)
+    basis = req["basis"]
+    current_planned = item_row["planned_shortage_qty"]
+    if "change" in intents:
+        kinds.add("ReservationEvent")
+        if latest:
+            answers.append(f"부족이 늘어난 원인은 다른 수요 {latest['demand_ref']}가 {focus_item} {latest['quantity']}{word}를 예약한 원장 사건(v{latest['ledger_version']})입니다.")
+            answers.append(f"보유 {latest['on_hand_qty']}{word}는 그대로이고 다른 수요 예약이 {first['reserved_other_before']}→{latest['reserved_other_after']}{word}로 늘어 가용이 {number(first['available_before'])}→{number(latest['available_after'])}{word}가 됐습니다.")
+            answers.append(f"그래서 계획 투입 {basis['planned_input_qty']}대 기준 부족은 {number(first['planned_shortage_before'])}→{number(latest['planned_shortage_after'])}{word}, 양품 목표 {basis['production_remaining_qty']}대 기준은 {number(first['shortage_before'])}→{number(latest['shortage_after'])}{word}입니다.")
+            answers.append(f"예약은 재고 이동·소비가 아니며 고객 도착 {number(s['arrived_qty'])}대와 남은 약속 {number(s['promise_remaining_qty'])}대는 바뀌지 않았습니다. 이전 답변은 당시 원장 버전 기준으로 남고, 기존 확보안은 재검토가 필요합니다.")
+            sections.append(section("change", "변경 사건 · 원장 기록", "development_workflow", [
+                item("사건", f"다른 수요 {row['demand_ref']} 예약 {row['quantity']}{word}", f"원장 v{row['ledger_version']} · LOT {row['lot_id']} · 재고 이동·소비 아님")
+                for row in item_impacts]))
+            sections.append(section("before_after", f"{focus_item} 전후 수량", DEMO, [
+                item("보유", f"{latest['on_hand_qty']}{word}", "변하지 않았습니다.", SYNTHETIC),
+                item("다른 수요 예약", f"{first['reserved_other_before']} → {latest['reserved_other_after']}{word}", origin="development_workflow"),
+                item("가용", f"{number(first['available_before'])} → {number(latest['available_after'])}{word}", "가용 = 보유 − 다른 수요 예약 − 보류·검사대기"),
+                item(f"부족 · 양품 목표 {basis['production_remaining_qty']}대", f"{number(first['shortage_before'])} → {number(latest['shortage_after'])}{word}"),
+                item(f"부족 · 계획 투입 {basis['planned_input_qty']}대", f"{number(first['planned_shortage_before'])} → {number(latest['planned_shortage_after'])}{word}", "계획 수율은 가정이며 한 번만 적용합니다."),
+            ], "PARTIAL"))
+        else:
+            answers.append(f"현재 조회 기준에는 {focus_item}의 다른 수요 예약 변경 사건이 없습니다. 계획 부족은 {number(current_planned)}{word}입니다.")
+    if "sourcing" in intents:
+        quotes = _quote_rows(view, focus_item, unit)
+        kinds.update({"SupplierOffer", "Supplier"})
+        if not quotes:
+            answers.append(f"{focus_item}에 등록된 견적이 없어 확보안을 비교할 수 없습니다.")
+        else:
+            now = [_quote_view(row, current_planned) for row in quotes]
+            previous = [_quote_view(row, first["planned_shortage_before"]) for row in quotes] if first else []
+            if first and Decimal(first["planned_shortage_before"]) < Decimal(current_planned):
+                gap = Decimal(current_planned) - Decimal(first["planned_shortage_before"])
+                answers.append(f"현재 계획 부족은 {number(current_planned)}{word}입니다. 기존 {number(first['planned_shortage_before'])}{word} 확보안만으로는 {number(gap)}{word}가 부족해 충분하지 않습니다.")
+            else:
+                answers.append(f"현재 계획 부족은 {number(current_planned)}{word}입니다.")
+            answers.extend(_quote_sentence(entry, unit) for entry in now)
+            answers.append("수량 조건은 납기·비용·공급 확약과 별개입니다. 공급사 선택·초안 변경·분할 주문·발주는 자동으로 하지 않으며 사람이 비교 후 선택합니다.")
+            entries = []
+            for index, entry in enumerate(now):
+                c = entry["calculation"]
+                change = ""
+                if previous:
+                    p = previous[index]["calculation"]
+                    change = f" · 기존 부족 {number(first['planned_shortage_before'])} 기준: 주문 {p['recommended_qty']} · {p['quantity_condition']}"
+                cost = (f"{number(c['total'])} {c['currency']}" if c["total"] is not None else f"상품 {number(c['subtotal'])} {c['currency']} · 운송비 미확인")
+                entries.append(item(f"{entry['quote_ref']} · {entry['supplier_id']}",
+                    f"주문 {c['recommended_qty']}{word} · {dict(MET='수량 충족', NOT_MET='수량 미충족', UNKNOWN='판단 보류')[c['quantity_condition']]}",
+                    f"MOQ {entry['moq']} · 배수 {entry['order_multiple']} · 공급한도 {entry['supply_limit_qty'] if entry['supply_limit_qty'] is not None else '미확인'} · 여유 {c['margin_qty']}{change} · 비용 {cost} · 리드타임 {entry['lead_business_days'] if entry['lead_business_days'] is not None else '미확인'}영업일(가정) · 일정·공급 확약 미확인",
+                    "development_workflow"))
+            sections.append(section("sourcing", f"{focus_item} 확보안 비교 · 별도 합성 견적", "development_workflow", entries, "PARTIAL"))
+            sections.append(section("sourcing_bounds", "판단 경계", "unknown", [
+                item("수량 조건", "MOQ·주문배수·공급한도", "부족 → 주문 가능 수량 → 공급한도 순서로 계산합니다. 부족·주문량에 수율을 다시 적용하지 않습니다."),
+                item("납기·비용·확약", "별도 확인", "리드타임은 견적 가정이며 공급 확약·입하·검사 합격이 아닙니다."),
+                item("자동 처리", "없음", "공급사 선택·초안 수량 변경·분할·발주는 사람이 명시적으로 진행합니다."),
+            ], "UNKNOWN"))
+            result_quotes = {"current": now, "previous": previous}
+            offer_documents = [row["id"] for row in quotes]
+    result = _result(view, plan, answer=" ".join(answers), status=status, sections=sections, kinds=kinds,
+                     include_bom=True, selected_items=[focus_item], conclusion=conclusion,
+                     offer_documents=offer_documents)
+    result["calculation"] = {"basis": deepcopy(basis), "scope_item_ids": [focus_item],
+                             "material_requirements": req, "reservation_impacts": item_impacts,
+                             "sourcing": result_quotes, "actual_delivery_feasibility": None,
+                             "estimated_arrival": None, "delivery_probability": None,
+                             "automatic_selection": False, "automatic_order": False}
+    result["steps"] = ["회사·회차·선택 품목과 조회 버전을 확인했습니다.",
+                       "같은 스냅샷의 BOM 소요·재고·예약 사건으로 전후 수량을 다시 계산했습니다." if "change" in intents else "같은 스냅샷의 BOM 소요·재고로 현재 부족을 계산했습니다.",
+                       *(["등록된 견적의 MOQ·주문배수·공급한도로 수량 조건을 비교했습니다."] if "sourcing" in intents else []),
+                       "수량 조건과 납기·비용·확약·자동 처리를 분리해 답했습니다."]
+    return result
+
+
 def answer_query(question, view, ontology, *, context_entity_id=None):
     plan = interpret_question(question)
     if plan.clarification:
@@ -347,6 +508,8 @@ def answer_query(question, view, ontology, *, context_entity_id=None):
     intents = set(plan.intents)
     s = view["summary"]
     req = _requirements(view, plan)
+    if intents & {"change", "sourcing"}:
+        return _material_change_answer(view, plan, req)
     basis = req["basis"]
     sections, answers, kinds = [], [], set()
     status, conclusion = "ANSWERED", "같은 원장 버전의 조회 결과"
@@ -368,7 +531,7 @@ def answer_query(question, view, ontology, *, context_entity_id=None):
     if intents & {"fulfillment", "production", "delivery", "materials"}:
         kinds.update({"DeliveryRound", "ContractLine", "ProductionJob", "Customer", "ProductConfiguration"})
         sections.append(section("ledger", "현재 원장 수량 · 합성 기초 이관", SYNTHETIC, [
-            item("조회 회차", s["delivery_round_id"]),
+            item("조회 회차", s["delivery_round_id"], f"질문의 주문 {', '.join(r for r in plan.target_references if r.upper() == s['delivery_round_id'].rsplit('-', 1)[0].upper())}의 선택 회차입니다." if any(r.upper() == s['delivery_round_id'].rsplit('-', 1)[0].upper() for r in plan.target_references) else ""),
             item("약속 / 고객 도착", f"{number(s['promised_qty'])}대 / {number(s['arrived_qty'])}대"),
             item("남은 고객 도착 약속", f"{number(s['promise_remaining_qty'])}대", f"{number(s['promised_qty'])} − {number(s['arrived_qty'])}; 신규 생산 수량이 아닙니다."),
             item("양품 / 완성품 입고 / 출하", f"{number(s['good_qty'])}대 / {number(s['fg_received_qty'])}대 / {number(s['shipped_qty'])}대"),
@@ -452,6 +615,17 @@ def answer_query(question, view, ontology, *, context_entity_id=None):
             item("고객 도착 기한", str(s.get("arrival_due_date") or "미확인"), "합성 초기 원장의 기한 표기입니다. 실제 약속·마감 시각·시간대와 달력을 확인해야 합니다.", SYNTHETIC),
         ]
         sections.append(section("delivery", "납기 가능 여부 · 판단 보류", "unknown", blockers, "UNKNOWN"))
+        impacts = reservation_impacts(req, view.get("reservations", []))
+        if impacts:
+            latest = impacts[-1]
+            first = next(row for row in impacts if row["item_id"] == latest["item_id"])
+            kinds.update({"ReservationEvent", "PartLot", "InternalItem"})
+            sections.append(section("material_change", "자재 조건 변경 영향 · 원장 사건", "development_workflow", [
+                item("변경 사건", f"다른 수요 {latest['demand_ref']} 예약 {latest['quantity']} {latest['unit']}", f"원장 v{latest['ledger_version']} · 재고 이동·소비가 아닙니다."),
+                item(f"{latest['item_id']} 가용", f"{number(first['available_before'])} → {number(latest['available_after'])} {latest['unit']}"),
+                item("계획 투입 기준 부족", f"{number(first['planned_shortage_before'])} → {number(latest['planned_shortage_after'])} {latest['unit']}", "이전 확보안은 재검토가 필요합니다. 공급사·초안은 자동으로 바꾸지 않습니다."),
+                item("고객 도착 / 남은 약속", f"{number(s['arrived_qty'])}대 / {number(s['promise_remaining_qty'])}대", "예약 사건은 도착·잔여 약속을 바꾸지 않습니다."),
+            ], "PARTIAL"))
         sections.append(section("next", "조건부 납기 계산에 필요한 다음 확인", "unknown", [
             item("실제 판단", "필수 근거 확인 후 재조회", "전체 적용 자재·실재고·조달/검사·능력·달력·운송·고객 도착 기한을 같은 기준으로 확인합니다."),
             item("시연 일정", "제안 가정은 아직 적용하지 않음", "문서의 일정 제안은 선택한 프로필·단위·시작점·달력과 함께 명시해야 합니다. 미래 시연 결말을 현재 원장으로 사용하지 않습니다.", "proposed_demo_assumption"),
@@ -488,6 +662,11 @@ def answer_query(question, view, ontology, *, context_entity_id=None):
         if selected and prerequisite.selected_calculation_items == 0 and prerequisite.counts.calculation_items:
             answers.append("선택 품목은 현재 BOM의 계산 가능한 품목에 연결되지 않았습니다. 다른 적용 품목의 계산과 구분합니다.")
         if "delivery" in intents:
+            impacts = reservation_impacts(req, view.get("reservations", []))
+            if impacts:
+                latest = impacts[-1]
+                first = next(row for row in impacts if row["item_id"] == latest["item_id"])
+                answers.append(f"다른 수요의 예약으로 {latest['item_id']} 계획 부족이 {number(first['planned_shortage_before'])}→{number(latest['planned_shortage_after'])}{latest['unit'] == 'EA' and '개' or ' ' + latest['unit']}로 늘어 기존 확보안은 재검토가 필요합니다.")
             answers.append("실제 납기 판단은 보류합니다.")
             if prerequisite.reason == "NO_REVIEWED_APPLICABLE_ROWS":
                 conclusion = "원본 등록 완료 · BOM 적용 검토 필요 · 납기 판단 보류"

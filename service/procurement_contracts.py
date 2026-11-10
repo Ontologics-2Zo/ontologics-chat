@@ -35,6 +35,9 @@ class QuoteContent(PurchaseContent):
     freight: str | None = Field(default=None, max_length=40)
     valid_until: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     lead_business_days: int | None = Field(default=None, ge=0, le=3650)
+    # Maximum quantity this offer's evidence says can be supplied. None means
+    # unknown, never unlimited and never zero (DEC-H47).
+    supply_limit_qty: int | None = Field(default=None, ge=0, le=10**9)
     provenance: Literal["DEMO_ASSUMPTION"] = "DEMO_ASSUMPTION"
 
     @field_validator("unit_price", "freight")

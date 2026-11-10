@@ -25,11 +25,11 @@ const button = (label, action, primary=false, extra='') => `<button type="button
 const originLabel = origin => ({ actual_source: '실제 BOM 원문', development_workflow: '개발 원장 등록·승인', synthetic_assumption: '시연 적용 가정', reviewed_application: '검토된 적용 판단', synthetic_operation: '합성 기초 이관' })[origin] || '출처 확인 필요';
 const eventCursors = new WeakMap();
 const eventLabels = { OPENING_BALANCE_IMPORTED: '합성 기초 원장 이관', BomRegistered: 'BOM 원본 등록 반영',
-  ProcurementPosted: '구매 흐름 문서 원장 반영', EvidenceDocumentPosted: '근거 문서 원장 반영' };
+  ProcurementPosted: '구매 흐름 문서 원장 반영', EvidenceDocumentPosted: '근거 문서 원장 반영', InventoryReserved: '재고 예약 원장 반영' };
 const eventOriginLabels = { synthetic_initial: '합성 기초 이관', actual_source_registration: '실제 원본 등록',
   internal_development: '내부 개발 원장', unknown: '출처 확인 필요' };
 const eventDocumentLabels = { BOM: 'BOM 등록', EVIDENCE_NOTE: '근거 문서', QUOTE: '견적', PR: '구매 요청', PO: '발주',
-  SUPPLY_CONFIRMATION: '내부 모의 공급 확인', RECEIPT: '입하', IQC: '수입검사', CANCEL: '취소' };
+  SUPPLY_CONFIRMATION: '내부 모의 공급 확인', RECEIPT: '입하', IQC: '수입검사', CANCEL: '취소', RESERVATION: '재고 예약' };
 const eventVersion = value => Number.isSafeInteger(value) && value > 0;
 const eventLabel = (labels, key) => Object.hasOwn(labels, key) ? labels[key] : null;
 
@@ -78,7 +78,11 @@ export function renderLedgerEvents(snapshot, { freshIds = new Set() } = {}) {
     const reference = document && typeof document === 'object' ? detail('문서 종류', eventLabel(eventDocumentLabels, event.document_kind) || event.document_kind || document.type)
       + detail('문서 ID', document.id) + detail('문서 버전', eventVersion(document.version) ? `v${document.version}` : null)
       + detail('문서 hash', document.payload_hash) : '';
-    return `<li data-ledger-event-id="${esc(event.event_id)}"${freshIds.has(event.event_id) ? ' class="mk-event-fresh"' : ''}><time class="mk-event-time"${time.datetime ? ` datetime="${esc(time.datetime)}"` : ''} title="${esc(time.full)}" aria-label="${esc(time.full)}">${esc(time.short)}</time><span class="mk-event-version" aria-label="원장 버전 ${esc(eventVersion(event.ledger_version) ? event.ledger_version : '미확인')}">${eventVersion(event.ledger_version) ? `v${event.ledger_version}` : '미확인'}</span><details class="mk-event-detail"><summary aria-label="${esc(summary)} · 사건 근거 보기">${esc(summary)}</summary><dl>${detail('사건 ID', event.event_id)}${detail('사건 유형', event.event_type)}${detail('기록 시각', time.full)}${detail('출처', eventLabel(eventOriginLabels, event.origin) || '출처 확인 필요')}${reference}</dl></details></li>`;
+    const reservation = event.reservation && typeof event.reservation === 'object' ? detail('예약 수요', event.reservation.demand_ref)
+      + detail('품목 / LOT', `${event.reservation.item_id ?? '미확인'} / ${event.reservation.lot_id ?? '미확인'}`)
+      + detail('예약 수량', event.reservation.quantity) + detail('가용 변화', `${event.reservation.available_before} → ${event.reservation.available_after}`)
+      + detail('예약 hash', event.reservation.payload_hash) : '';
+    return `<li data-ledger-event-id="${esc(event.event_id)}"${freshIds.has(event.event_id) ? ' class="mk-event-fresh"' : ''}><time class="mk-event-time"${time.datetime ? ` datetime="${esc(time.datetime)}"` : ''} title="${esc(time.full)}" aria-label="${esc(time.full)}">${esc(time.short)}</time><span class="mk-event-version" aria-label="원장 버전 ${esc(eventVersion(event.ledger_version) ? event.ledger_version : '미확인')}">${eventVersion(event.ledger_version) ? `v${event.ledger_version}` : '미확인'}</span><details class="mk-event-detail"><summary aria-label="${esc(summary)} · 사건 근거 보기">${esc(summary)}</summary><dl>${detail('사건 ID', event.event_id)}${detail('사건 유형', event.event_type)}${detail('기록 시각', time.full)}${detail('출처', eventLabel(eventOriginLabels, event.origin) || '출처 확인 필요')}${reference}${reservation}</dl></details></li>`;
   }).join('');
   return `<section class="mk-card" data-ledger-events><h3>원장 사건 ${tag(`${events.length} / ${total === null ? '미확인' : num(total)}`)}<span class="mk-spacer"></span>${tag(`원장 v${eventVersion(version) ? num(version) : '미확인'}`, 'info')}</h3><ul class="mk-event-list" data-ledger-event-list aria-label="확정 원장 사건">${rows || '<li class="mk-event-empty"><span>—</span><span>—</span><span>조회된 원장 사건이 없습니다.</span></li>'}</ul>${total !== null && total > events.length ? `<p class="mk-small-note">최근 ${num(events.length)}건 표시 · 전체 ${num(total)}건</p>` : ''}${supplied.length !== events.length ? '<p class="mk-small-note">조회 버전에 포함되지 않은 사건은 표시하지 않았습니다.</p>' : ''}</section>`;
 }
@@ -170,7 +174,28 @@ export function renderMaterialCoverage(items, { planned = false } = {}) {
   return `<div class="mk-material-bars" aria-label="품목별 자재 충족률">${rows}</div><div class="mk-material-axis" aria-hidden="true"><span></span><div><span>0%</span><span>50%</span><span>100% = 필요량</span></div><span></span></div>`;
 }
 
-export function mountDashboard(container, { snapshot, onSelect = () => {}, onAsk = () => {}, onGraph = () => {}, api, getIdentity, onPosted, onRefresh }) {
+/** Server-computed reservation impact (same snapshot); never a browser recalculation. */
+export function renderReservationImpact(snapshot) {
+  const impacts = Array.isArray(snapshot.reservation_impacts) ? snapshot.reservation_impacts : [];
+  if (!impacts.length) return '';
+  const latest = impacts[impacts.length - 1];
+  const first = impacts.find(row => row.item_id === latest.item_id) || latest;
+  const unit = latest.unit === 'EA' ? '개' : ` ${latest.unit}`;
+  return `<div class="mk-config-banner mk-change-banner" data-reservation-impact><b>근거 변경</b><span>다른 수요 ${esc(latest.demand_ref)} 예약 +${num(latest.quantity)}${esc(unit)} · ${esc(latest.item_id)} 가용 ${num(first.available_before)}→${num(latest.available_after)} · 계획 부족 ${num(first.planned_shortage_before)}→${num(latest.planned_shortage_after)}${esc(unit)} · 기존 확보안 재검토 필요 · 원장 v${num(latest.ledger_version)}</span>${button('변경 원인 질문', 'ask-change')}</div>`;
+}
+
+function reservationForm(snapshot) {
+  const lots = (snapshot.inventory || []).filter(row => row.scope === 'LOT' && Number(row.available_qty) > 0);
+  return `<section class="mk-card" data-reservation-form><h3>다른 주문 재고 예약<span class="mk-spacer"></span>${tag('합성 시연 · 원장 반영', 'warn')}</h3>
+    <form class="mk-reserve-form"><label>LOT<select name="lot">${lots.map(row => `<option value="${esc(row.lot_id)}" data-item="${esc(row.item_id)}">${esc(row.lot_id)} · ${esc(row.item_id)} · 가용 ${num(row.available_qty)}</option>`).join('')}</select></label>
+    <label>수량<input name="quantity" type="number" min="1" step="1" value="5" required></label>
+    <label>다른 수요<input name="demand" value="ORD-26042-01" pattern="[A-Za-z0-9][A-Za-z0-9._-]*" required></label>
+    <label class="mk-reserve-note">메모<input name="note" value="다른 합성 주문의 공용 품목 예약" minlength="8" required></label>
+    <button type="submit" class="mk-btn primary">예약 반영</button></form>
+    <p class="mk-small-note">재고 이동·소비가 아니라 다른 수요 예약만 늘립니다. 현재 원장 v${num(snapshot.meta?.ledger_version)} 기준으로 서버가 권한·가용·버전을 다시 확인합니다.</p><p class="mk-small-note" data-reserve-status role="status"></p></section>`;
+}
+
+export function mountDashboard(container, { snapshot, onSelect = () => {}, onAsk = () => {}, onGraph = () => {}, api, getIdentity, onPosted, onRefresh, live = null }) {
   const summary = snapshot.summary || {}, meta = snapshot.meta || {};
   const previousEvents = eventCursors.get(container);
   const renderEvents = createLedgerEventRenderer(snapshot, previousEvents);
@@ -247,8 +272,10 @@ export function mountDashboard(container, { snapshot, onSelect = () => {}, onAsk
     const date = meta.effective_at || meta.as_of;
     const dateLabel = meta.opening_effective_at ? `원장 기준 ${date} · 납품·생산 기초 기준 ${meta.opening_effective_at}`
       : date ? `기초 원장 기준 ${date} · ${requirements.bom_id ? '실제 BOM 원문 별도 등록' : '합성 초기 이관'}` : '합성 초기 이관 · 기준 시점 미확인';
-    container.innerHTML = `<div class="mk-dashboard-heading"><h1>운영 대시보드</h1><span>${esc(dateLabel)}</span><label class="mk-live"><input type="checkbox" disabled>실시간 사건 반영</label></div>
+    const canReserve = (getIdentity?.()?.permitted_actions || []).includes('inventory.reserve');
+    container.innerHTML = `<div class="mk-dashboard-heading"><h1>운영 대시보드</h1><span>${esc(dateLabel)}</span><label class="mk-live"><input type="checkbox" data-live${live ? (live.get() ? ' checked' : '') : ' disabled'}>실시간 사건 반영</label></div>
       <div class="mk-config-banner"><b>${blockedBom ? '구성 미등록' : '계산 기준'}</b><span>${esc(statusText)}. 확인된 원장과 같은 버전의 근거로 판단합니다.</span>${button('BOM 원본 등록', 'bom', true)}</div>
+      ${renderReservationImpact(snapshot)}${canReserve ? reservationForm(snapshot) : ''}
       ${renderKpis()}
       <div class="mk-viz-grid"><section class="mk-card" data-material-coverage><h3>자재 충족률${summary.production_job_id ? ` · ${esc(summary.production_job_id)}` : ''}<span class="mk-spacer"></span><span class="mk-toggle" role="group" aria-label="계산 기준"><button type="button" data-basis="production_remaining" aria-pressed="${basis === 'production_remaining'}">남은 생산 ${num(summary.production_remaining_qty)}대</button><button type="button" data-basis="planned" aria-pressed="${basis === 'planned'}">수율 반영 ${num(requirements.basis?.planned_input_qty)}대</button></span></h3><div data-region="materials">${materialContent()}</div></section>
       <section class="mk-card"><h3>회차별 이행 단계<span class="mk-spacer"></span>${tag('단위: 대')}</h3>${rows.map(row => `<button type="button" class="mk-round-bar" data-select="${esc(row.id || row.node_id)}"><span class="mk-round-label">${esc(row.delivery_round_id || row.display_id)}<small>${num(row.promised_qty ?? row.promise_qty)}대</small></span><span class="mk-bar-width">${bars(row, row.promised_qty ?? row.promise_qty)}</span><span class="mk-round-remaining">${num(row.promise_remaining_qty)}</span></button>`).join('')}<p class="mk-small-note">오른쪽 숫자는 남은 고객 도착 약속입니다.</p><div class="mk-inline-legend">${segmentLabels.map((label, i) => `<span><i class="${segmentClass[i]}"></i>${label}</span>`).join('')}</div></section></div>
@@ -258,7 +285,31 @@ export function mountDashboard(container, { snapshot, onSelect = () => {}, onAsk
       <section class="mk-card"><h3>원장 객체 ${tag(num(entities.length))}<span class="mk-spacer"></span>${tag('동일 조회 버전')}</h3><div class="mk-table-scroll"><table class="mk-round-table" data-register="entities"><thead><tr><th>객체</th><th>종류</th><th>근거</th><th>상태</th></tr></thead><tbody>${entities.map(entity => `<tr><td><button type="button" class="mk-link" data-graph="${esc(entity.id)}">${esc(entity.display_id || entity.id)}</button></td><td>${esc(entity.type)}</td><td>${num(Array.isArray(entity.evidence) ? entity.evidence.length : entity.evidence ? 1 : entity.evidence_refs?.length)}</td><td>${esc(entity.attributes?.status || entity.attributes?.state || originLabel(entity.origin))}</td></tr>`).join('')}</tbody></table></div></section>`;
   }
   function openBom(step = 0, preferredId, expectedDocument = null) { bom.open(step, preferredId, null, expectedDocument); }
+  container.addEventListener('change', event => { if (event.target.matches?.('[data-live]') && live) live.set(event.target.checked); }, { signal });
+  container.addEventListener('submit', async event => {
+    const form = event.target.closest?.('.mk-reserve-form');
+    if (!form) return;
+    event.preventDefault();
+    const status = container.querySelector('[data-reserve-status]'), submit = form.querySelector('button[type="submit"]');
+    const option = form.lot.selectedOptions[0];
+    if (!option) { status.textContent = '예약할 수 있는 LOT가 없습니다.'; return; }
+    submit.disabled = true; status.textContent = '서버에서 권한·가용·원장 버전을 확인하고 있습니다.';
+    try {
+      const result = await api('/api/mks2/inventory/reservations', { item_id: option.dataset.item, lot_id: form.lot.value,
+        quantity: Number(form.quantity.value), demand_ref: form.demand.value.trim(), note: form.note.value.trim(),
+        expected_ledger_version: version, idempotency_key: crypto.randomUUID() });
+      status.textContent = `원장 v${result.ledger_version} 반영 · ${result.item_id} 가용 ${num(result.before.available_qty)}→${num(result.after.available_qty)}. 그래프 투영 후 화면이 갱신됩니다.`;
+      onPosted?.();
+    } catch (error) {
+      status.textContent = ({ RESERVATION_LEDGER_VERSION_CHANGED: '그 사이 원장이 바뀌었습니다. 최신 원장을 조회한 뒤 다시 시도하세요.',
+        RESERVATION_EXCEEDS_AVAILABLE: '예약 가능 수량을 넘습니다. 이 수요의 자기 예약과 보류 수량은 가져올 수 없습니다.',
+        PERMISSION_DENIED: '현재 계정에는 재고 예약 권한이 없습니다.', RESERVATION_DEMAND_IS_TARGET: '선택 회차 자체는 다른 수요로 예약할 수 없습니다.' })[error.message]
+        || `예약을 반영하지 못했습니다 (${error.message}).`;
+      submit.disabled = false;
+    }
+  }, { signal });
   container.addEventListener('click', event => {
+    if (event.target.closest('[data-action="ask-change"]')) { const impacts = snapshot.reservation_impacts || []; const latest = impacts[impacts.length - 1]; if (latest) onAsk(`왜 부족이 ${latest.planned_shortage_after}개로 늘었어?`); }
     if (event.target.closest('[data-action="bom"]')) openBom();
     const evidence = event.target.closest('[data-bom-evidence]');
     if (evidence) bom.open(4, requirements.bom_id, evidence.dataset.bomEvidence);

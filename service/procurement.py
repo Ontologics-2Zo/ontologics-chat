@@ -30,7 +30,17 @@ def quote_calculation(quote, shortage):
         quantity = ((max(needed, quote["moq"]) + multiple - 1) // multiple) * multiple if needed else 0
         subtotal = Decimal(quote["unit_price"]) * quantity
         total = subtotal + Decimal(quote["freight"]) if quote["freight"] is not None else None
+    limit = quote.get("supply_limit_qty")
+    if limit is None:
+        condition, reason = "UNKNOWN", "SUPPLY_LIMIT_UNKNOWN"
+    elif quantity > limit:
+        condition, reason = "NOT_MET", "ORDER_EXCEEDS_SUPPLY_LIMIT"
+    else:
+        condition, reason = "MET", None
     return {"shortage_qty": format(shortage, "f"), "recommended_qty": quantity,
+            "required_qty": needed, "margin_qty": quantity - needed,
+            "supply_limit_qty": limit, "quantity_condition": condition, "quantity_condition_reason": reason,
+            "limit_shortfall_qty": max(needed - limit, 0) if limit is not None else None,
             "subtotal": format(subtotal, "f"), "freight": quote["freight"],
             "total": format(total, "f") if total is not None else None,
             "currency": quote["currency"], "freight_status": "KNOWN" if total is not None else "UNKNOWN"}
@@ -147,6 +157,8 @@ class ProcurementService(DomainService):
             calculation = quote_calculation(quote, matches[0][key])
             if not calculation["recommended_qty"] or content.quantity != calculation["recommended_qty"]:
                 raise ServiceError("PROCUREMENT_QUANTITY_CHANGED", 409)
+            if calculation["quantity_condition"] == "NOT_MET":
+                raise ServiceError("PROCUREMENT_SUPPLY_LIMIT_EXCEEDED", 409)
             # Two active requests must not procure the same selected demand twice.
             active = conn.execute("SELECT * FROM procurement_documents WHERE company_id=%s AND kind='PR' AND status='POSTED'", (company,)).fetchall()
             for old in active:
@@ -179,6 +191,8 @@ class ProcurementService(DomainService):
             if quote["freight"] is None and not content.acknowledge_unknown_freight:
                 raise ServiceError("PROCUREMENT_FREIGHT_ACK_REQUIRED", 409)
             calculation = quote_calculation(quote, content.quantity)
+            if calculation["quantity_condition"] == "NOT_MET":
+                raise ServiceError("PROCUREMENT_SUPPLY_LIMIT_EXCEEDED", 409)
             return {**resolved, "parent": self._reference(parent), "remaining_before": remaining,
                     "calculation": calculation, "supplier_confirmation": False, "transmission_status": "NOT_SENT"}
         if kind == "SUPPLY_CONFIRMATION":
@@ -390,6 +404,11 @@ class ProcurementService(DomainService):
                 for basis, key in (("base", "shortage_qty"), ("planned", "planned_shortage_qty")):
                     calculation = quote_calculation(quote, item[key]) if item and item[key] is not None else None
                     choices.append({"quote_id": str(row["id"]), "quote_ref": quote["quote_ref"], "item_id": quote["resolved"]["item_id"],
+                        "supplier_id": quote["resolved"]["supplier_id"], "unit_price": quote["unit_price"],
+                        "currency": quote["currency"], "moq": quote["moq"], "order_multiple": quote["order_multiple"],
+                        "freight": quote["freight"], "valid_until": quote["valid_until"],
+                        "lead_business_days": quote.get("lead_business_days"), "supply_limit_qty": quote.get("supply_limit_qty"),
+                        "schedule_status": "UNCONFIRMED", "cost_status": "KNOWN" if quote["freight"] is not None else "FREIGHT_UNKNOWN",
                         "unit": quote["unit"], "material_basis": basis, "calculation": calculation,
                         "expired": date.fromisoformat(quote["valid_until"]) < datetime.now(timezone.utc).date(),
                         "partial_bom": not requirements["full_coverage"], "provenance": "DEMO_ASSUMPTION",
