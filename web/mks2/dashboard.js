@@ -208,6 +208,11 @@ function reservationForm(snapshot) {
     <p class="mk-small-note">재고 이동·소비가 아니라 다른 수요 예약만 늘립니다. 현재 원장 v${num(snapshot.meta?.ledger_version)} 기준으로 서버가 권한·가용·버전을 다시 확인합니다.</p><p class="mk-small-note" data-reserve-status role="status"></p></section>`;
 }
 
+// The BOM entry reads 'BOM 원본 등록' only until the server reports a posted source BOM.
+export function isBomPosted(snapshot) {
+  return snapshot?.summary?.bom_status === 'POSTED_SOURCE' && Boolean(snapshot?.bom?.bom_id);
+}
+
 export function mountDashboard(container, { snapshot, onSelect = () => {}, onAsk = () => {}, onGraph = () => {}, api, getIdentity, onPosted, onRefresh, live = null, onShowBomGraph = null }) {
   const summary = snapshot.summary || {}, meta = snapshot.meta || {};
   const previousEvents = eventCursors.get(container);
@@ -235,6 +240,23 @@ export function mountDashboard(container, { snapshot, onSelect = () => {}, onAsk
   const blockedBom = ['unregistered', 'UNREGISTERED', 'NOT_REGISTERED', 'BLOCKED_NO_BOM', 'missing'].includes(summary.bom_status);
   const statusText = blockedBom ? 'BOM 미등록 · 소요 계산 보류' : summary.bom_status === 'POSTED_SOURCE' ? 'BOM 원본 등록 반영 · 기술 검수 별도' : summary.bom_status || 'BOM 상태 미확인';
   const calculationLabel = requirements.state === 'CALCULATED' ? '계산됨' : requirementItems.length ? '부분 계산' : '보류';
+  // Same rule as the shared screen: once the server reports a posted BOM, the entry shows the registered content.
+  const bomDoc = snapshot.bom || {};
+  const bomPosted = isBomPosted(snapshot);
+  const bomButton = primary => bomPosted ? button('등록 내용 보기', 'bom') : button('BOM 원본 등록', 'bom', primary);
+  const focusItem = requirementItems.find(item => item.item_id === summary.item_id);
+  function configBanner() {
+    if (!bomPosted) return `<div class="mk-config-banner"><b>${blockedBom ? '구성 미등록' : '계산 기준'}</b><span>${esc(statusText)}. 확인된 원장과 같은 버전의 근거로 판단합니다.</span>${bomButton(true)}</div>`;
+    const approval = bomDoc.approval || {};
+    const by = [approval.created_by && `작성 ${esc(approval.created_by)}`, approval.approved_by && `승인 ${esc(approval.approved_by)}`].filter(Boolean).join(' · ');
+    return `<div class="mk-config-banner ok"><b>구성 등록됨</b><span><strong>${esc(bomDoc.configuration_id || summary.configuration_id || '구성 미확인')}</strong> · BOM ${num((bomDoc.rows || []).length)}행 · BOM 문서 v${num(bomDoc.bom_version)} · 원장 v${num(bomDoc.ledger_version)} 반영${by ? ` (${by})` : ''} · 기술 검수 별도</span>${bomButton(false)}</div>`;
+  }
+  function materialKpi() {
+    if (!bomPosted || !focusItem) return `<article class="mk-kpi">${headerCard('자재', summary.item_id)}<div class="mk-big mk-warning">${calculationLabel}<small>소요 계산</small></div><div class="mk-kpi-sub">${esc(statusText)}</div><div class="mk-kpi-sub">현재 가용 ${num(summary.available_qty)}개</div>${bomButton(false)}</article>`;
+    const need = Number(focusItem.required_qty), available = Number(focusItem.available_qty), short = Number(focusItem.shortage_qty);
+    const cover = need > 0 && Number.isFinite(available) ? Math.min(100, Math.round(available / need * 100)) : 0;
+    return `<article class="mk-kpi">${headerCard('자재', summary.item_id)}<div class="mk-big${short > 0 ? ' mk-warning' : ''}">${short > 0 ? num(focusItem.shortage_qty) : '부족 없음'}<small>${short > 0 ? '개 부족' : ''}</small></div><div class="mk-inspection-meter"><i style="width:${cover}%"></i></div><div class="mk-small-legend"><span>가용 ${num(focusItem.available_qty)} / 필요 ${num(focusItem.required_qty)}</span><span>${cover}%</span></div><div class="mk-kpi-sub">남은 생산 ${num(summary.production_remaining_qty)}대 기준 · ${calculationLabel}</div></article>`;
+  }
   function renderKpis() {
     return `<section class="mk-kpis" aria-label="운영 지표">
       <article class="mk-kpi mk-delivery-kpi">${headerCard('납품', summary.delivery_round_id)}
@@ -244,7 +266,7 @@ export function mountDashboard(container, { snapshot, onSelect = () => {}, onAsk
       <div class="mk-quality"><i class="good" style="flex:${Number(summary.good_qty) || 0}">${num(summary.good_qty)}</i><i class="bad" style="flex:${Number(summary.defect_qty) || 0}"></i><i class="warn" style="flex:${Number(summary.pending_judgement_qty) || 0}"></i></div>
       <div class="mk-small-legend"><span class="good">양품 ${num(summary.good_qty)}</span><span class="bad">불량 ${num(summary.defect_qty)}</span><span class="warn">판정대기 ${num(summary.pending_judgement_qty)}</span></div>
       <div class="mk-kpi-sub">기초 이관 집계 · 개별 serial·장착 이력은 별도 근거가 필요합니다.</div></article>
-      <article class="mk-kpi">${headerCard('자재', summary.item_id)}<div class="mk-big mk-warning">${calculationLabel}<small>소요 계산</small></div><div class="mk-kpi-sub">${esc(statusText)}</div><div class="mk-kpi-sub">현재 가용 ${num(summary.available_qty)}개</div>${button('BOM 원본 등록', 'bom')}</article>
+      ${materialKpi()}
       <article class="mk-kpi">${headerCard('구매')}<div class="mk-big">${num(summary.purchase_order_qty)}<small>개 발주</small></div><div class="mk-purchase-stage">${Array.from({ length: 4 }, () => '<i></i>').join('')}</div><div class="mk-kpi-sub">${esc(summary.purchase_status || '등록된 구매 문서 없음 · 실제 발주 현황 별도')}</div><div class="mk-kpi-sub">확정 발주와 공급사 송신을 구분합니다.</div></article>
       <article class="mk-kpi">${headerCard('수입검사')}<div class="mk-big">${num(summary.inspection_pending_qty)}<small>개 대기</small></div><div class="mk-inspection-meter"><i style="width:${pct(summary.inspection_passed_qty, summary.inspection_total_qty)}%"></i></div><div class="mk-small-legend"><span class="warn">대기 ${num(summary.inspection_pending_qty)}</span><span class="good">합격 ${num(summary.inspection_passed_qty)}</span></div><div class="mk-kpi-sub">입하·합격은 별도 사건입니다. 검사대기 수량은 가용으로 보지 않습니다.</div></article>
     </section>`;
@@ -287,7 +309,7 @@ export function mountDashboard(container, { snapshot, onSelect = () => {}, onAsk
       : date ? `기초 원장 기준 ${date} · ${requirements.bom_id ? '실제 BOM 원문 별도 등록' : '합성 초기 이관'}` : '합성 초기 이관 · 기준 시점 미확인';
     const canReserve = (getIdentity?.()?.permitted_actions || []).includes('inventory.reserve');
     container.innerHTML = `<div class="mk-dashboard-heading"><h1>운영 대시보드</h1><span>${esc(dateLabel)}</span><label class="mk-live"><input type="checkbox" data-live${live ? (live.get() ? ' checked' : '') : ' disabled'}>실시간 사건 반영</label></div>
-      <div class="mk-config-banner"><b>${blockedBom ? '구성 미등록' : '계산 기준'}</b><span>${esc(statusText)}. 확인된 원장과 같은 버전의 근거로 판단합니다.</span>${button('BOM 원본 등록', 'bom', true)}</div>
+      ${configBanner()}
       ${renderReservationImpact(snapshot)}${renderArrivalCard(snapshot)}${canReserve ? reservationForm(snapshot) : ''}
       ${renderKpis()}
       <div class="mk-viz-grid"><section class="mk-card" data-material-coverage><h3>자재 충족률${summary.production_job_id ? ` · ${esc(summary.production_job_id)}` : ''}<span class="mk-spacer"></span><span class="mk-toggle" role="group" aria-label="계산 기준"><button type="button" data-basis="production_remaining" aria-pressed="${basis === 'production_remaining'}">남은 생산 ${num(summary.production_remaining_qty)}대</button><button type="button" data-basis="planned" aria-pressed="${basis === 'planned'}">수율 반영 ${num(requirements.basis?.planned_input_qty)}대</button></span></h3><div data-region="materials">${materialContent()}</div></section>
