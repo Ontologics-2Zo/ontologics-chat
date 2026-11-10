@@ -19,6 +19,7 @@ class Element {
   replaceChildren(...children) { this._text = ''; this.children = children; }
   setAttribute(name, value) { this.attributes[name] = String(value); }
   addEventListener(name, callback) { this.events[name] = callback; }
+  removeEventListener(name, callback) { if (this.events[name] === callback) delete this.events[name]; }
   before() {}
   focus() {}
   scrollIntoView() {}
@@ -42,8 +43,8 @@ function stateAt(snapshot, { execution_id = 'synthetic-execution', revision = 2,
       allowed_capabilities: ['fulfillment_read', 'material_analysis'] } : null,
     result: status === 'COMPLETED' ? { answer: '합성 조회 결과', status: 'ANSWERED', meta: { ...snapshot.meta } } : null };
 }
-async function setup() {
-  const elements = new Map(), requests = [], twins = [], answers = [], bomOpens = [], documentEvents = {};
+async function setup({ animated = false, reduced = false } = {}) {
+  const elements = new Map(), requests = [], twins = [], answers = [], bomOpens = [], bomOpenArguments = [], documentEvents = {};
   let data = snapshotAt(), handler = null, serial = 0;
   const get = id => { if (!elements.has(id)) elements.set(id, new Element('div')); return elements.get(id); };
   const context = vm.createContext({
@@ -54,7 +55,8 @@ async function setup() {
     AbortController, crypto: { randomUUID: () => `synthetic-key-${++serial}` },
     setTimeout: () => 1, clearTimeout() {}, setInterval: () => 1, clearInterval() {},
     requestAnimationFrame: callback => callback(),
-    mountDashboard: () => ({ destroy() {}, select() {}, openBom(step) { bomOpens.push(step); } }),
+    ...(animated ? { cancelAnimationFrame() {}, matchMedia: () => ({ matches: reduced }) } : {}),
+    mountDashboard: () => ({ destroy() {}, select() {}, openBom(step, id, reference) { bomOpens.push(step); bomOpenArguments.push({ step, id, reference }); } }),
     mountGraph: () => ({ destroy() {}, cancelReplay() {}, resize() {}, reset() {}, focus() {}, replay() {} }),
     mountTwin: (stage, options) => {
       const instance = { options, highlights: [], active: [], destroyed: false, resets: 0,
@@ -96,7 +98,7 @@ async function setup() {
       twinPanel: () => panels.twin, graphPanel: () => panels.graph, generation: () => generation,
       route: name => { location.hash = '#' + name; route(); }, invalidate: invalidateView,
       load: loadSnapshot, setContext, setTwinContext, twinActive: updateTwinActivity };`, context);
-  return { requests, app: context.app, twins, answers, bomOpens, document: context.document, window: context.window, location: context.location,
+  return { requests, app: context.app, twins, answers, bomOpens, bomOpenArguments, document: context.document, window: context.window, location: context.location,
     documentEvents, element: get, setHandler(value) { handler = value; },
     snapshot: () => data, setNextSnapshot(value) { data = value; } };
 }
@@ -221,6 +223,7 @@ test('digital twin queries the read API and forwards exact answer evidence and i
     snapshotId: 'synthetic-snapshot-7', companyId: principal.company_id, identityRevision: principal.identity_revision,
   });
   assert.match(h.app.twinPanel().messages.textContent, /합성 트윈 조회 결과/);
+  assert.equal(h.answers[0].options.evidenceNodes, h.snapshot().graph.data.nodes);
 });
 
 test('same ledger number with a different snapshot cannot highlight the digital twin', async () => {
@@ -306,6 +309,51 @@ test('graph playback and request completion do not prematurely finish the active
   assert.equal(apiCalls(h).length, 0);
 });
 
+test('workflow uses server cards without automatic graph replay and the manual action still navigates', async () => {
+  const h = await setup({ animated: true }); await h.app.load();
+  h.setHandler(request => {
+    const state = stateAt(h.snapshot(), { status: request.path.endsWith('/run') ? 'COMPLETED' : 'READY' });
+    if (state.result) Object.assign(state.result, { evidence_node_ids: ['synthetic-node'] });
+    return state;
+  });
+  await h.app.ask('합성 업무 질문'); const shown = h.answers[0];
+  assert.equal(shown.options.mode, 'workflow'); assert.equal(shown.options.beforeBody, undefined);
+  assert.equal(shown.playCalls, 0);
+  const count = h.requests.length; shown.options.onReplay();
+  assert.equal(shown.playCalls, 1); assert.equal(h.location.hash, '#graph'); assert.equal(h.requests.length, count);
+});
+
+test('animated graph hands one replay hook to the renderer while twin and reduced motion never wait for it', async () => {
+  for (const [surface, reduced] of [['graph', false], ['graph', true], ['twin', false]]) {
+    const h = await setup({ animated: true, reduced }); await h.app.load(); h.app.route(surface);
+    h.setHandler(() => twinAnswer(h)); await (surface === 'graph' ? h.app.askGraph('합성 그래프 질문') : h.app.askTwin('합성 트윈 질문'));
+    const shown = h.answers[0]; assert.equal(shown.options.mode, 'graph');
+    if (surface === 'graph' && !reduced) {
+      assert.equal(typeof shown.options.beforeBody, 'function'); assert.equal(shown.playCalls, 0);
+      const count = h.requests.length; await shown.options.beforeBody();
+      assert.equal(shown.playCalls, 1); assert.equal(h.requests.length, count);
+    } else {
+      assert.equal(shown.options.beforeBody, undefined); assert.equal(shown.playCalls, 1);
+    }
+  }
+});
+
+test('progress follows the bottom only until the reader scrolls up and releases its own scroll listener', async () => {
+  const h = await setup(); await h.app.load(); h.app.route('twin'); h.setHandler(() => twinAnswer(h));
+  const messages = h.app.twinPanel().messages;
+  messages.scrollHeight = 1000; messages.clientHeight = 400; messages.scrollTop = 0;
+  await h.app.askTwin('합성 스크롤 질문'); const shown = h.answers[0];
+  assert.equal(messages.scrollTop, 1000); assert.equal(typeof messages.events.scroll, 'function');
+  messages.scrollHeight = 1200; shown.options.onProgress(); assert.equal(messages.scrollTop, 1200);
+  messages.scrollTop = 100; messages.events.scroll(); messages.scrollHeight = 1400;
+  shown.options.onProgress(); assert.equal(messages.scrollTop, 100);
+  messages.scrollTop = 1000; messages.events.scroll(); shown.options.onProgress(); assert.equal(messages.scrollTop, 1400);
+  shown.presentation.finish(); await Promise.resolve(); assert.equal(messages.events.scroll, undefined);
+  await h.app.askTwin('다음 합성 스크롤 질문'); const latest = messages.events.scroll;
+  shown.resolve(); await Promise.resolve(); assert.equal(messages.events.scroll, latest);
+  h.app.invalidate(); await Promise.resolve(); assert.equal(messages.events.scroll, undefined);
+});
+
 test('a new question finishes the old answer and late completion cannot release the newer presentation', async () => {
   const h = await setup(); await h.app.load(); h.app.route('twin'); h.setHandler(() => twinAnswer(h));
   await h.app.askTwin('합성 이전 질문');
@@ -374,4 +422,25 @@ test('the BOM entry finishes only its answer presentation and opens the existing
   h.answers[0].options.onOpenBom();
   assert.equal(h.answers[0].finishCalls, 1); assert.equal(h.answers[0].disposeCalls, 0);
   assert.deepEqual(h.bomOpens, [0]); assert.equal(h.requests.length, count);
+});
+
+test('BOM application review opens the exact current document and old or changed references cannot reopen it', async () => {
+  const h = await setup(); h.snapshot().summary.configuration_id = 'synthetic-config'; await h.app.load(); h.app.route('twin');
+  const ref = { document_id: '00000000-0000-4000-8000-000000000123', version: 3, payload_hash: 'b'.repeat(64) };
+  const answer = { ...twinAnswer(h), prerequisite: { configuration_id: 'synthetic-config', bom: { ...ref } },
+    calculation: { material_requirements: { bom_id: ref.document_id, bom_version: ref.version } } };
+  h.setHandler(() => answer); await h.app.askTwin('합성 적용 검토 질문');
+  const count = h.requests.length, shown = h.answers[0];
+  for (const changed of [{ ...ref, version: 4 }, { ...ref, payload_hash: 'a'.repeat(64) }, { ...ref, document_id: 'different' }]) shown.options.onReviewBom(changed);
+  assert.equal(h.bomOpens.length, 0);
+  shown.options.onReviewBom(ref);
+  assert.deepEqual(JSON.parse(JSON.stringify(h.bomOpenArguments)), [{ step: 4, id: ref.document_id, reference: ref }]);
+  assert.equal(shown.finishCalls, 1); assert.equal(shown.disposeCalls, 0);
+  assert.equal(h.requests.length, count); assert.equal(h.location.hash, '#twin');
+  answer.prerequisite.configuration_id = 'another-config'; shown.options.onReviewBom(ref);
+  assert.equal(h.bomOpens.length, 1);
+  answer.prerequisite.configuration_id = 'synthetic-config';
+  h.setNextSnapshot(snapshotAt(8)); await h.app.refresh(); shown.options.onReviewBom(ref);
+  assert.equal(h.bomOpens.length, 1); assert.match(h.element('notice').textContent, /과거 원장 버전/);
+  h.app.invalidate(); shown.options.onReviewBom(ref); assert.equal(h.bomOpens.length, 1);
 });

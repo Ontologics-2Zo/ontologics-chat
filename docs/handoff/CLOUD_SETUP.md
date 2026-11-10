@@ -1,5 +1,7 @@
 # 로컬 실행과 Codex Cloud 환경 안내
 
+> 최신 후속: DEC-H44 [진행 표시·LangSmith 연결](SERVICE-PHASE1-PROGRESS-20261110.md). 기존 Langfuse 설정을 유지하며 LangSmith는 `ONTO_LANGSMITH_ENABLED=true`와 검증된 기존 프로젝트 UUID/해당 workspace/공식 endpoint를 별도 실행 override로 명시한다. 기본값은 OFF이며 `.env.example`의 빈 값을 실제 `.env` 위에 덮어쓰지 않는다. 원격에는 메타데이터만 전송하고 질문·답변 상세는 로컬 Langfuse에 남긴다. 자동 SDK tracing은 계속 OFF다. 같은 runtime과 canonical 예산을 재사용하며 import/reset·기존 trace 재전송을 하지 않는다. 새 작업 브랜치의 검증과 main 병합은 구분한다.
+
 > 최신 실행 기준: DEC-H43과 [PR #5 검토 기록](SERVICE-PR5-REVIEW-20261110.md). 최신 main을 확인한 뒤 기존 runtime/DB/예산을 그대로 재사용하며 import/reset 없이 재시작한다. 로컬 질문·답변 관측은 별도 실행 override에서 `ONTO_LANGFUSE_CONTENT_ENABLED=true`, `ONTO_OBSERVABILITY_PURPOSE=interactive`로 활성화한다. 평가 host는 `evaluation` 또는 content=false를 사용한다. 기존 `.env`를 예시 파일로 덮어쓰지 않는다.
 
 

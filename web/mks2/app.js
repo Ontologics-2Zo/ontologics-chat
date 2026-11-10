@@ -275,6 +275,17 @@ async function runQuery(name, question) {
   settleAnswer(panel);
   panel.messages.append(element('div', 'message user', question)); panel.submit.disabled = true;
   const message = element('div', 'message assistant', '원장과 근거를 조회하고 있습니다.'); panel.messages.append(message);
+  let followAnswer = true, presentationOwnsScroll = false;
+  const trackScroll = () => {
+    if (Number.isFinite(panel.messages.scrollHeight)) {
+      followAnswer = panel.messages.scrollHeight - panel.messages.scrollTop - panel.messages.clientHeight <= 40;
+    }
+  };
+  const scrollAnswer = () => {
+    if (followAnswer && answerVisible(name)) panel.messages.scrollTop = panel.messages.scrollHeight;
+  };
+  const releaseScroll = () => panel.messages.removeEventListener?.('scroll', trackScroll);
+  scrollAnswer(); panel.messages.addEventListener('scroll', trackScroll, { passive: true });
   cancelPendingReplay();
   try {
     const answer = name === 'dashboard' && agentMode !== 'disabled'
@@ -296,7 +307,7 @@ async function runQuery(name, question) {
       companyId: answer.meta.company_id, identityRevision: answer.meta.identity_revision });
     const evidenceAtVersion = action => {
       if (!answerSnapshotMatches(answer)) { notify('과거 원장 버전의 답변입니다. 최신 근거가 필요하면 질문을 다시 실행해 주세요.'); return; }
-      action();
+      return action();
     };
     let activeReplay = null;
     const replayEvidence = (navigate = false) => evidenceAtVersion(() => {
@@ -305,35 +316,56 @@ async function runQuery(name, question) {
       if (navigate) location.hash = '#graph';
       const replay = ++replayGeneration, playGeneration = generation;
       activeReplay = replay;
-      void presentation.play(() => graph.replay({ hops, nodeIds: ids, edgeIds: answer.evidence_edge_ids || [] }),
+      return presentation.play(() => graph.replay({ hops, nodeIds: ids, edgeIds: answer.evidence_edge_ids || [] }),
         () => generation === playGeneration && replay === replayGeneration);
     });
+    const animateAnswer = answerVisible(name);
+    const waitForGraph = name === 'graph' && ids.length > 0 && animateAnswer
+      && !globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+      && typeof Intl.Segmenter === 'function' && typeof requestAnimationFrame === 'function'
+      && typeof cancelAnimationFrame === 'function';
     const presentation = renderQueryAnswer(message, answer, {
-      animate: answerVisible(name),
+      animate: animateAnswer, mode: name === 'dashboard' ? 'workflow' : 'graph',
+      beforeBody: waitForGraph ? () => replayEvidence() : undefined,
+      onProgress: scrollAnswer,
       evidenceIds: ids, labelFor, evidenceEdges: snapshot.graph.data.edges,
+      evidenceNodes: snapshot.graph.data.nodes,
       onEvidence: id => evidenceAtVersion(() => focusEvidence(id)),
       onOpenBom: () => evidenceAtVersion(() => { settleAnswer(panel); cancelPendingReplay(); dashboard.openBom(0); }),
+      onReviewBom: reference => evidenceAtVersion(() => {
+        const expected = answer.prerequisite?.bom, requirements = answer.calculation?.material_requirements;
+        if (!expected || !reference || expected.document_id !== reference.document_id
+            || expected.version !== reference.version || expected.payload_hash !== reference.payload_hash
+            || requirements?.bom_id !== reference.document_id || requirements.bom_version !== reference.version
+            || answer.prerequisite.configuration_id !== snapshot.summary.configuration_id) return;
+        settleAnswer(panel); cancelPendingReplay();
+        dashboard.openBom(4, reference.document_id, { ...reference });
+      }),
       onReplay: () => replayEvidence(true),
       onCancel: () => { if (activeReplay === replayGeneration) cancelPendingReplay(); },
     });
     panel.presentation = presentation;
+    presentationOwnsScroll = true;
     // Text display is independent of the request and graph animation. A late
     // completion can release only its own view, never a newer answer's view.
     presentation.finished?.then(() => {
+      releaseScroll();
       if (panel.presentation === presentation) panel.presentation = null;
     }, () => {
+      releaseScroll();
       presentation.finish?.();
       if (panel.presentation === presentation) panel.presentation = null;
     });
-    if (ids.length) replayEvidence();
+    if (ids.length && name !== 'dashboard' && !waitForGraph) replayEvidence();
   } catch (error) {
     if (error.name === 'AbortError' || generation !== requestGeneration) return;
     message.replaceChildren(element('p', '', errorText(error)));
     if (error.status === 401) invalidateView();
   } finally {
+    if (!presentationOwnsScroll) releaseScroll();
     if (generation === requestGeneration) {
       panel.submit.disabled = false;
-      message.scrollIntoView({ block: 'start', behavior: 'instant' });
+      scrollAnswer();
     }
   }
 }

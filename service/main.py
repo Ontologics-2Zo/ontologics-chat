@@ -1,5 +1,6 @@
 """Local FastAPI host. Development identity is explicit and loopback only."""
 
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 import re
@@ -7,6 +8,7 @@ from urllib.parse import quote, urlsplit
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from pydantic import Field
@@ -58,7 +60,22 @@ def create_app(db, *, private_root: str, origin="http://127.0.0.1:8870", dev_mod
     bom=BomService(db,identity,private_root,bom_runner or BomRunner())
     catalog=catalog or OntologyCatalog.from_private_root(private_root)
     ontology=ontology_view(catalog)
-    app=FastAPI(title="Ontologics local MK-S2 service",docs_url=None,redoc_url=None,openapi_url=None)
+    @asynccontextmanager
+    async def lifespan(application):
+        try:
+            yield
+        finally:
+            observer = getattr(application.state, "agent_observer", None)
+            if observer is not None:
+                try:
+                    # The exporter has its own bounded flush. Keep network work
+                    # off the event loop and telemetry failure out of shutdown.
+                    await run_in_threadpool(observer.close)
+                except Exception:
+                    pass
+
+    app=FastAPI(title="Ontologics local MK-S2 service",docs_url=None,redoc_url=None,openapi_url=None,
+                lifespan=lifespan)
     app.state.identity,app.state.ledger,app.state.domain=identity,ledger,domain
     app.state.bom=bom
     app.state.catalog=catalog
@@ -259,7 +276,8 @@ def create_app(db, *, private_root: str, origin="http://127.0.0.1:8870", dev_mod
         model = model_summary()
         return {"status":"ok","mode":"local-development","database":db.health(),"serviceConnected":True,
                 "model_calls":model["live_calls"], "agent":model,
-                "observability":{"exported":observer.exported,"failed":observer.failed,"invalid":observer.invalid}
+                "observability":{"exported":observer.exported,"failed":observer.failed,"invalid":observer.invalid,
+                                 "langsmith":observer.langsmith_status()}
                 if observer else {"enabled":False}}
 
     @app.get("/api/mks2/session")

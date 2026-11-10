@@ -1,5 +1,5 @@
 /** Read-only A-Box view. Data, identities and evidence arrive through the view API. */
-import { layoutGraph, routeEdges, graphBounds, planEvidenceReplay, isSourceRow, fitGraphBounds, interpolateView } from './graph-layout.js';
+import { layoutGraph, routeEdges, graphBounds, planEvidenceReplay, replayStepTiming, isSourceRow, fitGraphBounds, interpolateView } from './graph-layout.js';
 
 const NS = 'http://www.w3.org/2000/svg';
 const STAGE = { x: 0, y: 0, width: 1400, height: 840 };
@@ -85,7 +85,7 @@ export function mountGraph(container, { bundle, onSelect = () => {}, onAsk = () 
   let destroyed = false;
   let replayToken = 0;
   let replaying = false;
-  let cameraToken = 0, delayTimer = null, releaseDelay = null;
+  let cameraToken = 0, delayTimer = null, releaseDelay = null, progressFrame = 0;
   let activeNodes = new Set(), activeEdges = new Set();
 
   const canvas = html('section', 'mks-graph');
@@ -153,7 +153,7 @@ export function mountGraph(container, { bundle, onSelect = () => {}, onAsk = () 
   canvas.append(svg, legend, status, tools, detail, scope, guide);
   container.replaceChildren(canvas);
 
-  function updateView(next, animate = false) {
+  function updateView(next, animate = false, duration = 420) {
     if (destroyed) return;
     if (!['x', 'y', 'width', 'height'].every(key => Number.isFinite(next[key])) || next.width <= 0 || next.height <= 0) return;
     cancelAnimationFrame(frame);
@@ -163,7 +163,7 @@ export function mountGraph(container, { bundle, onSelect = () => {}, onAsk = () 
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const tick = now => {
       if (destroyed || token !== cameraToken) return;
-      const progress = !animate || reduceMotion ? 1 : Math.max(0, Math.min(1, (now - startAt) / 420));
+      const progress = !animate || reduceMotion ? 1 : Math.max(0, Math.min(1, (now - startAt) / duration));
       view = interpolateView(start, next, progress);
       svg.setAttribute('viewBox', `${view.x} ${view.y} ${view.width} ${view.height}`);
       if (progress < 1) frame = requestAnimationFrame(tick); else frame = 0;
@@ -179,27 +179,55 @@ export function mountGraph(container, { bundle, onSelect = () => {}, onAsk = () 
   function stopReplay() {
     replayToken++; replaying = false; cameraToken++;
     cancelAnimationFrame(frame); frame = 0; fitTarget = null;
+    cancelAnimationFrame(progressFrame); progressFrame = 0;
     if (delayTimer !== null) { clearTimeout(delayTimer); delayTimer = null; }
     const release = releaseDelay; releaseDelay = null; release?.();
     activeNodes.clear(); activeEdges.clear();
     svg.classList.remove('mks-replaying');
+    svg.dataset.replayState = 'idle';
+    svg.dataset.replayKind = '';
   }
 
-  function waitStep() {
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return Promise.resolve();
+  function revealProgress(progress) {
+    const bounded = Math.max(0, Math.min(1, progress));
+    // One inherited value drives all paths, including a dense BOM batch. No
+    // per-edge timer, layout measurement or perpetual dash animation is needed.
+    svg.style.setProperty('--mks-reveal-offset', String(1 - bounded));
+    svg.dataset.replayProgress = String(bounded);
+  }
+
+  function waitStep(step) {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) { revealProgress(1); return Promise.resolve(); }
+    const timing = replayStepTiming(step.kind), started = performance.now(), token = replayToken;
+    revealProgress(0);
     return new Promise(resolve => {
       releaseDelay = resolve;
-      delayTimer = setTimeout(() => { delayTimer = null; releaseDelay = null; resolve(); }, 520);
+      const complete = () => {
+        if (destroyed || token !== replayToken) return;
+        if (delayTimer !== null) clearTimeout(delayTimer);
+        cancelAnimationFrame(progressFrame); progressFrame = 0;
+        delayTimer = null; releaseDelay = null; revealProgress(1); resolve();
+      };
+      const tick = now => {
+        if (destroyed || token !== replayToken) return;
+        if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) { complete(); return; }
+        revealProgress(timing.drawDuration ? (now - started - timing.drawDelay) / timing.drawDuration : 1);
+        try { progressFrame = requestAnimationFrame(tick); } catch { complete(); }
+      };
+      delayTimer = setTimeout(complete, timing.duration);
+      if (step.edgeIds.length) {
+        try { progressFrame = requestAnimationFrame(tick); } catch { complete(); }
+      }
     });
   }
 
-  function fitBounds(bounds) {
+  function fitBounds(bounds, cameraDuration = 420) {
     fitTarget = { ...bounds };
-    updateView(fitGraphBounds(bounds, aspect()), true);
+    updateView(fitGraphBounds(bounds, aspect()), true, cameraDuration);
   }
 
-  function fit(ids) {
-    if (ids.some(id => nodeById.has(id))) fitBounds(graphBounds(positions, ids));
+  function fit(ids, cameraDuration = 420) {
+    if (ids.some(id => nodeById.has(id))) fitBounds(graphBounds(positions, ids), cameraDuration);
   }
 
   function showDetail(id) {
@@ -265,6 +293,9 @@ export function mountGraph(container, { bundle, onSelect = () => {}, onAsk = () 
       hitArea.addEventListener('click', event => { event.stopPropagation(); showEdge(edge); });
       hitArea.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); showEdge(edge); } });
       group.append(title, line, hitArea, label);
+      if (activeEdges.has(edge.edge_id)) group.append(svgNode('path', {
+        class: 'mks-edge-progress', d: route.d, pathLength: 1, 'aria-hidden': 'true',
+      }));
       edgeLayer.append(group);
     }
     for (const node of positions) {
@@ -326,6 +357,7 @@ export function mountGraph(container, { bundle, onSelect = () => {}, onAsk = () 
     stopReplay();
     const token = replayToken;
     replaying = true;
+    svg.dataset.replayState = 'playing';
     const plan = planEvidenceReplay(positions, edges, evidence);
     const requestedNodes = new Set(plan.nodeIds);
     highlightedNodes = new Set();
@@ -340,16 +372,20 @@ export function mountGraph(container, { bundle, onSelect = () => {}, onAsk = () 
     for (const step of plan.steps) {
       if (destroyed || token !== replayToken) return {completed:false};
       step.edgeIds.forEach(id => highlightedEdges.add(id)); step.nodeIds.forEach(id => highlightedNodes.add(id));
-      activeEdges = new Set(step.kind === 'relation' ? step.edgeIds : []);
+      activeEdges = new Set(step.edgeIds);
       activeNodes = new Set(step.kind === 'relation' ? step.nodeIds : []);
-      fit(step.nodeIds);
+      svg.dataset.replayKind = step.kind;
+      revealProgress(0);
+      fit(step.nodeIds, 650);
       render();
-      await waitStep();
+      await waitStep(step);
     }
     if (destroyed || token !== replayToken) return {completed:false};
     highlightedNodes = requestedNodes;
     highlightedEdges = new Set(evidenceRelations);
     replaying = false; activeNodes.clear(); activeEdges.clear();
+    svg.dataset.replayState = 'complete';
+    svg.dataset.replayKind = '';
     render();
     return {completed:true};
   }

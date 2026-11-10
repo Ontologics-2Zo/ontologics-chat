@@ -167,12 +167,26 @@ export function planEvidenceReplay(nodes, edges, evidence = {}) {
     const step = remaining.splice(connected < 0 ? 0 : connected, 1)[0];
     ordered.push(step); step.nodeIds.forEach(id => visited.add(id));
   }
-  steps.splice(0, steps.length, ...ordered);
+  // Keep the usual business path readable, but do not make a large evidence
+  // request wait minutes. Remaining real relationships stay in one visible batch.
+  const individual = ordered.slice(0, 14), remainder = ordered.slice(14);
+  steps.splice(0, steps.length, ...individual);
+  if (remainder.length) steps.push({ kind: 'relations',
+    nodeIds: [...new Set(remainder.flatMap(step => step.nodeIds))],
+    edgeIds: remainder.flatMap(step => step.edgeIds) });
   const stepped = new Set([...steps.flatMap(step => step.nodeIds), ...bulkNodes]);
   const extra = [...requested].filter(id => !stepped.has(id));
   if (extra.length) steps.push({ kind: 'nodes', nodeIds: extra, edgeIds: [] });
   if (bulkNodes.size) steps.push({ kind: 'bom', nodeIds: [...bulkNodes], edgeIds: bulkEdges });
   return { nodeIds: [...requested], edgeIds: [...resolved], steps };
+}
+
+/** Presentation duration only; these are never server/tool execution timings. */
+export function replayStepTiming(kind) {
+  if (kind === 'bom') return { duration: 2400, drawDelay: 650, drawDuration: 1400 };
+  if (kind === 'relations') return { duration: 2200, drawDelay: 650, drawDuration: 1200 };
+  if (kind === 'relation') return { duration: 1450, drawDelay: 250, drawDuration: 800 };
+  return { duration: 650, drawDelay: 0, drawDuration: 0 };
 }
 
 /** Each edge remains independent, including parallel, reverse and self relations. */

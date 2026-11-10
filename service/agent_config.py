@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 from dotenv import dotenv_values
 
 from service.errors import ServiceError
+from service.langsmith_exporter import LangSmithConfig, approved_endpoint
 
 
 @dataclass(frozen=True)
@@ -19,6 +20,10 @@ class AgentSettings:
     openrouter_api_key: str = field(default="", repr=False)
     openai_api_key: str = field(default="", repr=False)
     langsmith_api_key: str = field(default="", repr=False)
+    langsmith_enabled: bool = False
+    langsmith_endpoint: str = "https://api.smith.langchain.com"
+    langsmith_project_id: str = ""
+    langsmith_workspace_id: str | None = None
     langfuse_public_key: str = field(default="", repr=False)
     langfuse_secret_key: str = field(default="", repr=False)
     langfuse_base_url: str = "http://127.0.0.1:53000"
@@ -37,6 +42,8 @@ class AgentSettings:
                 "budget_id": self.budget_id,
                 "local_observability_enabled": self.langfuse_enabled,
                 "local_observability_content_enabled": self.langfuse_enabled and self.langfuse_content_enabled and self.observability_purpose == "interactive",
+                "remote_observability_enabled": self.langsmith_enabled,
+                "remote_observability_content_policy": "metadata_only",
                 "observability_purpose": self.observability_purpose}
 
 
@@ -96,10 +103,24 @@ def load_agent_settings(path: str | Path | None = None, *, environ: Mapping[str,
         raise ServiceError("INVALID_MODEL_BUDGET_ID", 503)
     if authorization and not re.fullmatch(r"[a-zA-Z0-9_.-]{1,100}", authorization):
         raise ServiceError("INVALID_MODEL_BUDGET_AUTHORIZATION", 503)
+    smith_enabled = value("ONTO_LANGSMITH_ENABLED", "false")
+    try:
+        if smith_enabled not in {"true", "false"}:
+            raise ValueError()
+        smith_endpoint = approved_endpoint(value("ONTO_LANGSMITH_ENDPOINT", "https://api.smith.langchain.com"))
+        if smith_enabled == "true":
+            LangSmithConfig(api_key=value("ONTO_LANGSMITH_API_KEY"),
+                project_id=value("ONTO_LANGSMITH_PROJECT_ID"), endpoint=smith_endpoint,
+                workspace_id=value("ONTO_LANGSMITH_WORKSPACE_ID") or None)
+    except ValueError:
+        raise ServiceError("INVALID_LANGSMITH_CONFIGURATION", 503) from None
     result = AgentSettings(mode=mode, model=model,
         openrouter_api_key=value("ONTO_OPENROUTER_API_KEY"),
         openai_api_key=value("ONTO_OPENAI_API_KEY"),
         langsmith_api_key=value("ONTO_LANGSMITH_API_KEY"),
+        langsmith_enabled=smith_enabled == "true", langsmith_endpoint=smith_endpoint,
+        langsmith_project_id=value("ONTO_LANGSMITH_PROJECT_ID"),
+        langsmith_workspace_id=value("ONTO_LANGSMITH_WORKSPACE_ID") or None,
         langfuse_public_key=value("LANGFUSE_PUBLIC_KEY"),
         langfuse_secret_key=value("LANGFUSE_SECRET_KEY"),
         langfuse_base_url=url.rstrip("/"), langfuse_enabled=enabled == "true",

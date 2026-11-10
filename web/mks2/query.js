@@ -143,6 +143,29 @@ function evidenceFlow(answer, suppliedEdges, labelFor, onEvidence, onReplay) {
   return result;
 }
 
+const bomPrerequisiteReasons = new Set(['REGISTERED_BOM_MISSING', 'NO_REVIEWED_APPLICABLE_ROWS',
+  'APPLICATION_REVIEW_INCOMPLETE', 'NO_APPLICABLE_COMPONENTS', 'TECHNICAL_REVIEW_UNCONFIRMED']);
+function applicableBomPrerequisite(answer) {
+  const value = answer.prerequisite;
+  return value && value.stage === 'APPLICABLE_BOM' && ['BLOCKED', 'PARTIAL', 'UNKNOWN'].includes(value.status)
+    && bomPrerequisiteReasons.has(value.reason) ? value : null;
+}
+
+function reviewBomReference(answer) {
+  const prerequisite = applicableBomPrerequisite(answer), action = prerequisite?.next_action;
+  const ref = prerequisite?.bom, requirements = answer.calculation?.material_requirements;
+  const snapshot = text(answer.meta?.snapshot_id) || text(answer.meta?.read_snapshot_id);
+  if (!prerequisite || prerequisite.reason === 'REGISTERED_BOM_MISSING'
+      || action?.type !== 'REVIEW_BOM_APPLICATION' || action.read_only !== true || action.requires_explicit_submission !== true
+      || !ref || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(text(ref.document_id))
+      || !Number.isSafeInteger(ref.version) || ref.version < 1 || !/^[0-9a-f]{64}$/.test(text(ref.payload_hash))
+      || requirements?.bom_id !== ref.document_id || requirements.bom_version !== ref.version || !snapshot) return null;
+  const matches = (Array.isArray(answer.evidence_refs) ? answer.evidence_refs : []).filter(value =>
+    value?.record_type === 'bom_registration' && value.bom_id === ref.document_id && value.bom_version === ref.version);
+  if (matches.length !== 1 || matches[0].payload_hash !== ref.payload_hash || matches[0].snapshot_id !== snapshot) return null;
+  return Object.freeze({ document_id: ref.document_id, version: ref.version, payload_hash: ref.payload_hash });
+}
+
 function answerParagraphs(answer, sections) {
   const main = text(answer.answer) || text(answer.answer?.text) || '확인된 답변이 없습니다.';
   // Split only after sentence punctuation followed by whitespace, or explicit
@@ -150,6 +173,14 @@ function answerParagraphs(answer, sections) {
   const paragraphs = main.split(/(?<=[.!?。！？])(?=\s+[^\s])|\n{2,}/u).filter(value => value.trim());
   // These strings are already labelled, same-snapshot server results. Do not
   // infer quantities from the question or calculate from reference fixtures.
+  // Suppress placeholder repetition only when no applicable calculation is
+  // available. A partial/technically-unconfirmed BOM can still have exact
+  // conditional quantities, which must remain in the main answer.
+  const prerequisite = applicableBomPrerequisite(answer);
+  if (prerequisite && (['REGISTERED_BOM_MISSING', 'NO_REVIEWED_APPLICABLE_ROWS', 'NO_APPLICABLE_COMPONENTS'].includes(prerequisite.reason)
+      || prerequisite.counts?.calculation_items === 0
+      || Array.isArray(prerequisite.selected_item_ids) && prerequisite.selected_item_ids.length > 0
+        && prerequisite.selected_calculation_items === 0)) return [...new Set(paragraphs)];
   for (const section of sections) {
     if (!['materials', 'inventory'].includes(section.id)) continue;
     for (const item of Array.isArray(section.items) ? section.items : []) {
@@ -182,24 +213,67 @@ function quantityRuns(paragraph, value, runs, segmenter) {
   append(value.slice(offset), false);
 }
 
+function evidencePreview(ids, suppliedNodes) {
+  // These are exact-snapshot server types, never guesses from an identifier or
+  // display label. Source rows remain available in the collapsed remainder.
+  const types = new Map((Array.isArray(suppliedNodes) ? suppliedNodes : [])
+    .filter(value => value && typeof value === 'object')
+    .map(value => [text(value.node_id) || text(value.id),
+      text(value.entity_ref?.entity_type || value.type || value.node_type).replace(/[^a-z0-9]/gi, '').toLowerCase()]));
+  const priority = new Map([
+    ['contractline', 0], ['deliveryround', 1], ['productionjob', 2],
+    ['configuration', 3], ['productconfiguration', 3], ['productmodel', 4],
+    ['bom', 5], ['bomsnapshot', 5], ['item', 6], ['internalitem', 6],
+    ['lot', 7], ['partlot', 7], ['reservation', 8], ['inventoryreservation', 8],
+    ['shipment', 9], ['arrival', 10], ['quotation', 11], ['supplierquote', 11],
+    ['purchaserequest', 12], ['purchaseorder', 13], ['customer', 14],
+    ['sourcedocument', 15], ['sourcesnapshot', 15], ['sourcerow', 100], ['bomline', 100],
+  ]);
+  if (ids.length <= 6) return { visible: ids, remaining: [] };
+  const visible = ids.map((id, index) => ({ id, index, rank: priority.get(types.get(id)) ?? 50 }))
+    .sort((a, b) => a.rank - b.rank || a.index - b.index).slice(0, 6).map(value => value.id);
+  const selected = new Set(visible);
+  return { visible, remaining: ids.filter(id => !selected.has(id)) };
+}
+
+function confirmedAnswerBlocks(answer, mode) {
+  const blocks = answer.answer_blocks;
+  if (mode !== 'workflow' || !Array.isArray(blocks) || !blocks.length || blocks.length > 12) return null;
+  const ids = new Set();
+  for (const block of blocks) {
+    if (!block || !text(block.id) || ids.has(block.id) || !text(block.title) || !text(block.tool)
+        || !['normal', 'attention'].includes(block.kind) || !Array.isArray(block.paragraphs)
+        || !block.paragraphs.length || !block.paragraphs.every(value => text(value).trim())) return null;
+    ids.add(block.id);
+  }
+  return blocks;
+}
+
 export function renderQueryAnswer(message, answer, {
-  evidenceIds = [], evidenceEdges = [], labelFor = id => id, onEvidence = () => {},
-  onReplay = () => {}, onCancel = () => {}, onOpenBom = () => {}, animate = false,
+  evidenceIds = [], evidenceEdges = [], evidenceNodes = [], labelFor = id => id, onEvidence = () => {},
+  onReplay = () => {}, onCancel = () => {}, onOpenBom = () => {}, onReviewBom = () => {}, animate = false,
+  mode = 'graph', beforeBody, onProgress = () => {},
 } = {}) {
   let disposed = false, typingComplete = false, frame = null, startedAt = null, settled = false;
+  let hookStarted = false, hookWaiting = false, hookVersion = 0, hookTimer = null, bodyStartedAt = null;
   let resolveFinished;
   const finished = new Promise(resolve => { resolveFinished = resolve; });
   const settle = value => { if (!settled) { settled = true; resolveFinished(value); } };
   const guard = callback => (...args) => { if (!disposed) return callback(...args); };
-  onEvidence = guard(onEvidence); onReplay = guard(onReplay); onCancel = guard(onCancel); onOpenBom = guard(onOpenBom);
+  const progress = () => { if (!disposed) { try { onProgress(); } catch { /* Scrolling is optional presentation only. */ } } };
+  onEvidence = guard(onEvidence); onReplay = guard(onReplay); onCancel = guard(onCancel); onOpenBom = guard(onOpenBom); onReviewBom = guard(onReviewBom);
   message.replaceChildren();
   const sectionData = (Array.isArray(answer.sections) ? answer.sections : []).filter(section => section && typeof section === 'object');
+  const blocks = confirmedAnswerBlocks(answer, mode), workflow = Boolean(blocks), cards = [];
+  message.dataset.answerLayout = workflow ? 'workflow' : 'graph';
   const delivery = Array.isArray(answer.intent) && answer.intent.includes('delivery') && answer.status !== 'NEEDS_CLARIFICATION';
   message.dataset.queryPresentation = delivery ? 'delivery' : 'standard';
   const steps = node('ol', 'trace-steps');
-  steps.setAttribute('aria-label', '완료된 원장 조회 과정');
-  for (const step of Array.isArray(answer.steps) ? answer.steps : []) if (text(step)) steps.append(node('li', 'done', step));
-  if (steps.children.length) message.append(steps);
+  steps.setAttribute('aria-label', '서버가 완료한 원장 조회 과정의 순차 표시');
+  steps.setAttribute('title', '서버가 완료한 조회 결과입니다. 표시 효과는 실제 처리 진행률이 아닙니다.');
+  steps.dataset.presentation = 'confirmed-results';
+  for (const step of Array.isArray(answer.steps) ? answer.steps : []) if (text(step)) steps.append(node('li', 'pending', step));
+  if (steps.children.length && !workflow) message.append(steps);
   const verdict = node('div', delivery ? 'query-verdict' : 'query-body');
   const summary = node('div', 'query-summary');
   if (text(answer.intent_label)) summary.append(node('span', 'query-intent', answer.intent_label));
@@ -211,42 +285,79 @@ export function renderQueryAnswer(message, answer, {
     const origin = text(value).toLowerCase();
     if (Object.hasOwn(origins, origin)) provenance.add(origins[origin][0]);
   }
-  const paragraphs = answerParagraphs(answer, sectionData), runs = [];
+  const paragraphs = workflow ? blocks.flatMap(block => block.paragraphs) : answerParagraphs(answer, sectionData), runs = [];
   const segmenter = typeof Intl.Segmenter === 'function' ? new Intl.Segmenter('ko', { granularity: 'grapheme' }) : null;
   const reduced = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches
     || globalThis.window?.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
   const typing = animate === true && !reduced && segmenter && typeof requestAnimationFrame === 'function' && typeof cancelAnimationFrame === 'function';
-  message.dataset.answerDisplayState = typing ? 'typing' : 'complete';
-  const visibleBody = node('div', 'query-prose');
-  if (typing) {
-    visibleBody.setAttribute('aria-hidden', 'true');
-    verdict.append(node('div', 'query-accessible-answer', paragraphs.join('\n\n')));
+  const stepNodes = workflow ? [] : [...steps.children];
+  const stepDuration = typing ? Math.min(2400, stepNodes.length * 600) : 0;
+  message.dataset.answerDisplayState = typing ? (workflow ? 'cards' : stepDuration ? 'steps' : 'typing') : 'complete';
+  const visibleBody = node('div', workflow ? 'query-prose query-workflow' : 'query-prose');
+  if (workflow) {
+    visibleBody.dataset.presentation = 'confirmed-results';
+    visibleBody.setAttribute('title', '서버가 확정한 답변을 순서대로 표시합니다. 실제 도구 실행 진행률이 아닙니다.');
   }
-  paragraphs.forEach((value, index) => {
+  if (typing) {
+    // One body only: a clipped full-text duplicate was still copied alongside
+    // the animated text. Defer this region's announcement until it is complete.
+    visibleBody.setAttribute('role', 'region');
+    visibleBody.setAttribute('aria-label', '조회 답변');
+    visibleBody.setAttribute('aria-live', 'polite');
+    visibleBody.setAttribute('aria-atomic', 'true');
+    visibleBody.setAttribute('aria-busy', 'true');
+    visibleBody.setAttribute('aria-hidden', 'true');
+  }
+  const appendParagraphs = (container, values) => values.forEach((value, index) => {
     const paragraph = node('p', index ? 'query-paragraph' : 'answer');
-    quantityRuns(paragraph, value, runs, segmenter); visibleBody.append(paragraph);
+    quantityRuns(paragraph, value, runs, segmenter); container.append(paragraph);
   });
+  if (workflow) {
+    blocks.forEach((block, index) => {
+      const card = node('section', `query-answer-card${block.kind === 'attention' ? ' query-answer-attention' : ''}`);
+      card.dataset.blockId = block.id; card.hidden = typing;
+      const heading = node('div', 'query-answer-heading');
+      heading.append(node('span', 'query-answer-number', String(index + 1)), node('h3', '', block.title), node('span', 'query-answer-tool', block.tool));
+      card.append(heading);
+      const start = runs.length; appendParagraphs(card, block.paragraphs);
+      cards.push({ element: card, runs: runs.slice(start), paragraphs: block.paragraphs });
+      visibleBody.append(card);
+    });
+  } else appendParagraphs(visibleBody, paragraphs);
   verdict.append(visibleBody);
   const typingControls = node('div', 'query-typing-controls'), typingStatus = node('span', 'query-typing-status');
   typingStatus.setAttribute('role', 'status'); typingStatus.setAttribute('aria-live', 'polite'); typingStatus.setAttribute('aria-atomic', 'true');
   const showAll = action('모두 보기', () => finish());
   typingControls.append(typingStatus, showAll); typingControls.hidden = !typing;
   verdict.append(typingControls);
+  const supplement = node('div', 'query-supplement');
+  supplement.hidden = typing;
   const requirements = answer.calculation?.material_requirements;
   if (requirements?.state === 'BLOCKED_BOM' && requirements.bom_id == null) {
     const register = action('BOM 원본 등록', onOpenBom, 'btn pri sm');
     register.dataset.queryAction = 'bom-register';
-    verdict.append(register);
+    supplement.append(register);
+  } else {
+    const reviewRef = reviewBomReference(answer);
+    if (reviewRef) {
+      const review = action('BOM 적용 검토', () => onReviewBom(reviewRef), 'btn pri sm');
+      review.dataset.queryAction = 'bom-review';
+      supplement.append(review);
+    }
   }
   const scope = [];
   if (status) scope.push(status.textContent);
   if (delivery && answer.calculation?.actual_delivery_feasibility === 'UNKNOWN') scope.push('납기 판단 보류');
   scope.push(...provenance);
   if (answer.status === 'UNKNOWN' || answer.status === 'PARTIAL') scope.push('미확인은 부족 0이나 제조·납기 확정을 뜻하지 않습니다.');
-  if (scope.length) verdict.append(node('p', 'note query-scope-note', [...new Set(scope)].join(' · ')));
+  if (scope.length) supplement.append(node('p', 'note query-scope-note', [...new Set(scope)].join(' · ')));
   message.append(verdict);
   const details = node('details', 'query-details');
   details.append(node('summary', '', '상세 근거·조건·조회 기준'));
+  if (workflow && steps.children.length) {
+    for (const step of steps.children) step.className = 'done';
+    details.append(steps);
+  }
   if (summary.children.length) details.append(summary);
   if (text(answer.conclusion)) details.append(node('p', 'query-conclusion', answer.conclusion));
   if (delivery) {
@@ -275,13 +386,23 @@ export function renderQueryAnswer(message, answer, {
   if (snapshot) basis.append(node('p', 'query-snapshot', `스냅샷 · ${snapshot}`));
   details.append(basis);
   const evidence = node('div', 'evidence-path');
-  const ids = [...new Set(evidenceIds.filter(id => typeof id === 'string'))];
+  const ids = [...new Set((Array.isArray(evidenceIds) ? evidenceIds : []).filter(id => typeof id === 'string' && id))];
   if (ids.length) evidence.append(node('span', 'query-evidence-count', `거친 노드 ${ids.length}개`));
-  ids.forEach(id => {
+  const preview = evidencePreview(ids, evidenceNodes);
+  const evidenceChip = id => {
     const chip = action(labelFor(id), () => onEvidence(id), 'chip');
-    evidence.append(chip);
-  });
-  message.append(evidence);
+    chip.dataset.evidenceId = id;
+    return chip;
+  };
+  preview.visible.forEach(id => evidence.append(evidenceChip(id)));
+  if (preview.remaining.length) {
+    const more = node('details', 'query-more-evidence');
+    const rest = node('div', 'query-evidence-remainder');
+    rest.append(...preview.remaining.map(evidenceChip));
+    more.append(node('summary', '', `전체 근거 ${ids.length}개 보기 · 나머지 ${preview.remaining.length}개`), rest);
+    evidence.append(more);
+  }
+  supplement.append(evidence);
 
   const footer = node('div', 'answer-footer');
   const liveCalls = answer.agent_execution?.live_calls ?? answer.model_calls ?? 0;
@@ -290,37 +411,98 @@ export function renderQueryAnswer(message, answer, {
   replayStatus.setAttribute('aria-live', 'polite');
   const cancel = action('재생 중단', guard(() => { playVersion++; onCancel(); setReplayState('cancelled'); }));
   cancel.hidden = true;
-  if (ids.length) footer.append(action('근거 다시 보기', onReplay));
-  footer.append(cancel, replayStatus); message.append(footer);
-  message.append(details);
+  if (ids.length) footer.append(action('그래프에서 보기', onReplay));
+  footer.append(cancel, replayStatus); supplement.append(footer, details);
+  message.append(supplement);
   let playVersion = 0;
 
   const total = runs.reduce((sum, run) => sum + run.characters.length, 0);
-  const duration = Math.min(8000, Math.max(300, total * 18));
-  function draw(count) {
+  const duration = Math.min(8000 - stepDuration, Math.max(300, total * 18));
+  let cardEnd = 500;
+  const cardTypingBudget = Math.max(300, 8000 - 500 - cards.length * 350);
+  for (const card of cards) {
+    card.total = card.runs.reduce((sum, run) => sum + run.characters.length, 0);
+    card.start = cardEnd; card.typingStart = card.start + 350;
+    card.end = card.typingStart + Math.min(Math.max(120, card.total * 18), cardTypingBudget * card.total / Math.max(1, total));
+    cardEnd = card.end;
+  }
+  let displayedStep = -1;
+  function drawSteps(active) {
+    if (disposed || displayedStep === active) return;
+    displayedStep = active;
+    stepNodes.forEach((step, index) => {
+      const state = index < active ? 'done' : index === active ? 'active' : 'pending';
+      step.className = state; step.dataset.displayState = state;
+      step.setAttribute('aria-current', state === 'active' ? 'step' : 'false');
+    });
+  }
+  function drawRuns(selectedRuns, count) {
     if (disposed) return;
-    for (const run of runs) {
+    for (const run of selectedRuns) {
       const shown = Math.min(run.characters.length, Math.max(0, count));
       if (shown !== run.shown) { run.span.textContent = shown === run.characters.length ? run.full : run.characters.slice(0, shown).join(''); run.shown = shown; }
       count -= run.characters.length;
     }
   }
+  const draw = count => drawRuns(runs, count);
+  function drawCards(elapsed) {
+    for (const card of cards) {
+      const active = elapsed >= card.start, done = elapsed >= card.end;
+      card.element.hidden = !active;
+      const state = done ? 'done' : active ? 'active' : 'pending';
+      if (card.element.dataset.displayState !== state) {
+        card.element.dataset.displayState = state;
+        card.element.setAttribute('aria-current', state === 'active' ? 'step' : 'false');
+      }
+      drawRuns(card.runs, done ? card.total : Math.floor(card.total * Math.max(0, (elapsed - card.typingStart) / (card.end - card.typingStart))));
+    }
+  }
   function clearFrame() {
     if (frame !== null) { const pending = frame; frame = null; try { cancelAnimationFrame(pending); } catch { /* Finish/dispose still release our callback ownership. */ } }
   }
+  function clearHook() {
+    hookVersion++; hookWaiting = false;
+    if (hookTimer !== null) { clearTimeout(hookTimer); hookTimer = null; }
+  }
+  function startHook() {
+    hookStarted = true; hookWaiting = true;
+    message.dataset.answerDisplayState = 'graph';
+    typingStatus.textContent = '근거 경로 표시 중';
+    progress();
+    const version = ++hookVersion;
+    const resume = () => {
+      if (disposed || typingComplete || version !== hookVersion || !hookWaiting) return;
+      clearHook(); bodyStartedAt = null;
+      try { frame = requestAnimationFrame(tick); } catch { finish(); }
+    };
+    // The host has a bounded replay; this local cap also prevents a lost hook
+    // from leaving a confirmed answer indefinitely hidden. Never call the hook
+    // synchronously while the host is assigning the returned presentation.
+    hookTimer = setTimeout(resume, 30000);
+    Promise.resolve().then(() => {
+      if (!disposed && !typingComplete && version === hookVersion) return beforeBody();
+    }).then(resume, resume);
+  }
   function finish() {
     if (disposed || typingComplete) return;
-    clearFrame();
-    try { draw(total); }
+    clearFrame(); clearHook();
+    drawSteps(stepNodes.length);
+    try { if (workflow) drawCards(Infinity); else draw(total); }
     catch { visibleBody.replaceChildren(...paragraphs.map((value, index) => node('p', index ? 'query-paragraph' : 'answer', value))); }
     typingComplete = true; showAll.hidden = true;
     message.dataset.answerDisplayState = 'complete';
-    if (typing) typingStatus.textContent = '답변 표시 완료';
+    if (typing) {
+      visibleBody.setAttribute('aria-hidden', 'false');
+      visibleBody.setAttribute('aria-busy', 'false');
+      typingStatus.textContent = '답변 표시 완료';
+    }
+    supplement.hidden = false;
+    progress();
     settle({ completed: true });
   }
   function dispose() {
     if (disposed) return;
-    clearFrame(); disposed = true; playVersion++; settle({ completed: false, disposed: true });
+    clearFrame(); clearHook(); disposed = true; playVersion++; settle({ completed: false, disposed: true });
   }
   function tick(time) {
     frame = null;
@@ -328,13 +510,42 @@ export function renderQueryAnswer(message, answer, {
     try {
       if (!Number.isFinite(time)) { finish(); return; }
       if (startedAt === null) startedAt = time;
-      const count = Math.floor(total * Math.min(1, Math.max(0, (time - startedAt) / duration)));
+      const elapsed = Math.max(0, time - startedAt);
+      if (workflow) {
+        drawCards(elapsed);
+        progress();
+        if (elapsed >= cardEnd) finish(); else frame = requestAnimationFrame(tick);
+        return;
+      }
+      if (elapsed < stepDuration) {
+        drawSteps(Math.min(stepNodes.length - 1, Math.floor(elapsed / (stepDuration / stepNodes.length))));
+        progress();
+        frame = requestAnimationFrame(tick); return;
+      }
+      drawSteps(stepNodes.length);
+      if (mode === 'graph' && typeof beforeBody === 'function') {
+        if (!hookStarted) { startHook(); return; }
+        if (hookWaiting) return;
+        if (bodyStartedAt === null) bodyStartedAt = time;
+      }
+      if (message.dataset.answerDisplayState !== 'typing') {
+        message.dataset.answerDisplayState = 'typing';
+        typingStatus.textContent = '서버에서 확인된 답변 표시 중';
+      }
+      const bodyElapsed = hookStarted ? time - bodyStartedAt : elapsed - stepDuration;
+      const count = Math.floor(total * Math.min(1, Math.max(0, bodyElapsed / duration)));
       draw(count);
+      progress();
       if (count >= total) finish(); else frame = requestAnimationFrame(tick);
     } catch { finish(); }
   }
   if (typing && total) {
-    try { draw(0); typingStatus.textContent = '서버에서 확인된 답변 표시 중'; frame = requestAnimationFrame(tick); }
+    try {
+      draw(0); drawSteps(stepDuration ? 0 : stepNodes.length);
+      if (workflow) drawCards(0);
+      typingStatus.textContent = workflow || stepDuration ? '확인한 조회 과정 표시 중' : '서버에서 확인된 답변 표시 중';
+      frame = requestAnimationFrame(tick);
+    }
     catch { finish(); }
   } else finish();
 
