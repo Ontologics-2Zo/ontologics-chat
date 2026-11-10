@@ -108,7 +108,10 @@ export function supplyProgress(documents, snapshot, identity, editor = null) {
               { label: '반려', action: 'reject', disabled: !can('document.review') }];
     }
   } else {
-    const create = !can('document.create');
+    // In the demo accounts only the reviewer can approve. If it writes the next document,
+    // no other account can approve it, so creation stays with the author account.
+    const approver = can('document.approve');
+    const create = !can('document.create') || approver;
     const stages = [];
     if (!po) { status = '발주 작성 필요'; stages.push({ label: '내부 발주 초안', action: 'new-po', target: pr.id, disabled: create || !(pr.remaining_qty > 0) }); }
     else if ((po.confirmed_qty || 0) < po.quantity && !receipt) { status = '입하 예정'; tone = 'info'; stages.push({ label: '공급확인 · 모의', action: 'new-confirmation', target: po.id, disabled: create }); }
@@ -128,6 +131,7 @@ export function supplyProgress(documents, snapshot, identity, editor = null) {
       }
     }
     next = stages.map((stage, index) => ({ ...stage, primary: index === 0 }));
+    if (approver && stages.length) notes.unshift('다음 문서는 작성자 계정이 만듭니다. 승인 권한이 있는 계정이 작성하면 승인할 다른 계정이 없습니다. 상단에서 작성자 계정으로 바꿔 주세요.');
   }
   const kindLabel = { PR: '구매 요청', PO: '내부 발주', SUPPLY_CONFIRMATION: '공급확인 · 모의', RECEIPT: '입하', IQC: '수입검사',
     PRODUCTION: '생산 실적', FG_RECEIPT: '완성품 입고', SHIPMENT: '출하', ARRIVAL: '고객 도착' };
@@ -308,6 +312,7 @@ export function mountProcurementFlow(container, { snapshot, api, getIdentity = (
   async function startPurchaseRequest(quoteId, basis = 'planned') {
     await loaded;
     if (destroyed || busy || needsRefresh || !can('document.create')) return false;
+    if (can('document.approve')) return 'APPROVER_CANNOT_AUTHOR';
     const choice = choices.find(row => row.quote_id === quoteId && row.material_basis === basis);
     if (!choice || choice.expired || !choice.calculation?.recommended_qty || choice.calculation.quantity_condition === 'NOT_MET') return false;
     start('PR', { quote_id: choice.quote_id, quantity: choice.calculation.recommended_qty, material_basis: choice.material_basis, acknowledge_partial_bom: false });

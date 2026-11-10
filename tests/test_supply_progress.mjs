@@ -99,3 +99,10 @@ test('a request written by the approver says how to continue, and the author can
   assert.deepEqual(actions(asAuthor), ['(승인)', 'reject']);
   assert.match(asAuthor.notes[0], /승인 권한이 없습니다/);
 });
+
+test('the approving account does not get the next creation step', () => {
+  const asReviewer = supplyProgress([pr('POSTED')], snapshot(0), reviewer);
+  assert.equal(asReviewer.next[0].action, 'new-po'); assert.equal(asReviewer.next[0].disabled, true);
+  assert.match(asReviewer.notes[0], /작성자 계정이 만듭니다/);
+  assert.equal(supplyProgress([pr('POSTED')], snapshot(0), author).next[0].disabled, false);
+});
