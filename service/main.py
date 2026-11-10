@@ -261,6 +261,8 @@ def create_app(db, *, private_root: str, origin="http://127.0.0.1:8870", dev_mod
     from service.reservations import ReservationCreate, ReservationService
     reservations=ReservationService(db,identity)
     app.state.reservations=reservations
+    from service import demo_cue
+    app.state.demo_cue=demo_cue.DemoReservationCue(db,identity,reservations) if demo_cue.enabled(dev_mode) else None
 
     @app.get("/api/mks2/inventory/reservations")
     def list_reservations(request:Request):
@@ -349,6 +351,8 @@ def create_app(db, *, private_root: str, origin="http://127.0.0.1:8870", dev_mod
     def query(request:Request,body:Query):
         actor=principal(request,write=True);payload=ledger.read(actor);ctx=context(actor,payload)
         result=gateway.execute("ledger.query",body.model_dump(),principal=actor,context=ctx,budget=ExecutionBudget(ctx.execution_id,max_tool_calls=1))
+        if app.state.demo_cue is not None and "delivery" in (result.data.get("intent") or []):
+            app.state.demo_cue.delivery_answered(actor.company_id)
         return {**result.data,"execution_id":ctx.execution_id,"tool_name":result.tool_name,"tool_version":result.tool_version}
 
     @app.get("/api/mks2/events")

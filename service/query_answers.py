@@ -11,7 +11,7 @@ from decimal import Decimal
 from service.materials import requirements_for_snapshot
 from service.procurement import quote_calculation
 from service.reservations import reservation_impacts
-from service.query_contracts import (PrerequisiteCounts, QueryAnswerBlock, QueryBomReference,
+from service.query_contracts import (PrerequisiteCounts, QueryAnswerBlock, QueryBomReference, QueryQuoteCard,
                                      QueryNextAction, QueryPrerequisite)
 from service.query_intents import interpret_question
 
@@ -136,62 +136,136 @@ def _prerequisite_steps(view, prerequisite):
             next_step]
 
 
-def _delivery_blocks(view, plan, sections, prerequisite, requirements):
-    """Reference-style delivery presentation from already composed query facts.
+def _ratio_text(numerator, denominator):
+    value = (Decimal(numerator) * 100 / Decimal(denominator)).quantize(Decimal("0.01"))
+    return format(value.normalize(), "f")
 
-    All three cards belong to the same ledger.query. They do not claim extra
-    tool calls, completed manufacturing review, inventory or scheduling work.
+
+def _designators(requirements, row):
+    by_id = {entry["row_id"]: entry for entry in requirements["rows"]}
+    names = [name for row_id in row["row_ids"] for name in (by_id.get(row_id, {}).get("designators") or [])]
+    if not names:
+        return "위치 미확인"
+    if len(names) > 3 and all(name[:1] == names[0][:1] for name in names):
+        # R10, R11, R12, R13 -> R10–R13 only when the run is contiguous.
+        digits = [name[1:] for name in names]
+        if all(d.isdigit() for d in digits) and [int(d) for d in digits] == list(range(int(digits[0]), int(digits[0]) + len(digits))):
+            return f"{names[0]}–{names[-1]}"
+    return "·".join(names)
+
+
+def _quote_cards(view, item, planned_shortage):
+    cards = []
+    for row in _quote_rows(view, item["item_id"], item["unit"]):
+        entry = _quote_view(row, planned_shortage)
+        c = entry["calculation"]
+        cards.append(QueryQuoteCard(
+            quote_id=entry["quote_id"], quote_ref=entry["quote_ref"], supplier_id=entry["supplier_id"],
+            material_basis="planned", quantity_condition=c["quantity_condition"],
+            recommended_qty=c.get("recommended_qty"), margin_qty=c.get("margin_qty"),
+            supply_limit_qty=entry["supply_limit_qty"], moq=entry["moq"], order_multiple=entry["order_multiple"],
+            unit_price=None if entry["unit_price"] is None else str(entry["unit_price"]), currency=entry["currency"],
+            freight=None if entry["freight"] is None else str(entry["freight"]), total=c.get("total"),
+            lead_business_days=entry["lead_business_days"], valid_until=entry["valid_until"],
+            reason=_quote_sentence(entry, item["unit"])))
+    return cards
+
+
+def _delivery_blocks(view, plan, sections, prerequisite, requirements):
+    """Delivery answer in the shared MK-S2 order, filled only from this query.
+
+    Cards: what the remaining quantity means → defect/yield basis → material
+    shortage → schedule (assumption, no ledger evidence) → quotes for a human
+    choice → verdict. All cards belong to the same ledger.query; their labels
+    name the data behind each card, not separate tool executions.
     """
-    by_id = {row["id"]: row for row in sections}
-    ledger = {row["label"]: row for row in by_id["ledger"]["items"]}
-    balance = [f"합성 기초 원장 기준 남은 고객 도착 약속은 {ledger['남은 고객 도착 약속']['value']}이고, 추가 양품 목표는 {ledger['추가 양품 목표']['value']}입니다.",
-               f"이미 생산됐으나 고객에게 도착하지 않은 물량은 {ledger['이미 생산됐으나 미도착']['value']}입니다. 남은 도착 약속 전체가 신규 생산량은 아닙니다."]
-    if plan.explicit_production or plan.is_what_if:
-        production = {row["label"]: row["value"] for row in by_id["production"]["items"]}
-        balance.append(f"계산 양품 목표 {production['계산 양품 목표']}에 수율 {production['계획 수율']}를 가정한 투입은 {production['계획 투입']}입니다. 가정 계산이며 양품을 보장하지 않습니다.")
-    application = [f"납품 회차 {view['summary']['delivery_round_id']} → 제품 구성 {prerequisite.configuration_id}."]
+    s, basis = view["summary"], requirements["basis"]
+    remaining, production = number(s["promise_remaining_qty"]), number(s["production_remaining_qty"])
+    due = s.get("arrival_due_date")
+    blocks = [QueryAnswerBlock(id="delivery_balance", title=f"“{remaining}대”가 무엇인지 확인", kind="normal", paragraphs=[
+        f"{remaining}대는 남은 생산이 아니라 남은 약속(고객 미도착)입니다. 회차 {s['delivery_round_id']}, 도착기한 {due or '미확인'}.",
+        f"{remaining}대 중 {number(s['already_produced_qty'])}대는 이미 생산(입고 대기 {number(s['good_not_received_qty'])} · 창고 {number(s['warehouse_remaining_qty'])} · 운송 {number(s['transit_qty'])})했고, 더 생산할 수량은 {production}대입니다."])]
+    judged = (s.get("good_qty") or 0) + (s.get("defect_qty") or 0)
+    yield_text = percentage(basis["plan_yield"])
+    production_lines = ([f"판정된 {number(judged)}대 중 불량 {number(s['defect_qty'])}대 → {_ratio_text(s['defect_qty'], judged)}% (판정대기 {number(s.get('pending_judgement_qty') or 0)}대 제외)."]
+                        if judged else ["판정 실적이 없어 불량률을 계산하지 않았습니다."])
+    production_lines.append(f"양품 {number(basis['production_remaining_qty'])}대에 계획 수율 {yield_text}%를 가정하면 {number(basis['planned_input_qty'])}대 투입이 필요합니다. 가정 계산이며 양품을 보장하지 않습니다.")
+    blocks.append(QueryAnswerBlock(id="defect_basis", title="불량률 계산", tool="원장 계산 · 생산실적", kind="normal", paragraphs=production_lines))
+
+    items = [row for row in requirements["items"] if not prerequisite.selected_item_ids or row["item_id"] in prerequisite.selected_item_ids]
+    shortage_items = [row for row in items if row.get("planned_shortage_qty") not in (None, "0")]
+    focus = max(shortage_items, key=lambda row: Decimal(row["planned_shortage_qty"])) if shortage_items else None
+    missing = list(view.get("delivery_unknowns") or [])
     if prerequisite.bom is None:
-        application.append("이 구성에 반영된 BOM 원본이 없어 적용 품목과 소요·부족을 확인할 수 없습니다.")
+        blocks.append(QueryAnswerBlock(id="bom_missing", title="BOM 전개 불가", kind="attention", action="REGISTER_BOM", paragraphs=[
+            f"{s.get('production_job_id') or '생산 작업'}의 조립 구성 {prerequisite.configuration_id}에 반영된 BOM이 없어 BOM 라인이 없습니다.",
+            "어떤 부품이 몇 개 필요한지 근거가 없어 부족을 추정하지 않고 여기서 멈춥니다. BOM 원본을 등록하고 검토·승인·반영한 뒤 다시 물어보세요."]))
+        verdict_title = "BOM 미등록 · 납기 판단 보류"
+        verdict_text = "자재 소요를 계산할 근거가 없어 도착기한 충족 여부를 판단하지 않습니다."
+    elif items:
+        rows, alerts = [], []
+        # Short items first, largest planned shortage first; the rest keep their order.
+        ordered = sorted(items, key=lambda row: -Decimal(row["planned_shortage_qty"] or "0"))
+        for index, row in enumerate(ordered):
+            short = row.get("planned_shortage_qty")
+            rows.append([_designators(requirements, row), row["item_id"], number(row["planned_required_qty"]),
+                         number(row["available_qty"]), "미확인" if short is None else ("—" if short == "0" else number(short))])
+            if short not in (None, "0"):
+                alerts.append([index, 4])
+        notes = []
+        if focus:
+            reserved = sum(entry.get("reserved_other_qty") or 0 for entry in view["inventory"] if entry["item_id"] == focus["item_id"])
+            notes.append(f"{focus['item_id']}은 다른 수요 예약 {number(reserved)}개를 빼면 가용 {number(focus['available_qty'])}개 → {number(focus['planned_shortage_qty'])}개 부족 (수율 미반영 시 {number(focus['shortage_qty'])}개).")
+        else:
+            notes.append("계산한 품목에는 계획 투입 기준 부족이 없습니다.")
+        substitutes = [row for row in view.get("substitutes") or [] if focus and row.get("original_item_id") == focus["item_id"]
+                       and row.get("status") != "APPROVED"]
+        if substitutes:
+            notes.append(f"대체 후보 {', '.join(row['candidate_item_id'] for row in substitutes)}은 검토 전이라 확보량에서 제외했습니다.")
+        stock_origin = inventory_origin([entry for entry in view["inventory"] if any(entry["item_id"] == row["item_id"] for row in items)])
+        stock_label = {SYNTHETIC: "합성 기초 원장", "development_workflow": "개발 원장 사건",
+                       "mixed_sources": "합성 기초 원장과 개발 원장 사건(입하·검사·예약)", "unknown": "출처 미확인"}[stock_origin]
+        mapping = "시연 가정" if all(row["conditional"] for row in items) else "검토된 적용 판단과 시연 가정"
+        scope = f"원문 {number(requirements['row_count'])}행 중 적용 판단 {number(requirements['applicable_count'])}행만 계산했습니다."
+        if requirements["unresolved_count"]:
+            scope += f" 적용 미확인 {number(requirements['unresolved_count'])}행은 부족 0으로 보지 않습니다."
+        notes.append(f"{scope} 계획 투입 {number(basis['planned_input_qty'])}대 기준이며 적용 매핑·수량은 {mapping}, 재고는 {stock_label}입니다.")
+        change = {row["id"]: row for row in sections}.get("material_change")
+        if change:
+            entries = {row["label"]: row for row in change["items"]}
+            event = entries["변경 사건"]
+            available = next(row for label, row in entries.items() if label.endswith("가용"))
+            notes.append(f"자재 조건 변경: {event['value']} 이후 {available['label']} {available['value']}, 계획 투입 기준 부족 {entries['계획 투입 기준 부족']['value']}입니다. 기존 확보안은 재검토가 필요하며 공급사·초안은 자동으로 바뀌지 않습니다.")
+        blocks.append(QueryAnswerBlock(id="material_shortage", title="부품 부족 예측", tool="원장 계산 · BOM 전개", kind="normal",
+            paragraphs=notes, table={"columns": ["위치", "품목", "필요", "가용", "부족"], "rows": rows, "alert_cells": alerts}))
+        blocks.append(QueryAnswerBlock(id="schedule_backward", title="일정 역산 · 가정 시나리오", tool="시연 가정 · 일정", kind="assumption", paragraphs=[
+            f"도착 {due or '미확인'} ← 운송 (근거 없음) ← 출하 준비 (근거 없음) ← 생산 {number(basis['planned_input_qty'])}대 (생산능력 근거 없음) ← 수입검사 (근거 없음) → 부품 입하 필요일 계산 불가.",
+            "원장에 생산능력·작업 달력·검사·출하·운송 기간 근거가 없어 일정을 역산하지 않았습니다. 이 카드는 가정 시나리오의 틀이며 원장 근거가 아닙니다."]))
+        if focus:
+            quotes = _quote_cards(view, focus, focus["planned_shortage_qty"])
+            if quotes:
+                blocks.append(QueryAnswerBlock(id="supply_candidates", title="공급 후보 비교", tool="원장 조회 · 견적 → 공급사", kind="normal", quotes=quotes, paragraphs=[
+                    f"{focus['item_id']}에 연결된 유효 견적 {len(quotes)}건입니다. 가장 싼 곳을 자동으로 고르지 않습니다. 아래에서 사람이 선택하세요.",
+                    "수량 조건만 판정했습니다. 납기·비용·공급 확약은 별도이며 공급사에 보내지 않습니다."]))
+            verdict_title = f"자재 부족 {number(focus['planned_shortage_qty'])}개 · 납기 판단 보류"
+            verdict_text = f"{focus['item_id']}이 {number(focus['planned_shortage_qty'])}개 부족합니다. 확보 경로를 정하고 생산·검사·출하·운송 근거가 원장에 들어오기 전에는 도착기한 충족 여부를 판단하지 않습니다."
+        else:
+            verdict_title = "계산 품목 부족 없음 · 납기 판단 보류"
+            verdict_text = "계산한 품목은 부족이 없지만 적용 미확인 행과 생산·검사·출하·운송 근거가 없어 도착기한 충족 여부를 판단하지 않습니다."
     else:
-        source = {row["label"]: row["value"] for row in by_id["source"]["items"]}
-        application.append(f"등록 원문은 {source['원본 전체 행']}이며, 적용 판단 / 미확인은 {source['적용 판단 / 미확인']}입니다. 원문 등록과 제조 적용 검수는 별개입니다.")
-        if prerequisite.reason == "NO_REVIEWED_APPLICABLE_ROWS":
-            application.append("검토된 적용 행이 없어 사내 품목별 소요·부족 계산을 보류했습니다.")
-        elif prerequisite.reason == "NO_APPLICABLE_COMPONENTS":
-            application.append("현재 검토 결과는 비실장·설정 등 생산 적용 행이 없는 상태입니다. 원본이 없다는 뜻은 아닙니다.")
-        selected_available = prerequisite.selected_calculation_items
-        if prerequisite.counts.calculation_items and selected_available != 0:
-            # Reuse exact Domain-rendered quantities and provenance; never
-            # recompute or replace partial values with a generic review card.
-            if plan.explicit_production or plan.is_what_if:
-                for row in by_id["materials"]["items"]:
-                    application.append(f"{row['label']}: {row['value']}. {row['detail']}")
-            else:
-                for row in requirements["items"]:
-                    if prerequisite.selected_item_ids and row["item_id"] not in prerequisite.selected_item_ids:
-                        continue
-                    stock_origin = inventory_origin([stock for stock in view["inventory"] if stock["item_id"] == row["item_id"]])
-                    stock_label = {SYNTHETIC: "합성 기초 원장", "development_workflow": "개발 원장 사건",
-                                   "mixed_sources": "합성 기초 원장과 개발 원장 사건(입하·검사·예약)", "unknown": "출처 미확인"}[stock_origin]
-                    application.append(f"{row['item_id']}: 소요 {number(row['required_qty'])} {row['unit']} · 가용 {number(row['available_qty'])} {row['unit']} · 부족 {number(row['shortage_qty'])} {row['unit']}. 적용 매핑·수량은 {'시연 가정' if row['conditional'] else '검토된 적용 판단'}, 재고는 {stock_label}입니다.")
-        elif prerequisite.selected_item_ids and selected_available == 0:
-            application.append("선택 품목은 현재 BOM의 계산 가능한 품목에 연결되지 않았습니다. 다른 적용 품목의 계산과 구분합니다.")
-    change = by_id.get("material_change")
-    if change:
-        # The committed reservation changed the material basis of this answer.
-        entries = {row["label"]: row for row in change["items"]}
-        event, shortage = entries["변경 사건"], next(row for label, row in entries.items() if label == "계획 투입 기준 부족")
-        available = next(row for label, row in entries.items() if label.endswith("가용"))
-        application.append(f"자재 조건 변경: {event['value']}({event['detail']}) 이후 {available['label']} {available['value']}, 계획 투입 기준 부족 {shortage['value']}입니다. 기존 확보안은 재검토가 필요하며 공급사·초안은 자동으로 바뀌지 않습니다.")
-    _, action = _prerequisite_text(prerequisite)
-    next_steps = [action, "적용 BOM·실재고·조달과 생산·검사·운송 근거가 갖춰지기 전에는 실제 납기 판단을 보류합니다."]
-    if prerequisite.bom:
-        next_steps.insert(1, "반영 문서는 보존합니다. 작성 중인 초안을 선택하거나 보관 원본으로 새 검토 초안을 접수한 뒤 검토·독립 승인·반영 절차로 진행해 주세요.")
-    return [block.model_dump(mode="json") for block in (
-        QueryAnswerBlock(id="delivery_balance", title="남은 약속과 추가 생산", paragraphs=balance, kind="normal"),
-        QueryAnswerBlock(id="bom_application", title="제품 구성과 적용 BOM 확인", paragraphs=application, kind="normal"),
-        QueryAnswerBlock(id="bom_next_action", title=prerequisite.next_action.label + " 필요", paragraphs=next_steps, kind="attention"),
-    )]
+        first, action = _prerequisite_text(prerequisite)
+        blocks.append(QueryAnswerBlock(id="bom_next_action", title=prerequisite.next_action.label + " 필요", kind="attention",
+                                       action=prerequisite.next_action.type, paragraphs=[first, action]))
+        verdict_title = "자재 소요 미확인 · 납기 판단 보류"
+        verdict_text = "계산 가능한 적용 품목이 없어 도착기한 충족 여부를 판단하지 않습니다."
+    bullets = []
+    if prerequisite.bom is not None and requirements["unresolved_count"]:
+        bullets.append(f"BOM 적용 미확인 {number(requirements['unresolved_count'])}행")
+    bullets += ["생산능력·작업 달력 근거 없음", "수입검사·출하 준비 기간 근거 없음", "운송·고객 수령 근거 없음",
+                "견적은 수량 조건만 확인 · 공급 확약 없음"] + missing
+    blocks.append(QueryAnswerBlock(id="verdict", title=verdict_title, tool="판정", kind="verdict",
+                                   paragraphs=[verdict_text, "조건부 판단입니다. 새 납기 약속으로 저장하지 않습니다."], bullets=bullets))
+    return [block.model_dump(mode="json") for block in blocks]
 
 
 def _result(view, plan, *, answer, status="ANSWERED", sections=(), kinds=(),
@@ -710,7 +784,16 @@ def answer_query(question, view, ontology, *, context_entity_id=None):
         first, action = _prerequisite_text(prerequisite)
         blocked_calculation = prerequisite.counts.calculation_items == 0 or (
             bool(selected) and prerequisite.selected_calculation_items == 0)
-        if "delivery" in intents or blocked_calculation:
+        if "delivery" in intents and prerequisite.bom is not None and not blocked_calculation:
+            # Calculable items exist: lead with the computed shortage, keep the review boundary.
+            scoped = [row for row in req["items"] if not selected or row["item_id"] in selected]
+            short = [row for row in scoped if row.get("planned_shortage_qty") not in (None, "0")]
+            focus = max(short, key=lambda row: Decimal(row["planned_shortage_qty"])) if short else None
+            answers = [f"남은 고객 도착 약속은 {number(s['promise_remaining_qty'])}대이고, 추가 양품 목표는 {number(s['production_remaining_qty'])}대입니다.",
+                       (f"계획 투입 {basis['planned_input_qty']}대 기준 {focus['item_id']}이 {number(focus['planned_shortage_qty'])}개 부족합니다."
+                        if focus else f"계산한 {len(scoped)}개 품목은 계획 투입 {basis['planned_input_qty']}대 기준 부족이 없습니다."),
+                       f"BOM 적용 미확인 {number(req['unresolved_count'])}행은 부족 0으로 보지 않습니다." if req["unresolved_count"] else first]
+        elif "delivery" in intents or blocked_calculation:
             answers = [first, action,
                 f"합성 기초 원장 기준 남은 고객 도착 약속은 {number(s['promise_remaining_qty'])}대이고, 추가 양품 목표는 {number(s['production_remaining_qty'])}대입니다."]
         # A deadline question may acquire a production intent merely because

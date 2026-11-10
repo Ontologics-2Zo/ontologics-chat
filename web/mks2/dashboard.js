@@ -372,5 +372,6 @@ export function mountDashboard(container, { snapshot, onSelect = () => {}, onAsk
   const supplyRoot = container.querySelector?.('[data-region="procurement"]');
   if (supplyRoot) procurement = mountProcurementFlow(supplyRoot, { snapshot, api, getIdentity, onPosted, onRefresh });
   return { select(id) { selected = id; container.querySelector('[data-region="rounds"]').innerHTML = roundContent(); }, openBom,
+    startPurchaseRequest: quote => procurement ? procurement.startPurchaseRequest(quote.quote_id, quote.material_basis) : Promise.resolve(false),
     destroy() { bom.destroy(); procurement?.destroy(); abort.abort(); container.replaceChildren(); container.classList.remove('mk-dashboard'); } };
 }

@@ -92,7 +92,11 @@ def mount_procurement_api(app, *, db, identity, ledger, gateway, principal, cont
 
     @app.post("/api/mks2/procurement/documents")
     def create(request: Request, body: ProcurementCreate):
-        return execute(request, "create", body)
+        result = execute(request, "create", body)
+        cue = getattr(app.state, "demo_cue", None)
+        if cue is not None and isinstance(result, dict) and result.get("kind") == "PR":
+            cue.purchase_request_drafted(result.get("company_id") or principal(request).company_id)
+        return result
 
     @app.post("/api/mks2/procurement/documents/{document_id}/revise")
     def revise(request: Request, document_id: str, body: ProcurementRevise):

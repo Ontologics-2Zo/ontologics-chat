@@ -387,6 +387,13 @@ async function runQuery(name, question) {
         settleAnswer(panel); cancelPendingReplay();
         dashboard.openBom(4, reference.document_id, { ...reference });
       }),
+      onChooseQuote: quote => evidenceAtVersion(() => {
+        settleAnswer(panel); cancelPendingReplay();
+        dashboard.startPurchaseRequest(quote).then(opened => {
+          if (!opened) setStatus([name], ['이 견적으로 구매 요청 초안을 열 수 없습니다. 권한·견적 상태를 확인해 주세요.']);
+          else location.hash = '#dashboard';
+        });
+      }),
       onReplay: () => replayEvidence(true),
       onCancel: () => { if (activeReplay === replayGeneration) cancelPendingReplay(); },
     });
@@ -544,12 +551,22 @@ function announceApplied(events, startedAt) {
       ` 관련 재고 변경 · 다른 주문 ${impact.demand_ref} 예약 +${impact.quantity}${unit} · 가용 ${impact.available_before}→${impact.available_after} · `
         + (grew ? `계획 부족 ${impact.planned_shortage_before}→${impact.planned_shortage_after}${unit} · 기존 확보안 재검토 필요` : `계획 부족 ${impact.planned_shortage_after}${unit} 유지`)
         + ` · 원장 v${impact.ledger_version} `,
-      button('원장 사건 보기', () => focusEvidence(impact.entity_id), 'btn sm'),
+      button('변경 관계 보기', () => focusEvidence(impact.entity_id), 'btn sm'),
       ...(grew ? names.map(name => button(question, () => fillQuestion(question, name), 'suggestion')) : [])].filter(Boolean));
+    if (grew) markEarlierAnswers(names, impact.ledger_version);
     for (const name of names) {
       panels[name].status.dataset.eventId = event.event_id;
       if (latency !== null) panels[name].status.dataset.latencyMs = String(latency);
       panels[name].status.dataset.applyMs = String(Date.now() - startedAt);
+    }
+  }
+}
+// Earlier answers stay exactly as answered; only a version tag says they need a re-check.
+function markEarlierAnswers(names, version) {
+  for (const name of names) {
+    for (const message of panels[name].messages.querySelectorAll('[data-ledger-version]')) {
+      if (Number(message.dataset.ledgerVersion) >= version || message.querySelector('.mk-answer-stale')) continue;
+      message.prepend(element('div', 'mk-answer-stale', `원장 v${message.dataset.ledgerVersion} 기준 답변 · 재검토 필요`));
     }
   }
 }

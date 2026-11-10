@@ -236,13 +236,51 @@ function evidencePreview(ids, suppliedNodes) {
   return { visible, remaining: ids.filter(id => !selected.has(id)) };
 }
 
+const quoteConditions = { MET: ['수량 충족', 'ok'], NOT_MET: ['수량 미충족', 'bad'], UNKNOWN: ['판단 보류 · 공급한도 미확인', 'warn'] };
+function answerTable(table) {
+  if (!table || !Array.isArray(table.columns) || !Array.isArray(table.rows)) return null;
+  const alerts = new Set((Array.isArray(table.alert_cells) ? table.alert_cells : []).map(cell => `${cell?.[0]}:${cell?.[1]}`));
+  const element = node('table', 'query-mini-table');
+  const head = node('tr'); table.columns.forEach(column => head.append(node('th', '', text(column))));
+  const thead = node('thead'); thead.append(head);
+  const body = node('tbody');
+  table.rows.forEach((row, r) => {
+    const tr = node('tr');
+    (Array.isArray(row) ? row : []).forEach((cell, c) => tr.append(node('td', `${c >= 2 ? 'n' : 'mono'}${alerts.has(`${r}:${c}`) ? ' alert' : ''}`, text(cell))));
+    body.append(tr);
+  });
+  element.append(thead, body);
+  return element;
+}
+function quoteCard(quote, onChooseQuote) {
+  const card = node('article', 'query-quote-card');
+  card.dataset.quoteId = text(quote.quote_id);
+  const head = node('div', 'query-quote-head');
+  head.append(node('b', '', text(quote.supplier_id)), node('span', 'chip', text(quote.quote_ref)));
+  const [label, tone] = quoteConditions[quote.quantity_condition] || ['미확인', 'mute'];
+  head.append(node('span', `pill ${tone}`, label));
+  if (quote.freight == null) head.append(node('span', 'pill warn', '운송비 미확인'));
+  const value = v => v == null || v === '' ? '미확인' : String(v);
+  const metrics = node('dl', 'query-quote-metrics');
+  for (const [name, v] of [['주문 수량', quote.recommended_qty], ['단가', quote.unit_price], ['공급한도', quote.supply_limit_qty],
+    ['MOQ / 배수', `${value(quote.moq)} / ${value(quote.order_multiple)}`], ['총액', quote.total], ['리드타임(견적)', quote.lead_business_days == null ? null : `${quote.lead_business_days}영업일`]]) {
+    metrics.append(node('dt', '', name), node('dd', '', value(v)));
+  }
+  card.append(head, metrics, node('p', 'query-quote-reason', text(quote.reason)));
+  const choose = action('이 견적으로 구매 요청 초안', () => onChooseQuote(quote), 'btn pri sm');
+  choose.dataset.queryAction = 'choose-quote';
+  if (quote.quantity_condition === 'NOT_MET' || !quote.recommended_qty) choose.disabled = true;
+  card.append(choose);
+  return card;
+}
+
 function confirmedAnswerBlocks(answer, mode) {
   const blocks = answer.answer_blocks;
   if (mode !== 'workflow' || !Array.isArray(blocks) || !blocks.length || blocks.length > 12) return null;
   const ids = new Set();
   for (const block of blocks) {
     if (!block || !text(block.id) || ids.has(block.id) || !text(block.title) || !text(block.tool)
-        || !['normal', 'attention'].includes(block.kind) || !Array.isArray(block.paragraphs)
+        || !['normal', 'attention', 'assumption', 'verdict'].includes(block.kind) || !Array.isArray(block.paragraphs)
         || !block.paragraphs.length || !block.paragraphs.every(value => text(value).trim())) return null;
     ids.add(block.id);
   }
@@ -251,7 +289,7 @@ function confirmedAnswerBlocks(answer, mode) {
 
 export function renderQueryAnswer(message, answer, {
   evidenceIds = [], evidenceEdges = [], evidenceNodes = [], labelFor = id => id, onEvidence = () => {},
-  onReplay = () => {}, onCancel = () => {}, onOpenBom = () => {}, onReviewBom = () => {}, animate = false,
+  onReplay = () => {}, onCancel = () => {}, onOpenBom = () => {}, onReviewBom = () => {}, onChooseQuote = () => {}, animate = false,
   mode = 'graph', beforeBody, onProgress = () => {},
 } = {}) {
   let disposed = false, typingComplete = false, frame = null, startedAt = null, settled = false;
@@ -261,8 +299,9 @@ export function renderQueryAnswer(message, answer, {
   const settle = value => { if (!settled) { settled = true; resolveFinished(value); } };
   const guard = callback => (...args) => { if (!disposed) return callback(...args); };
   const progress = () => { if (!disposed) { try { onProgress(); } catch { /* Scrolling is optional presentation only. */ } } };
-  onEvidence = guard(onEvidence); onReplay = guard(onReplay); onCancel = guard(onCancel); onOpenBom = guard(onOpenBom); onReviewBom = guard(onReviewBom);
+  onEvidence = guard(onEvidence); onReplay = guard(onReplay); onCancel = guard(onCancel); onOpenBom = guard(onOpenBom); onReviewBom = guard(onReviewBom); onChooseQuote = guard(onChooseQuote);
   message.replaceChildren();
+  if (Number.isInteger(answer.meta?.ledger_version)) message.dataset.ledgerVersion = String(answer.meta.ledger_version);
   const sectionData = (Array.isArray(answer.sections) ? answer.sections : []).filter(section => section && typeof section === 'object');
   const blocks = confirmedAnswerBlocks(answer, mode), workflow = Boolean(blocks), cards = [];
   message.dataset.answerLayout = workflow ? 'workflow' : 'graph';
@@ -313,13 +352,39 @@ export function renderQueryAnswer(message, answer, {
     quantityRuns(paragraph, value, runs, segmenter); container.append(paragraph);
   });
   if (workflow) {
-    blocks.forEach((block, index) => {
-      const card = node('section', `query-answer-card${block.kind === 'attention' ? ' query-answer-attention' : ''}`);
+    let number = 0;
+    blocks.forEach(block => {
+      const kindClass = { attention: ' query-answer-attention', assumption: ' query-answer-assumption', verdict: ' query-answer-verdict' }[block.kind] || '';
+      const card = node('section', `query-answer-card${kindClass}`);
       card.dataset.blockId = block.id; card.hidden = typing;
       const heading = node('div', 'query-answer-heading');
-      heading.append(node('span', 'query-answer-number', String(index + 1)), node('h3', '', block.title), node('span', 'query-answer-tool', block.tool));
+      if (block.kind !== 'verdict') heading.append(node('span', 'query-answer-number', String(++number)));
+      heading.append(node('h3', '', block.title), node('span', 'query-answer-tool', block.tool));
       card.append(heading);
-      const start = runs.length; appendParagraphs(card, block.paragraphs);
+      // An assumption card stays folded: it is a scenario frame, not ledger evidence.
+      let target = card;
+      if (block.kind === 'assumption') {
+        const fold = node('details', 'query-assumption');
+        fold.append(node('summary', '', '가정 시나리오 · 원장 근거 아님'));
+        card.append(fold); target = fold;
+      }
+      const table = answerTable(block.table);
+      if (table) target.append(table);
+      const start = runs.length; appendParagraphs(target, block.paragraphs);
+      if (Array.isArray(block.bullets) && block.bullets.length) {
+        const list = node('ul', 'query-answer-bullets');
+        block.bullets.forEach(value => list.append(node('li', '', text(value))));
+        target.append(list);
+      }
+      if (Array.isArray(block.quotes) && block.quotes.length) {
+        const wrap = node('div', 'query-quote-list');
+        block.quotes.forEach(quote => wrap.append(quoteCard(quote, onChooseQuote)));
+        target.append(wrap);
+      }
+      if (block.action === 'REGISTER_BOM') {
+        const register = action('BOM 원본 등록', onOpenBom, 'btn pri sm');
+        register.dataset.queryAction = 'bom-register'; target.append(register);
+      }
       cards.push({ element: card, runs: runs.slice(start), paragraphs: block.paragraphs });
       visibleBody.append(card);
     });
@@ -333,7 +398,9 @@ export function renderQueryAnswer(message, answer, {
   const supplement = node('div', 'query-supplement');
   supplement.hidden = typing;
   const requirements = answer.calculation?.material_requirements;
-  if (requirements?.state === 'BLOCKED_BOM' && requirements.bom_id == null) {
+  const cardRegister = (blocks || []).some(block => block.action === 'REGISTER_BOM');
+  if (cardRegister) { /* The card already carries the registration entry. */ }
+  else if (requirements?.state === 'BLOCKED_BOM' && requirements.bom_id == null) {
     const register = action('BOM 원본 등록', onOpenBom, 'btn pri sm');
     register.dataset.queryAction = 'bom-register';
     supplement.append(register);

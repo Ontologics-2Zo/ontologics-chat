@@ -966,3 +966,50 @@ test('frame scheduling failure restores the complete confirmed body instead of l
     } finally { fixture.restore(); }
   }
 });
+
+test('reference-order delivery cards render table, folded assumption, quote choice and verdict as text', () => {
+  const { message, restore } = setup();
+  try {
+    const data = response(); data.intent = ['delivery'];
+    data.calculation = { actual_delivery_feasibility: 'UNKNOWN', material_requirements: { state: 'PARTIAL', bom_id: 'bom-1' } };
+    data.answer_blocks = [
+      { id: 'delivery_balance', title: '“9대”가 무엇인지 확인', tool: '원장 조회', kind: 'normal', paragraphs: ['9대는 남은 약속입니다.'] },
+      { id: 'material_shortage', title: '부품 부족 예측', tool: '원장 계산 · BOM 전개', kind: 'normal', paragraphs: ['합성 부족 3개.'],
+        table: { columns: ['위치', '품목', '필요', '가용', '부족'], rows: [['<b>U1</b>', 'item-x', '5', '2', '3']], alert_cells: [[0, 4]] } },
+      { id: 'schedule_backward', title: '일정 역산 · 가정 시나리오', tool: '시연 가정 · 일정', kind: 'assumption', paragraphs: ['근거 없음.'] },
+      { id: 'supply_candidates', title: '공급 후보 비교', tool: '원장 조회 · 견적 → 공급사', kind: 'normal', paragraphs: ['사람이 선택하세요.'],
+        quotes: [{ quote_id: 'q-1', quote_ref: 'CMP-X', supplier_id: 'sup-x', material_basis: 'planned', quantity_condition: 'MET', recommended_qty: 5, margin_qty: 2,
+                   supply_limit_qty: 9, moq: 5, order_multiple: 5, unit_price: '1', currency: 'KRW', freight: null, total: null, lead_business_days: 3, valid_until: null, reason: '충족' },
+                 { quote_id: 'q-2', quote_ref: 'CMP-Y', supplier_id: 'sup-y', material_basis: 'planned', quantity_condition: 'NOT_MET', recommended_qty: 10, margin_qty: 7,
+                   supply_limit_qty: 4, moq: 10, order_multiple: 10, unit_price: '1', currency: 'KRW', freight: '1', total: '11', lead_business_days: null, valid_until: null, reason: '미충족' }] },
+      { id: 'verdict', title: '자재 부족 3개 · 납기 판단 보류', tool: '판정', kind: 'verdict', paragraphs: ['보류합니다.'], bullets: ['운송 근거 없음'] },
+    ];
+    const chosen = [];
+    renderQueryAnswer(message, data, { mode: 'workflow', onChooseQuote: quote => chosen.push(quote.quote_id) });
+    const table = descendants(message).find(item => item.className === 'query-mini-table');
+    assert.ok(table); assert.ok(table.textContent.includes('<b>U1</b>'));  // literal text, never HTML
+    assert.equal(descendants(table).filter(item => item.className?.includes('alert')).length, 1);
+    const fold = descendants(message).find(item => item.className === 'query-assumption');
+    assert.equal(fold.tagName, 'DETAILS'); assert.ok(fold.textContent.includes('가정 시나리오 · 원장 근거 아님'));
+    const buttons = descendants(message).filter(item => item.dataset.queryAction === 'choose-quote');
+    assert.equal(buttons.length, 2); assert.equal(buttons[1].disabled, true);
+    buttons[0].click(); assert.deepEqual(chosen, ['q-1']);
+    assert.ok(message.textContent.includes('운송비 미확인'));
+    const verdict = withClass(message, 'query-answer-verdict')[0];
+    assert.ok(verdict.textContent.includes('운송 근거 없음'));
+    assert.equal(withClass(verdict, 'query-answer-number').length, 0);
+  } finally { restore(); }
+});
+
+test('a BOM-missing card carries the only registration entry', () => {
+  const { message, restore } = setup();
+  try {
+    const data = response(); data.intent = ['delivery'];
+    data.calculation = { actual_delivery_feasibility: 'UNKNOWN', material_requirements: { state: 'BLOCKED_BOM', bom_id: null } };
+    data.answer_blocks = [{ id: 'bom_missing', title: 'BOM 전개 불가', tool: '원장 조회', kind: 'attention', action: 'REGISTER_BOM', paragraphs: ['멈춥니다.'] }];
+    let opens = 0;
+    renderQueryAnswer(message, data, { mode: 'workflow', onOpenBom: () => { opens++; } });
+    const controls = descendants(message).filter(item => item.dataset.queryAction === 'bom-register');
+    assert.equal(controls.length, 1); controls[0].click(); assert.equal(opens, 1);
+  } finally { restore(); }
+});

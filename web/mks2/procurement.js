@@ -222,6 +222,16 @@ export function mountProcurementFlow(container, { snapshot, api, getIdentity = (
       message(current.kind === 'REJECT' ? '반려 사유를 기록했습니다. 이전 승인은 해제되었습니다.' : '검토할 초안을 저장했습니다. 작성자와 다른 계정에서 검토·승인을 진행해 주세요.');
     });
   }, { signal: abort.signal });
-  render(); work(() => reload());
-  return { refresh() { return work(() => reload()); }, destroy() { destroyed = true; abort.abort(); pending.clear(); container.replaceChildren(); } };
+  render(); const loaded = work(() => reload());
+  // Opens the same PR draft form as the comparison card's button. Nothing is saved until the user submits.
+  async function startPurchaseRequest(quoteId, basis = 'planned') {
+    await loaded;
+    if (destroyed || busy || needsRefresh || !can('document.create')) return false;
+    const choice = choices.find(row => row.quote_id === quoteId && row.material_basis === basis);
+    if (!choice || choice.expired || !choice.calculation?.recommended_qty || choice.calculation.quantity_condition === 'NOT_MET') return false;
+    start('PR', { quote_id: choice.quote_id, quantity: choice.calculation.recommended_qty, material_basis: choice.material_basis, acknowledge_partial_bom: false });
+    container.querySelector?.('[data-purchase-form]')?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+    return true;
+  }
+  return { startPurchaseRequest, refresh() { return work(() => reload()); }, destroy() { destroyed = true; abort.abort(); pending.clear(); container.replaceChildren(); } };
 }

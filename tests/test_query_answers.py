@@ -5,7 +5,7 @@ from decimal import Decimal
 import unittest
 
 from service.imports import convert_baseline
-from service.query_answers import answer_query
+from service.query_answers import number, answer_query
 from service.query_contracts import QueryAnswerBlock, QueryPrerequisite
 from service.materials import requirements_for_snapshot
 from service.views import snapshot_view
@@ -355,21 +355,17 @@ class QueryAnswerTests(unittest.TestCase):
         before = deepcopy(self.view)
         result = self.answer("남은 17대 납기 안에 도착할 수 있어?")
         blocks = [QueryAnswerBlock.model_validate(block) for block in result["answer_blocks"]]
-        self.assertEqual([block.id for block in blocks], ["delivery_balance", "bom_application", "bom_next_action"])
-        self.assertEqual([block.kind for block in blocks], ["normal", "normal", "attention"])
-        self.assertEqual({block.tool for block in blocks}, {"원장 조회"})
+        self.assertEqual([block.id for block in blocks], ["delivery_balance", "defect_basis", "bom_next_action", "verdict"])
+        self.assertEqual([block.kind for block in blocks], ["normal", "normal", "attention", "verdict"])
+        self.assertEqual(blocks[2].action, "REVIEW_BOM_APPLICATION")
         balance = " ".join(blocks[0].paragraphs)
         for field in ("promise_remaining_qty", "production_remaining_qty", "already_produced_qty"):
             self.assertIn(f"{self.view['summary'][field]}대", balance)
-        self.assertIn("합성 기초 원장", balance)
-        application = " ".join(blocks[1].paragraphs)
-        self.assertIn(self.view["summary"]["configuration_id"], application)
-        self.assertIn(self.view["summary"]["delivery_round_id"], application)
-        self.assertIn("등록 원문은 2행", application)
-        self.assertIn("검토된 적용 행이 없어", application)
-        self.assertIn("납기 판단을 보류", " ".join(blocks[2].paragraphs))
-        self.assertNotIn("94%", str(result["answer_blocks"]))
-        self.assertNotIn("계획 투입", str(result["answer_blocks"]))
+        self.assertIn(self.view["summary"]["delivery_round_id"], balance)
+        self.assertIn("검토된 적용 행이 없어", " ".join(blocks[2].paragraphs))
+        self.assertIn("납기 판단 보류", blocks[3].title)
+        self.assertIn("새 납기 약속으로 저장하지 않습니다", " ".join(blocks[3].paragraphs))
+        self.assertNotIn("schedule_backward", [block.id for block in blocks])
         self.assertEqual(result["calculation"]["material_requirements"], before["material_requirements"])
         self.assertEqual(result["calculation"]["actual_delivery_feasibility"], "UNKNOWN")
         self.assertEqual(result["meta"], before["meta"])
@@ -379,34 +375,46 @@ class QueryAnswerTests(unittest.TestCase):
         self.view = query_view(with_bom=False)
         result = self.answer("남은 물량을 납기 안에 도착시킬 수 있어?")
         blocks = result["answer_blocks"]
-        self.assertIn("반영된 BOM 원본이 없어", " ".join(blocks[1]["paragraphs"]))
-        self.assertEqual(blocks[2]["title"], "BOM 원본 등록 필요")
+        self.assertEqual([b["id"] for b in blocks], ["delivery_balance", "defect_basis", "bom_missing", "verdict"])
+        self.assertIn("반영된 BOM이 없어", " ".join(blocks[2]["paragraphs"]))
+        self.assertEqual(blocks[2]["title"], "BOM 전개 불가")
+        self.assertEqual(blocks[2]["action"], "REGISTER_BOM")
+        self.assertEqual(blocks[3]["title"], "BOM 미등록 · 납기 판단 보류")
         self.assertNotIn("등록 원문은", str(blocks))
-        self.assertEqual(len(blocks), 3)
         self.assertIsNone(result["prerequisite"]["bom"])
 
-    def test_partial_delivery_cards_keep_exact_known_shortage_and_conditional_origin(self):
+    def test_partial_delivery_cards_follow_reference_order_with_exact_quantities(self):
         result = self.answer("자재 부족과 납기 가능성을 알려줘")
-        body = " ".join(result["answer_blocks"][1]["paragraphs"])
-        self.assertIn("소요 16.5 piece", body)
-        self.assertIn("가용 12 piece", body)
-        self.assertIn("부족 4.5 piece", body)
-        self.assertIn("시연 가정", body)
-        self.assertIn("합성 기초 원장", body)
-        self.assertNotIn("94%", str(result["answer_blocks"]))
-        self.assertEqual(result["calculation"]["material_requirements"]["items"][0]["planned_shortage_qty"], "6.0")
+        blocks = [QueryAnswerBlock.model_validate(block) for block in result["answer_blocks"]]
+        self.assertEqual([b.id for b in blocks][:4], ["delivery_balance", "defect_basis", "material_shortage", "schedule_backward"])
+        self.assertEqual(blocks[-1].id, "verdict")
+        defect = " ".join(blocks[1].paragraphs)
+        summary = self.view["summary"]
+        judged = summary["good_qty"] + summary["defect_qty"]
+        self.assertIn(f"판정된 {judged}대 중 불량 {summary['defect_qty']}대", defect)
+        self.assertIn("가정 계산이며 양품을 보장하지 않습니다", defect)
+        table = blocks[2].table
+        self.assertEqual(table.columns, ["위치", "품목", "필요", "가용", "부족"])
+        item = result["calculation"]["material_requirements"]["items"][0]
+        # Planned-input basis: the same numbers as the shared calculation, not a recomputation.
+        self.assertEqual(table.rows[0][1:], [item["item_id"], number(item["planned_required_qty"]), "12", "6"])
+        self.assertEqual(table.alert_cells, [[0, 4]])
+        self.assertIn("부족 0으로 보지 않습니다", " ".join(blocks[2].paragraphs))
+        schedule = blocks[3]
+        self.assertEqual((schedule.kind, schedule.tool), ("assumption", "시연 가정 · 일정"))
+        self.assertIn("원장 근거가 아닙니다", " ".join(schedule.paragraphs))
+        self.assertNotRegex(" ".join(schedule.paragraphs), r"\d+일")  # no invented durations
+        self.assertEqual(blocks[-1].title, "자재 부족 6개 · 납기 판단 보류")
+        self.assertEqual(item["planned_shortage_qty"], "6.0")
         direct = self.answer("재고 빼면 어떤 자재가 얼마나 모자라?")
         self.assertNotIn("answer_blocks", direct)
         self.assertIn("부족 4.5 / 6", str(next(s for s in direct["sections"] if s["id"] == "materials")))
 
     def test_explicit_delivery_what_if_cards_preserve_exact_yield_and_planned_comparison(self):
         result = self.answer("양품 19대가 목표면 수율 50%로 납기 가능해?")
-        balance = " ".join(result["answer_blocks"][0]["paragraphs"])
-        self.assertIn("50%", balance); self.assertIn("38대", balance)
-        self.assertIn("양품을 보장하지 않습니다", balance)
-        materials = next(s for s in result["sections"] if s["id"] == "materials")["items"]
-        for row in materials:
-            self.assertIn(row["value"], " ".join(result["answer_blocks"][1]["paragraphs"]))
+        defect = " ".join(result["answer_blocks"][1]["paragraphs"])
+        self.assertIn("50%", defect); self.assertIn("38대", defect)
+        self.assertIn("양품을 보장하지 않습니다", defect)
         self.assertEqual(result["calculation"]["actual_delivery_feasibility"], "UNKNOWN")
 
 
