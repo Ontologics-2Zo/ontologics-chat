@@ -510,7 +510,9 @@ function canAutoApply() {
   const active = document.activeElement;
   if (document.querySelector('.mk-drawer-wrap') || document.querySelector('[data-purchase-form]')) return false;
   if (active?.closest?.('#dashboard-stage') && active.matches?.('input,select,textarea')) return false;
-  return !Object.values(panels).some(panel => panel.presentation || panel.submit?.disabled);
+  // A finished answer still being typed out is not user input; refreshSnapshot
+  // completes its text first. Only an in-flight question defers the refresh.
+  return !Object.values(panels).some(panel => panel.submit?.disabled);
 }
 function relevantPanels(items) {
   return Object.entries(panels).filter(([, panel]) => items.some(item => panel.topics.has(item))).map(([name]) => name);

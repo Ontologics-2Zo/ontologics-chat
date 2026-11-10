@@ -166,3 +166,27 @@ class ReservationDomainTests(unittest.TestCase):
             row = conn.execute("SELECT * FROM ledger_events WHERE event_type='InventoryReserved'").fetchone()
         self.assertEqual(ledger_event_view(row, "DEMO-OTHER")["origin"], "unknown")
         self.assertEqual(ledger_event_view(row, self.company)["origin"], "internal_development")
+
+
+@unittest.skipUnless(os.environ.get("TEST_DATABASE_URL"), "Dedicated disposable TEST_DATABASE_URL required")
+class MultiLotImpactTests(unittest.TestCase):
+    def test_impact_uses_the_item_total_across_lots(self):
+        from service.reservations import reservation_impacts
+        f = ReservationDomainTests("runTest"); self.addCleanup(f.doCleanups); f.setUp()
+        with f.db.connect() as conn:
+            row = conn.execute("SELECT ledger_version, payload FROM service_snapshots ORDER BY ledger_version DESC LIMIT 1").fetchone()
+            payload = row["payload"]
+            inventory = payload.setdefault("current_inventory", payload["opening_balance"]["inventory"])
+            inventory.append({"scope": "LOT", "lot_id": "lot-b", "item_id": "item-a", "unit": "piece", "on_hand_qty": 6,
+                              "reserved_other_qty": 0, "reserved_self_qty": 0, "held_qty": 0, "available_qty": 6})
+            from psycopg.types.json import Jsonb
+            conn.execute("UPDATE service_snapshots SET payload=%s WHERE ledger_version=%s", (Jsonb(payload), row["ledger_version"]))
+        result = f.service.reserve(f.planner, f.company, f.body(quantity=2))
+        f.ledger.advance_documents()
+        snapshot = f.ledger.read(f.author)
+        requirements = requirements_for_snapshot(snapshot)
+        impact = reservation_impacts(requirements, snapshot["reservations"])[0]
+        self.assertEqual((impact["available_before"], impact["available_after"]), ("18", "16"))
+        item = next(x for x in requirements["items"] if x["item_id"] == "item-a")
+        self.assertEqual(impact["available_after"], item["available_qty"])
+        self.assertEqual(impact["planned_shortage_after"], item["planned_shortage_qty"])

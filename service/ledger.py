@@ -75,7 +75,7 @@ def ledger_event_view(event, company_id):
                 return result
             before, after = content["before"], content["after"]
             result.update(summary=(f"재고 예약 반영 · 다른 수요 {content['demand_ref']} · {content['item_id']} {content['quantity']}개"
-                                   f" · 가용 {before['available_qty']}→{after['available_qty']}"),
+                                   f" · LOT {content['lot_id']} 가용 {before['available_qty']}→{after['available_qty']}"),
                           document_kind="RESERVATION", origin="internal_development",
                           reservation={"reservation_id": payload["reservation_id"], "item_id": content["item_id"],
                                        "lot_id": content["lot_id"], "quantity": content["quantity"],
@@ -346,7 +346,11 @@ class LedgerReader:
 
     def pending(self):
         with self.db.connect() as conn:
-            return conn.execute("SELECT company_id,run_id,ledger_version,payload FROM service_snapshots WHERE projection IS NULL ORDER BY company_id,ledger_version").fetchall()
+            # Retry versions never projected and those that failed on the graph
+            # store (infrastructure). A SHACL violation is content: not retried.
+            return conn.execute("SELECT company_id,run_id,ledger_version,payload FROM service_snapshots WHERE projection IS NULL "
+                                "OR (projection->>'state' = 'NOT_READY' AND COALESCE(projection->'neo4j'->>'state','') <> 'READY' "
+                                "AND COALESCE(projection->'validation'->>'state','') <> 'VIOLATIONS') ORDER BY company_id,ledger_version").fetchall()
 
     def advance_documents(self):
         """Apply supported committed documents to immutable read snapshots.

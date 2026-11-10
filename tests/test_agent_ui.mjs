@@ -101,7 +101,7 @@ async function setup({ animated = false, reduced = false } = {}) {
       twinPanel: () => panels.twin, graphPanel: () => panels.graph, generation: () => generation,
       route: name => { location.hash = '#' + name; route(); }, invalidate: invalidateView,
       load: loadSnapshot, setContext, setTwinContext, twinActive: updateTwinActivity,
-      poll: pollChanges, panels: () => panels, current: () => snapshot };`, context);
+      poll: pollChanges, panels: () => panels, current: () => snapshot, setLive: value => { liveEnabled = value; } };`, context);
   return { requests, app: context.app, twins, answers, bomOpens, bomOpenArguments, document: context.document, window: context.window, location: context.location,
     documentEvents, element: get, setHandler(value) { handler = value; },
     snapshot: () => data, setNextSnapshot(value) { data = value; } };
@@ -510,4 +510,87 @@ test('a posted customer arrival marks only conversations about that round, quoti
   assert.match(h.app.panels().dashboard.status.textContent, /고객 도착 1대 반영 · 누적 도착 32→33대 · 남은 약속 68→67대/);
   assert.equal(h.app.panels().graph.status.textContent, '');
   assert.equal(h.requests.filter(request => request.path === '/api/mks2/query').length, 0);
+});
+
+// T5: delivery edge cases of committed-event reflection (DEC-H47/H49).
+function relevantSetup(h) {
+  h.snapshot().material_requirements = { items: [{ item_id: 'item-a' }] };
+  h.app.panels().dashboard.topics.add('item-a');
+}
+
+test('a failed poll changes nothing and the next poll recovers the missed event', async () => {
+  const h = await setup(); relevantSetup(h);
+  let calls = 0;
+  h.setHandler(request => request.path.startsWith('/api/mks2/events')
+    ? (++calls === 1 ? { httpStatus: 503, code: 'SERVICE_UNAVAILABLE' } : reservationChanges('READY')) : undefined);
+  h.setNextSnapshot(reservedSnapshot());
+  await h.app.poll();
+  assert.equal(h.app.current().meta.ledger_version, 7);
+  assert.equal(h.app.panels().dashboard.status.textContent, '');
+  await h.app.poll();
+  assert.equal(h.app.current().meta.ledger_version, 8);
+  assert.match(h.app.panels().dashboard.status.textContent, /23→28/);
+});
+
+test('an older or equal ledger version never moves the screen backwards', async () => {
+  const h = await setup(); relevantSetup(h);
+  h.setHandler(request => request.path.startsWith('/api/mks2/events')
+    ? { ...reservationChanges('READY'), current_ledger_version: 6, snapshot_ledger_version: 6 } : undefined);
+  h.setNextSnapshot(snapshotAt(6));
+  await h.app.poll();
+  assert.equal(h.app.current().meta.ledger_version, 7);
+  assert.equal(h.requests.filter(request => request.path === '/api/mks2/snapshot').length, 0);
+});
+
+test('the same event delivered twice adds one status line and one refresh', async () => {
+  const h = await setup(); relevantSetup(h);
+  h.setHandler(request => request.path.startsWith('/api/mks2/events') ? reservationChanges('READY') : undefined);
+  h.setNextSnapshot(reservedSnapshot());
+  await h.app.poll(); await h.app.poll(); await h.app.poll();
+  assert.equal(h.requests.filter(request => request.path === '/api/mks2/snapshot').length, 1);
+  assert.equal(h.app.panels().dashboard.status.children.length, 1);
+});
+
+test('a commit during an in-flight question is deferred, then applied after the answer', async () => {
+  const h = await setup(); relevantSetup(h);
+  h.setHandler(request => request.path.startsWith('/api/mks2/events') ? reservationChanges('READY') : undefined);
+  h.setNextSnapshot(reservedSnapshot());
+  h.app.panels().dashboard.submit.disabled = true;
+  await h.app.poll();
+  assert.equal(h.app.current().meta.ledger_version, 7);
+  assert.match(h.app.panels().dashboard.status.textContent, /근거 변경 대기/);
+  h.app.panels().dashboard.submit.disabled = false;
+  await h.app.poll();
+  assert.equal(h.app.current().meta.ledger_version, 8);
+  assert.match(h.app.panels().dashboard.status.textContent, /가용 20→15/);
+});
+
+test('a changed identity revision in the event feed ends the session view instead of applying', async () => {
+  const h = await setup(); relevantSetup(h);
+  h.setHandler(request => request.path.startsWith('/api/mks2/events')
+    ? { ...reservationChanges('READY'), identity_revision: 'another-session' } : undefined);
+  h.setNextSnapshot(reservedSnapshot());
+  await h.app.poll();
+  assert.equal(h.app.current(), null);
+  assert.equal(h.requests.filter(request => request.path === '/api/mks2/snapshot').length, 0);
+});
+
+test('turning live reflection off keeps the snapshot and offers an explicit refresh', async () => {
+  const h = await setup(); relevantSetup(h);
+  h.setHandler(request => request.path.startsWith('/api/mks2/events') ? reservationChanges('READY') : undefined);
+  h.setNextSnapshot(reservedSnapshot());
+  h.app.setLive(false);
+  await h.app.poll();
+  assert.equal(h.app.current().meta.ledger_version, 7);
+  assert.match(h.app.panels().dashboard.status.textContent, /최신 기준으로 보기/);
+});
+
+test('an answer still typing out does not block applying a committed event', async () => {
+  const h = await setup(); relevantSetup(h);
+  h.app.panels().dashboard.presentation = { finish() {}, dispose() {} };
+  h.setHandler(request => request.path.startsWith('/api/mks2/events') ? reservationChanges('READY') : undefined);
+  h.setNextSnapshot(reservedSnapshot());
+  await h.app.poll();
+  assert.equal(h.app.current().meta.ledger_version, 8);
+  assert.match(h.app.panels().dashboard.status.textContent, /23→28/);
 });

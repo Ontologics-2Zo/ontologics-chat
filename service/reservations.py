@@ -87,6 +87,9 @@ class ReservationService(DomainService):
                 raise ServiceError("RESERVATION_EXCEEDS_AVAILABLE", 409)
             after = {**before, "reserved_other_qty": before["reserved_other_qty"] + body.quantity,
                      "available_qty": before["available_qty"] - body.quantity}
+            # The shortage is per item: every LOT of the same item and unit counts.
+            item_rows = [row for row in inventory if row.get("item_id") == body.item_id and row.get("unit") == lot["unit"]]
+            item_before = sum(_balance(row)["available_qty"] for row in item_rows)
             items = [e for e in payload["entities"] if e["type"] == "InternalItem" and body.item_id in {e["id"], e["display_id"]}]
             lots = [e for e in payload["entities"] if e["type"] == "PartLot" and e["display_id"] == body.lot_id]
             if len(items) != 1 or len(lots) != 1:
@@ -98,6 +101,7 @@ class ReservationService(DomainService):
                        "quantity": body.quantity, "demand_ref": body.demand_ref,
                        "demand_origin": "SYNTHETIC_OTHER_DEMAND_REFERENCE", "target_round_id": target_round,
                        "basis_ledger_version": body.expected_ledger_version, "before": before, "after": after,
+                       "item_available_before": item_before, "item_available_after": item_before - body.quantity,
                        "note": body.note, "rule_version": RULE_VERSION}
             payload_hash = content_hash(content)
             conn.execute("INSERT INTO inventory_reservations(id,company_id,run_id,item_id,lot_id,unit,quantity,demand_ref,"
@@ -192,6 +196,7 @@ def apply_reservation_event(previous, event):
         "ledger_version": version, "item_id": content["item_id"], "lot_id": content["lot_id"], "unit": content["unit"],
         "quantity": content["quantity"], "demand_ref": content["demand_ref"], "demand_origin": content["demand_origin"],
         "before": deepcopy(content["before"]), "after": deepcopy(content["after"]), "recorded_at": recorded.isoformat(),
+        "item_available_before": content.get("item_available_before"), "item_available_after": content.get("item_available_after"),
         "entity_id": identifier, "lot_entity_id": lot["id"]})
     snapshot["metadata"].setdefault("opening_effective_at", meta["effective_at"])
     snapshot["metadata"].update(server_ledger_version=version, recorded_at=recorded.isoformat(),
@@ -219,7 +224,12 @@ def reservation_impacts(requirements, reservations):
         if not item or item.get("unit") != reservation.get("unit"):
             continue
         required, planned = Decimal(item["required_qty"]), Decimal(item["planned_required_qty"])
-        before, after = Decimal(reservation["before"]["available_qty"]), Decimal(reservation["after"]["available_qty"])
+        # Item totals across all LOTs when the event recorded them; older events
+        # without totals fall back to the reserved LOT's own balance.
+        if reservation.get("item_available_before") is not None:
+            before, after = Decimal(reservation["item_available_before"]), Decimal(reservation["item_available_after"])
+        else:
+            before, after = Decimal(reservation["before"]["available_qty"]), Decimal(reservation["after"]["available_qty"])
         shortage = lambda need, available: format(max(need - available, Decimal(0)).normalize(), "f")
         impacts.append({"reservation_id": reservation["reservation_id"], "ledger_version": reservation["ledger_version"],
             "item_id": item["item_id"], "unit": item["unit"], "lot_id": reservation["lot_id"],
