@@ -19,6 +19,17 @@ export function preferredBomSource(sources, documents, configurationId) {
   return sources.length === 1 ? sources[0] : null;
 }
 
+/** The initial ledger's mapping assumptions name their source by a SHA-256
+ *  prefix (e.g. "…:773c8b3fb0fa:49"). Offer that stored table source only when
+ *  exactly one supported source matches. */
+export function candidateSource(sources, candidates = []) {
+  const prefixes = new Set(candidates.map(row => String(row?.source_row_id || '').split(':')[1]).filter(value => /^[0-9a-f]{12,64}$/.test(value)));
+  if (prefixes.size !== 1) return null;
+  const [prefix] = prefixes;
+  const matches = sources.filter(source => source.sha256?.startsWith(prefix) && ['ods', 'csv'].includes(source.format));
+  return matches.length === 1 ? matches[0] : null;
+}
+
 export function bomPresentation(rows, decision = row => row.decision || {}) {
   const positions = rows.flatMap(row => (row.designators || []).map(value => JSON.stringify([row.sheet, value])));
   const integer = value => { const match = /^(\d+)(?:\.0+)?$/.exec(String(value ?? '')); return match ? match[1].replace(/^0+/, '') || '0' : null; };
@@ -196,6 +207,15 @@ export function bomFlowStates(status) {
   const index = { DRAFT: 0, REVIEWED: 1, APPROVED: 2, POSTED: 3 }[status];
   return ['초안', '검토', '승인', '반영'].map((label, i) => ({ label,
     state: status === 'REJECTED' ? 'rejected' : index === undefined ? 'pending' : i < index || status === 'POSTED' ? 'done' : i === index ? 'on' : 'pending' }));
+}
+
+/** Chip display like the reference sheet: once posted, every stage shows as
+ *  done; stages that still carry review items or had no baseline keep a note. */
+export function bomStageDisplay(states, document, comparison = null) {
+  if (document?.status !== 'POSTED') return states.map(state => ({ state, note: '' }));
+  return states.map((state, index) => state === 'review' ? { state: 'noted', note: '반영 완료 · 확인 필요 항목 남음' }
+    : index === 3 && state === 'pending' && comparison?.status === 'NO_BASELINE' ? { state: 'noted', note: '최초 등록 · 비교 기준 없음' }
+    : { state, note: '' });
 }
 
 export function bomReferenceMatches(document, reference, configurationId) {
@@ -376,9 +396,16 @@ export function createBomDrawer({ snapshot, api, getIdentity = () => null, onPos
     });
     return conflicts.length ? `<section class="mk-drawer-block mk-bom-warning"><h3>원본 식별·검수 확인 필요</h3><p>대상 원본: <b>${esc(content().source?.filename)}</b></p><ul>${conflicts.map(value => `<li>${esc(({ SOURCE_FILENAME_SHEET_CONFIGURATION_CONFLICT: '원본 파일명과 시트명의 구성 식별이 다릅니다. 적용 구성의 확인 근거가 필요합니다.', SOURCE_ROW_REQUIRES_REVIEW: unknownSummary || '수량 또는 부품 위치가 미확인인 원문 행이 있습니다.', DUPLICATE_SOURCE_DESIGNATOR: '같은 시트에 중복된 부품 위치 표기가 있습니다. 반복된 일반 명칭인지 실제 위치 충돌인지 원문 확인이 필요합니다.' })[value] || value)}</li>`).join('')}</ul>${evidence.length ? `<details><summary>경고가 발생한 원문 ${count(evidence.length)}행 확인</summary><ul>${evidence.join('')}</ul><p>저장된 추출값 기준입니다. 원문 행을 눌러 셀과 적용 판단을 대조할 수 있습니다.</p></details>` : ''}<p>원본 등록 승인은 기술 적합성이나 제조 투입 승인을 뜻하지 않습니다. 미해결 항목은 원장에도 그대로 남습니다.</p></section>` : '';
   }
+  // Reference: the sheet name may differ from the file name; keep the source as
+  // is and point to the row that identifies the variant, without resolving it.
+  function identityNote() {
+    if (!content().source_conflicts?.includes('SOURCE_FILENAME_SHEET_CONFIGURATION_CONFLICT')) return '';
+    const evidence = allRows().find(row => /WROOM|WROVER/i.test(row.source_description || ''));
+    return `<p class="mk-small-note">시트명은 파일명과 다르지만 원문 그대로 보존합니다.${evidence ? ` 변형 확인 근거 후보: ${esc((evidence.designators || []).join(' '))} 원문 값 ${esc(evidence.source_description)}(${esc(evidence.locator)}).` : ''} 구성 확정은 검토자가 원문으로 확인합니다.</p>`;
+  }
   function documentHeader(compact = false) {
     if (!active) return '';
-    if (compact) return `<section class="mk-drawer-block mk-bom-identity-compact" data-bom-section="1"><div class="mk-bom-report-header"><h3>개정 식별</h3>${content().source?.sha256 && sources.some(source => source.sha256 === content().source.sha256) ? '<span class="mk-pill ok">SHA-256 일치</span>' : ''}<span class="mk-pill info">${esc(statuses[active.status] || active.status)} · v${count(active.version)}</span></div><dl class="mk-key-values"><dt>원본 파일</dt><dd>${esc(content().source?.filename)}</dd><dt>SHA-256</dt><dd class="mk-hash">${esc(content().source?.sha256)}</dd><dt>제품 구성</dt><dd>${esc(content().configuration_id)}</dd><dt>원문 시트</dt><dd>${esc([...new Set(allRows().map(row => row.sheet))].join(' · '))}</dd></dl><details class="mk-bom-source-details"><summary>원본·버전·검수 근거</summary>${documentHeader()}</details></section>`;
+    if (compact) return `<section class="mk-drawer-block mk-bom-identity-compact" data-bom-section="1"><div class="mk-bom-report-header"><h3>개정 식별</h3>${content().source?.sha256 && sources.some(source => source.sha256 === content().source.sha256) ? '<span class="mk-pill ok">SHA-256 일치</span>' : ''}<span class="mk-pill info">${esc(statuses[active.status] || active.status)} · v${count(active.version)}</span></div><dl class="mk-key-values"><dt>원본 파일</dt><dd>${esc(content().source?.filename)}</dd><dt>SHA-256</dt><dd class="mk-hash">${esc(content().source?.sha256)}</dd><dt>제품 구성</dt><dd>${esc(content().configuration_id)}</dd><dt>원문 시트</dt><dd>${esc([...new Set(allRows().map(row => row.sheet))].join(' · '))}</dd></dl>${identityNote()}<details class="mk-bom-source-details"><summary>원본·버전·검수 근거</summary>${documentHeader()}</details></section>`;
     return `<section class="mk-drawer-block"><h3>${esc(statuses[active.status] || active.status)} · 문서 v${count(active.version)}</h3><dl class="mk-key-values"><dt>원본</dt><dd>${esc(content().source?.filename)}</dd><dt>기준 구성</dt><dd>${esc(content().configuration_id)}</dd><dt>기준 원장</dt><dd>v${count(content().expected_ledger_version)}</dd><dt>기술 검수</dt><dd>${esc(content().technical_review === 'UNREVIEWED' ? '미검수' : content().technical_review || '미확인')} · 제조 적용과 구분</dd><dt>문서 hash</dt><dd>${esc(active.payload_hash)}</dd><dt>원본 SHA-256</dt><dd>${esc(content().source?.sha256)}</dd></dl><div class="mk-bom-actions">${button('보관 원본 내려받기', 'download', busy)}</div></section>`;
   }
   function rawTable() {
@@ -480,7 +507,7 @@ export function createBomDrawer({ snapshot, api, getIdentity = () => null, onPos
     return `${verdict}<section class="mk-drawer-block"><h3>승인된 등록 원장 반영</h3>${flowChips()}<p>원본과 승인된 행별 판단을 새 원장 버전으로 기록합니다. 기존 재고·생산·출하·도착 수량을 변경하지 않습니다.</p><dl class="mk-key-values"><dt>상태</dt><dd>${esc(statuses[active.status] || active.status)}</dd><dt>반영 원장</dt><dd>${active.ledger_version ? `v${count(active.ledger_version)}` : '미반영'}</dd><dt>기술 검수</dt><dd>${esc(content().technical_review === 'UNREVIEWED' ? '미검수' : content().technical_review || '미확인')}</dd></dl><div class="mk-bom-actions">${button('승인 버전 원장 반영', 'post', busy || dirty || active.status !== 'APPROVED' || !permitted('document.post'), true)}${button('최신 원장·소요량 조회', 'refresh', busy || active.status !== 'POSTED')}</div><p>반영 이후 그래프가 같은 버전으로 준비되면 최신 원장을 조회하세요. 누락된 매핑·단위·재고는 소요량과 부족량에서 미확인으로 표시합니다.</p></section>`;
   }
   function sourcePicker() {
-    const shortcut = preferredBomSource(sources, documents, snapshot.summary.configuration_id);
+    const shortcut = preferredBomSource(sources, documents, snapshot.summary.configuration_id) || candidateSource(sources, snapshot.mapping_candidates || []);
     const disabled = busy || runner?.ready !== true || !permitted('document.create');
     const check = fileCheck && !fileCheck.ok ? `<div class="mk-warnbox" role="alert"><b>등록 보류.</b> ${esc(fileCheck.why)}<div class="mk-hash">${esc(fileCheck.file)} · ${esc(fileCheck.sha || '해시 없음')}</div></div>` : '';
     return `${check}<label class="mk-drop" data-bom-drop><b>BOM 원본 파일을 끌어다 놓거나 선택하세요</b><span>ODS · CSV · PDF. 파일의 SHA-256으로 보관된 원본과 개정을 식별합니다.</span><span class="mk-small-note">파일 내용은 서버로 올리지 않습니다. 해시가 일치하는 보관 원본만 제한된 처리기로 추출합니다.</span><input type="file" data-bom-field="file" accept=".ods,.csv,.pdf" hidden${busy || !permitted('document.create') ? ' disabled' : ''}><span class="mk-btn">파일 선택</span></label>
@@ -525,15 +552,15 @@ export function createBomDrawer({ snapshot, api, getIdentity = () => null, onPos
   }
   function updateStepAppearance() {
     if (!wrap) return;
-    const progress = bomStageStates(active, { processing: operation === 'create', comparison: comparison.result() });
-    const labels = { complete:'기록 완료', active:'처리 중', review:'검토 필요', pending:'대기' };
+    const progress = bomStageDisplay(bomStageStates(active, { processing: operation === 'create', comparison: comparison.result() }), active, comparison.result());
+    const labels = { complete:'기록 완료', active:'처리 중', review:'검토 필요', pending:'대기', noted:'완료' };
     for (const control of wrap.querySelectorAll('[data-bom-step]')) {
-      const index = Number(control.dataset.bomStep), status = progress[index];
+      const index = Number(control.dataset.bomStep), status = progress[index].state;
       control.dataset.progress = status;
-      control.title = `${stages[index]} · ${labels[status]}`;
+      control.title = `${stages[index]} · ${labels[status]}${progress[index].note ? ` · ${progress[index].note}` : ''}`;
       control.setAttribute('aria-label', control.title);
       control.setAttribute('aria-current', index === (operation === 'create' ? 2 : step) ? 'step' : 'false');
-      control.textContent = `${status === 'complete' ? '✓ ' : status === 'review' ? '! ' : ''}${stages[index]}`;
+      control.textContent = `${status === 'complete' || status === 'noted' ? '✓ ' : status === 'review' ? '! ' : ''}${stages[index]}`;
     }
   }
   function render() {

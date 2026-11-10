@@ -64,3 +64,22 @@ test('reference flow treats a saved decided draft as an approval request', () =>
   assert.equal(states(doc('POSTED', 3)), 'done,done,done,done');
   assert.equal(bomRequestFlow(doc('DRAFT', 2)).requested, true);
 });
+
+import { candidateSource, bomStageDisplay } from '../web/mks2/bom.js';
+
+test('the initial mapping assumptions point to exactly one stored table source', () => {
+  const sources = [{ source_id: 'pdf', sha256: '773c8b3fb0fa' + 'a'.repeat(52), format: 'pdf' },
+    { source_id: 'ods', sha256: '773c8b3fb0fa' + 'b'.repeat(52), format: 'ods' }, { source_id: 'other', sha256: 'ef4f04d46ca8' + 'c'.repeat(52), format: 'ods' }];
+  assert.equal(candidateSource(sources, [{ source_row_id: 'POE-L1-WROOM:773c8b3fb0fa:49' }, { source_row_id: 'POE-L1-WROOM:773c8b3fb0fa:60' }]).source_id, 'ods');
+  assert.equal(candidateSource(sources, [{ source_row_id: 'X:773c8b3fb0fa:1' }, { source_row_id: 'Y:ef4f04d46ca8:2' }]), null);
+  assert.equal(candidateSource(sources, []), null);
+});
+
+test('after posting, review and first-registration chips show as done with notes; before posting they stay', () => {
+  const states = ['complete', 'review', 'complete', 'pending', 'review', 'complete', 'complete', 'complete'];
+  const posted = bomStageDisplay(states, { status: 'POSTED' }, { status: 'NO_BASELINE' });
+  assert.deepEqual(posted.map(item => item.state), ['complete', 'noted', 'complete', 'noted', 'noted', 'complete', 'complete', 'complete']);
+  assert.match(posted[1].note, /확인 필요 항목 남음/);
+  assert.match(posted[3].note, /최초 등록/);
+  assert.deepEqual(bomStageDisplay(states, { status: 'APPROVED' }).map(item => item.state), states);
+});

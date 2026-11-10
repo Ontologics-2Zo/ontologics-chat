@@ -300,3 +300,4 @@
 .mk-verdict b{display:block;font-size:13.5px;margin-bottom:3px}
 .mk-drawer h3 .mk-spacer{flex:1}
 .mk-drawer h3 small{font-weight:400;font-size:11.5px;color:var(--fg3,#64748b)}
+.mk-drawer-steps button[data-progress=noted]{background:color-mix(in srgb,var(--ok,#16805d) 10%,var(--surface,#fff));border-color:var(--ok,#16805d);color:var(--ok,#16805d);border-style:dashed}
