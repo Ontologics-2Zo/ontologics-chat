@@ -1,6 +1,6 @@
 # 1차 서비스 후속 작업 · 진행 표시와 관측
 
-2026-11-10 · DEC-H44 · 기반 main `3a6079e` / 작업 브랜치 `codex/service-progress-evidence`.
+2026-11-10 · DEC-H44 · 기반 main `3a6079e` / 작업 브랜치 `codex/service-progress-evidence` / [Draft PR #6](https://github.com/Ontologics-2Zo/ontologics-chat/pull/6).
 
 사용자는 MD 계획의 남은 1차 작업을 이어가고, 그래프 재생 속도·BOM 일괄 연결·채팅 근거 접기·조회 단계 표시를 개선하며 LangSmith 연결을 확인하도록 요청했다. 기존 파일/DB와 같은 US$10 계정의 남은 금액을 유지한다. 새 main 자동 병합·배포·실제 공급사 송신·운영 업무 변경은 이번 작업에 포함하지 않는다.
 
@@ -30,7 +30,7 @@ DEC-H19의 기존 승인은 합성·비식별 메타데이터다. DEC-H43의 질
 
 ## 검증 상태
 
-격리 서비스·브라우저와 실제 관측 수신 검증을 통과했다. Mac 원래 서비스의 활성화·보존 대사는 이어서 기록한다. 전체 1차 인수의 완료를 뜻하지 않는다.
+격리 서비스·브라우저·실제 관측 수신·Mac 재시작·최종 보존 대사를 통과했다. 이번 한정 범위는 VERIFIED이며 전체 1차 인수의 완료를 뜻하지 않는다.
 
 - 서비스: `.venv/bin/python -m unittest discover -s tests -q` 429 PASS/실패 0/skip 0. 별도 PostgreSQL·Neo4j와 기존 제한 Runner에서 실행했다. 외부 통신과 원래 서비스 포트를 막고 제공자 키 없이 Fake로 검사했다. 실행 중 코드 hash 전후 동일. Runner 16개 강제 통제의 증거는 같은 코드·이미지의 직전 검증을 재사용했으며 새 강제 검사로 세지 않는다.
 - UI 모듈: `node --test tests/test_*.mjs` 161 PASS/실패0/skip0. 실제 glob 확장 argv 사용. 그래프16·query32·host25 포함. `git diff --check` PASS.
@@ -52,6 +52,25 @@ LangSmith의 실제 기존 local 프로젝트에 격리 합성 Fake 실행 1회�
 | 서비스 실행 전후 코드 | `8f6f6ff6f15e0a15e2da84e432ae446425f0b3ee8e263a736a840726ede1f8f1` |
 | 브라우저 25건 | `8aa0c6ba9b542d86f2c21efe8a3fd219bbc497f3c9a82feb8badf6a04bd76939` |
 | Langfuse/LangSmith 격리 실제 readback | `39174fbe514f058b3128bba8a752483f534bfd91a22b7fa8fbe578ca59b0b9a3` |
+
+## Mac 적용과 최종 보존
+
+코드 `5c92ad3`를 기존 `8870`에 적용했다. `.env`와 runtime을 수정하지 않고 새 영속 실행 override에서 기존 local 프로젝트의 LangSmith를 활성화했다. `/health`는 200, live·로컬 Langfuse 상세·LangSmith metadata-only이며 관측 invalid는 0이다. 별도 최초 시연 `8872`는 재시작하지 않았고 disabled·health 200을 유지했다. 재시작 직후 31개 테이블은 전후 동일했다.
+
+이어 작성자 A의 실제 읽기 실행을 정확히 1회 수행했다. `material_analysis` COMPLETED, 업무 snapshot 불변, fallback·재시도 0이며 사용한 QA 세션을 종료했다. 실제 API에서 Langfuse 6개와 LangSmith 6개를 다시 조회해 execution/attempt/부모 관계와 canonical 비용을 대조했다. LangSmith에는 입력·출력·preview·첨부가 없고, 로컬 Langfuse에는 승인된 질문·답변이 있다. 모델에는 기존 기능 플래그만 전송했다. 이 확인을 원문 기반 추출/설명 의미 품질 평가로 확대하지 않는다.
+
+이번 호출 비용은 US$0.00042다. 같은 예산의 누적 live 36회, 확정 US$0.01470, 기존 미확정 예약 US$0.016414, 예약을 제외한 잔여 **US$9.968886**이다. 새 예산이나 프로젝트를 만들지 않았다.
+
+최종 대사는 원래 DB의 **모든 기존 행 보존**, 업무 테이블·BOM 문서·원본·snapshot·그래프 불변을 확인했다. 읽기 실행·신원·checkpoint·모델 계측 행만 추가됐고, 별도 시연 DB 27개 테이블은 전부 동일하다. 원본 155개·참조 11개·보호 화면 7개·기존 사용자 파일 9개·두 runtime/.env 설정도 동일하다. 현재 원장 v4의 482노드/704관계와 활성 BOM 74행의 적용 미확인을 유지했다. 최초 보존 비교기의 화면 허용목록에 빠진 `web/AGENTS.md`는 실제 커밋된 문서 변경임을 확인해 별도 판정 기록으로 보완했으며 원시 비교 결과를 덮어쓰지 않았다.
+
+검증 전용 앱·브라우저와 격리 컨테이너 3개를 종료했고 DB 볼륨 5개·덤프·증거는 보존했다. 원래 두 서비스와 Langfuse는 계속 실행 중이다. PR #6는 Draft로 올렸으며 main 병합은 하지 않았다.
+
+| 최종 비공개 증거 | SHA-256 |
+|---|---|
+| Mac 재시작 | `75166e17c58dc48231df7c11db72ac605eb9bcd4d1ab67050e2d25862c53dddc` |
+| 실제 모델 1회·두 관측 수신 대조 | `2b4894c742724865c02b7a830e44609bda3ddc971419e7a2513151daaab409b5` |
+| 최종 보존 판정 | `70eea746e7bfbb4dc432108e875e4130454ce41c787bc77b4db731e12e1ec613` |
+| 검증 자원 종료·보존 | `4766f8cbd4d97f6c27cb34585542375f3b43c201c9f9178974eaa2270490bf63` |
 
 ## 남은 1차 인수
 

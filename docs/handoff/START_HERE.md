@@ -1,6 +1,6 @@
 # MK-S2 개발 인계 안내
 
-> 최신 후속: DEC-H44 [진행 표시·LangSmith·남은 1차 작업](SERVICE-PHASE1-PROGRESS-20261110.md). PR #5는 main `3a6079e`에 병합됐다. 새 작업은 별도 브랜치에서 기존 원장/예산을 보존하며 진행한다. 전체 1차 완료와 구분한다.
+> 최신 후속: DEC-H44 [진행 표시·LangSmith·남은 1차 작업](SERVICE-PHASE1-PROGRESS-20261110.md). PR #5는 main `3a6079e`에 병합됐다. 후속은 [Draft PR #6](https://github.com/Ontologics-2Zo/ontologics-chat/pull/6)에 올렸고 Mac에 적용했다. 기존 원장/예산 보존, 429 Python·161 Node·25 브라우저 검사와 실제 두 관측 수신을 확인했다. 전체 1차 완료와 main 병합은 구분한다.
 
 
 > 최신 검토(2026-11-10): DEC-H43의 [PR #5 검토 기록](SERVICE-PR5-REVIEW-20261110.md)을 먼저 읽는다. 로컬 Langfuse 입출력, 연결형 그래프와 BOM 일괄 강조, 미확인 부족 요약을 수정하고 검증 후 main 병합·Mac 재시작이 승인됐다. 아래 DEC-H42의 병합 보류/비용/결함은 당시 기록이다. 최종 병합 상태는 GitHub PR #5를 확인한다.
