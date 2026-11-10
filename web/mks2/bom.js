@@ -643,7 +643,7 @@ export function createBomDrawer({ snapshot, api, getIdentity = () => null, onPos
       if (!current()) return;
       step = action === 'create' ? 2 : action === 'post' ? 7 : action === 'revise' || action === 'request-changes' ? 5 : 6;
       prepareSheet();
-      setNotice({ create: '실제 원본을 접수했습니다. 전체 행과 원본 식별 차이를 검토해 주세요.', revise: '새 버전의 검수 초안을 저장했습니다. 이전 검토·승인은 해제됩니다.', review: '서버에 검토를 기록했습니다. 아직 승인·원장 반영 전입니다.', approve: '이 버전의 등록 내용을 승인했습니다. 원장 반영은 다음 단계입니다.', post: '원장에 등록했습니다. 같은 버전의 그래프 준비 후 최신 원장에서 소요량을 확인하세요.', 'request-changes': '보완 요청을 기록했습니다. 문서는 초안으로 돌아가고 기존 검토·승인은 해제됐습니다.', reject: '이 문서를 반려했습니다. 원장에는 반영되지 않습니다.' }[action]);
+      setNotice({ create: '실제 원본을 접수했습니다. 전체 행과 원본 식별 차이를 검토해 주세요.', revise: '등록 초안을 새 버전으로 저장하고 승인을 요청했습니다. 다른 담당자의 검토·승인을 기다립니다. 이전 검토·승인은 해제됩니다.', review: '서버에 검토를 기록했습니다. 아직 승인·원장 반영 전입니다.', approve: '이 버전의 등록 내용을 승인했습니다. 원장 반영은 다음 단계입니다.', post: '원장에 등록했습니다. 같은 버전의 그래프 준비 후 최신 원장에서 소요량을 확인하세요.', 'request-changes': '보완 요청을 기록했습니다. 문서는 초안으로 돌아가고 기존 검토·승인은 해제됐습니다.', reject: '이 문서를 반려했습니다. 원장에는 반영되지 않습니다.' }[action]);
       scrollTarget = action === 'create' ? 2 : 5;
       if (action === 'create' && candidateStaged) setNotice(`실제 원본을 접수했습니다. 기초 원장의 시연 매핑 가정 ${count(candidateStaged)}행을 초안에 담았습니다. 확인 후 등록 초안을 저장해 승인을 요청하세요.`);
       if (action === 'post') onPosted(active);
