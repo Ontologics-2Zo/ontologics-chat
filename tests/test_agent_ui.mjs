@@ -494,3 +494,20 @@ test('a reservation whose graph projection is pending keeps the old snapshot and
   assert.match(h.app.panels().dashboard.status.textContent, /수량·그래프 갱신 중/);
   assert.equal(h.requests.filter(request => request.path === '/api/mks2/snapshot').length, 0);
 });
+
+test('a posted customer arrival marks only conversations about that round, quoting server quantities', async () => {
+  const h = await setup();
+  h.snapshot().summary = { delivery_round_id: 'R-1', arrived_qty: 32, promise_remaining_qty: 68 };
+  h.app.panels().dashboard.topics.add('round:R-1');
+  h.setHandler(request => request.path.startsWith('/api/mks2/events') ? {
+    current_ledger_version: 8, snapshot_ledger_version: 8, projection_state: 'READY',
+    identity_revision: principal.identity_revision, company_id: principal.company_id,
+    events: [{ event_id: 'synthetic-arrival', ledger_version: 8, event_type: 'ProcurementPosted', document_kind: 'ARRIVAL',
+      summary: '고객 도착 기록 반영', recorded_at: '2026-01-01T00:00:00+00:00' }] } : undefined);
+  const next = snapshotAt(8); next.summary = { delivery_round_id: 'R-1', arrived_qty: 33, promise_remaining_qty: 67 };
+  h.setNextSnapshot(next);
+  await h.app.poll();
+  assert.match(h.app.panels().dashboard.status.textContent, /고객 도착 1대 반영 · 누적 도착 32→33대 · 남은 약속 68→67대/);
+  assert.equal(h.app.panels().graph.status.textContent, '');
+  assert.equal(h.requests.filter(request => request.path === '/api/mks2/query').length, 0);
+});

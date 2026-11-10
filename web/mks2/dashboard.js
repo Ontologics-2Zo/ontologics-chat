@@ -184,6 +184,18 @@ export function renderReservationImpact(snapshot) {
   return `<div class="mk-config-banner mk-change-banner" data-reservation-impact><b>근거 변경</b><span>다른 수요 ${esc(latest.demand_ref)} 예약 +${num(latest.quantity)}${esc(unit)} · ${esc(latest.item_id)} 가용 ${num(first.available_before)}→${num(latest.available_after)} · 계획 부족 ${num(first.planned_shortage_before)}→${num(latest.planned_shortage_after)}${esc(unit)} · 기존 확보안 재검토 필요 · 원장 v${num(latest.ledger_version)}</span>${button('변경 원인 질문', 'ask-change')}</div>`;
 }
 
+/** Latest posted customer arrival from server documents and the current round. */
+export function renderArrivalCard(snapshot) {
+  const docs = (snapshot.procurement?.documents || []).filter(doc => doc.kind === 'ARRIVAL' && doc.status === 'POSTED')
+    .sort((a, b) => (a.ledger_version || 0) - (b.ledger_version || 0));
+  const latest = docs.at(-1), summary = snapshot.summary || {};
+  if (!latest) return '';
+  const later = docs.filter(doc => doc.ledger_version > latest.ledger_version).reduce((sum, doc) => sum + (doc.content?.board_serials?.length || 0), 0);
+  const n = latest.content?.board_serials?.length || 0, arrived = summary.arrived_qty - later, remaining = summary.promise_remaining_qty + later;
+  const node = (snapshot.entities || []).find(entity => entity.type === 'ArrivalRecord' && entity.attributes?.document_id === latest.id);
+  return `<div class="mk-config-banner mk-change-banner" data-arrival-card><b>합성 시연 · 고객 도착 ${num(n)}대 반영</b><span>${esc(summary.delivery_round_id)} · 보드 ${esc((latest.content?.board_serials || []).join(', '))} · 누적 도착 ${num(arrived - n)}→${num(arrived)}대 · 남은 약속 ${num(remaining + n)}→${num(remaining)}대 · 원장 v${num(latest.ledger_version)}</span>${node ? `<button type="button" class="mk-btn" data-graph="${esc(node.id)}">도착 근거 보기</button>` : ''}</div>`;
+}
+
 function reservationForm(snapshot) {
   const lots = (snapshot.inventory || []).filter(row => row.scope === 'LOT' && Number(row.available_qty) > 0);
   return `<section class="mk-card" data-reservation-form><h3>다른 주문 재고 예약<span class="mk-spacer"></span>${tag('합성 시연 · 원장 반영', 'warn')}</h3>
@@ -275,7 +287,7 @@ export function mountDashboard(container, { snapshot, onSelect = () => {}, onAsk
     const canReserve = (getIdentity?.()?.permitted_actions || []).includes('inventory.reserve');
     container.innerHTML = `<div class="mk-dashboard-heading"><h1>운영 대시보드</h1><span>${esc(dateLabel)}</span><label class="mk-live"><input type="checkbox" data-live${live ? (live.get() ? ' checked' : '') : ' disabled'}>실시간 사건 반영</label></div>
       <div class="mk-config-banner"><b>${blockedBom ? '구성 미등록' : '계산 기준'}</b><span>${esc(statusText)}. 확인된 원장과 같은 버전의 근거로 판단합니다.</span>${button('BOM 원본 등록', 'bom', true)}</div>
-      ${renderReservationImpact(snapshot)}${canReserve ? reservationForm(snapshot) : ''}
+      ${renderReservationImpact(snapshot)}${renderArrivalCard(snapshot)}${canReserve ? reservationForm(snapshot) : ''}
       ${renderKpis()}
       <div class="mk-viz-grid"><section class="mk-card" data-material-coverage><h3>자재 충족률${summary.production_job_id ? ` · ${esc(summary.production_job_id)}` : ''}<span class="mk-spacer"></span><span class="mk-toggle" role="group" aria-label="계산 기준"><button type="button" data-basis="production_remaining" aria-pressed="${basis === 'production_remaining'}">남은 생산 ${num(summary.production_remaining_qty)}대</button><button type="button" data-basis="planned" aria-pressed="${basis === 'planned'}">수율 반영 ${num(requirements.basis?.planned_input_qty)}대</button></span></h3><div data-region="materials">${materialContent()}</div></section>
       <section class="mk-card"><h3>회차별 이행 단계<span class="mk-spacer"></span>${tag('단위: 대')}</h3>${rows.map(row => `<button type="button" class="mk-round-bar" data-select="${esc(row.id || row.node_id)}"><span class="mk-round-label">${esc(row.delivery_round_id || row.display_id)}<small>${num(row.promised_qty ?? row.promise_qty)}대</small></span><span class="mk-bar-width">${bars(row, row.promised_qty ?? row.promise_qty)}</span><span class="mk-round-remaining">${num(row.promise_remaining_qty)}</span></button>`).join('')}<p class="mk-small-note">오른쪽 숫자는 남은 고객 도착 약속입니다.</p><div class="mk-inline-legend">${segmentLabels.map((label, i) => `<span><i class="${segmentClass[i]}"></i>${label}</span>`).join('')}</div></section></div>

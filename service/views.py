@@ -38,7 +38,7 @@ def snapshot_view(payload):
     version = source["server_ledger_version"]
     ready = projection.get("state") == "READY" and projection.get("projection_version") == version
     balance = payload["opening_balance"]
-    round_ = balance["delivery_round"]
+    round_ = payload.get("current_delivery_round") or balance["delivery_round"]
     inventories = payload.get("current_inventory", balance["inventory"])
     lots = [row for row in inventories if row["scope"] == "LOT"]
     # Primary inventory is identified by its actual LOT records, never a fixed
@@ -124,6 +124,7 @@ def snapshot_view(payload):
         "bom": deepcopy(bom), "material_requirements": requirements,
         "procurement": deepcopy(payload.get("procurement", {})),
         "reservations": deepcopy(payload.get("reservations", [])),
+        "fulfillment": deepcopy(payload.get("fulfillment", {})),
         "capabilities": {"bom_upload": "RUNNER_UNAVAILABLE", "purchase_write": "NOT_IMPLEMENTED", "agent": "NOT_IMPLEMENTED", "model": "NOT_RUN"},
         "reservation_impacts": impacts,
         "suggested_questions": suggestions + ["남은 약속은 몇 대고, 얼마나 더 만들어야 해?", "수율을 적용하면 몇 대 투입하고 어떤 자재가 부족해?", f"남은 {summary['promise_remaining_qty']}대, 납기 안에 고객에게 도착할 수 있어?", "현재 가용 재고와 예약 근거를 보여줘", "전체 온톨로지의 클래스와 관계 범위를 보여줘"],

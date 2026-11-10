@@ -31,6 +31,7 @@ _PROCUREMENT_EVENT_LABELS = {
     "QUOTE": "견적 기록", "PR": "구매 요청", "PO": "발주 기록",
     "SUPPLY_CONFIRMATION": "공급 확인 기록", "RECEIPT": "입하 기록",
     "IQC": "수입검사 기록", "CANCEL": "취소 기록",
+    "PRODUCTION": "생산 실적 기록", "FG_RECEIPT": "완성품 입고 기록", "SHIPMENT": "출하 기록", "ARRIVAL": "고객 도착 기록",
 }
 
 

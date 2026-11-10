@@ -1,6 +1,7 @@
 """Typed internal-development purchasing commands; no external transmission."""
 from datetime import date
 from decimal import Decimal, InvalidOperation
+import re
 from typing import Annotated, Literal, Union
 
 from pydantic import Field, field_validator, model_validator
@@ -101,10 +102,53 @@ class CancelContent(PurchaseContent):
     target_id: str = Field(min_length=1, max_length=100)
 
 
+class BoardsContent(PurchaseContent):
+    """Fulfillment records name individual board serials (DEC-H49)."""
+    board_serials: list[str] = Field(min_length=1, max_length=100)
+
+    @field_validator("board_serials")
+    @classmethod
+    def serials(cls, value):
+        if len(set(value)) != len(value) or any(not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", item) for item in value):
+            raise ValueError("BOARD_SERIALS_INVALID")
+        return value
+
+    @property
+    def quantity(self):
+        return len(self.board_serials)
+
+
+class ProductionContent(BoardsContent):
+    kind: Literal["PRODUCTION"] = "PRODUCTION"
+    iqc_id: str = Field(min_length=1, max_length=100)
+    production_ref: str = Field(min_length=1, max_length=100)
+
+
+class FinishedGoodsContent(BoardsContent):
+    kind: Literal["FG_RECEIPT"] = "FG_RECEIPT"
+    production_id: str = Field(min_length=1, max_length=100)
+    receipt_ref: str = Field(min_length=1, max_length=100)
+
+
+class ShipmentContent(BoardsContent):
+    kind: Literal["SHIPMENT"] = "SHIPMENT"
+    fg_receipt_id: str = Field(min_length=1, max_length=100)
+    shipment_ref: str = Field(min_length=1, max_length=100)
+
+
+class ArrivalContent(BoardsContent):
+    kind: Literal["ARRIVAL"] = "ARRIVAL"
+    shipment_id: str = Field(min_length=1, max_length=100)
+    arrival_ref: str = Field(min_length=1, max_length=100)
+
+
 ProcurementContent = Annotated[Union[QuoteContent, RequestContent, OrderContent, ReceiptContent,
-                                    SupplyConfirmationContent, InspectionContent, CancelContent], Field(discriminator="kind")]
+                                    SupplyConfirmationContent, InspectionContent, CancelContent,
+                                    ProductionContent, FinishedGoodsContent, ShipmentContent, ArrivalContent], Field(discriminator="kind")]
 CONTENT_TYPES = {cls.model_fields["kind"].default: cls for cls in
-                 (QuoteContent, RequestContent, OrderContent, ReceiptContent, SupplyConfirmationContent, InspectionContent, CancelContent)}
+                 (QuoteContent, RequestContent, OrderContent, ReceiptContent, SupplyConfirmationContent, InspectionContent, CancelContent,
+                  ProductionContent, FinishedGoodsContent, ShipmentContent, ArrivalContent)}
+FULFILLMENT_KINDS = {"PRODUCTION", "FG_RECEIPT", "SHIPMENT", "ARRIVAL"}
 
 
 class ProcurementCreate(Contract):

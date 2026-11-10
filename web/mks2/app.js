@@ -342,6 +342,9 @@ async function runQuery(name, question) {
         : (answer.calculation?.material_requirements?.items || snapshot.material_requirements?.items || []).map(item => item.item_id);
       for (const item of scoped) panel.topics.add(item);
     }
+    if ((answer.intent || []).some(intent => ['delivery', 'fulfillment', 'trace'].includes(intent)) && snapshot.summary?.delivery_round_id) {
+      panel.topics.add(`round:${snapshot.summary.delivery_round_id}`);
+    }
     twin?.highlight({ nodeIds: ids, edgeIds: answer.evidence_edge_ids || [],
       ledgerVersion: answer.meta.ledger_version, projectionVersion: answer.meta.projection_version,
       snapshotId: answer.meta.snapshot_id ?? answer.meta.read_snapshot_id,
@@ -545,6 +548,17 @@ function announceApplied(events, startedAt) {
     }
   }
 }
+// Arrival: the round's own quantities changed; quote server summaries only.
+function announceArrival(before, topic, event) {
+  const after = snapshot.summary || {};
+  const names = relevantPanels([topic]);
+  if (!names.length || after.arrived_qty === before.arrived_qty) return;
+  const n = after.arrived_qty - before.arrived_qty;
+  setStatus(names, [element('b', '', '현재 대화의 근거 변경'),
+    ` 고객 도착 ${n}대 반영 · 누적 도착 ${before.arrived_qty}→${after.arrived_qty}대 · 남은 약속 ${before.promise_remaining_qty}→${after.promise_remaining_qty}대 · 원장 v${snapshot.meta.ledger_version} `,
+    button('원장 사건 보기', () => { location.hash = '#dashboard'; document.querySelector(`[data-ledger-event-id="${event.event_id}"] details`)?.setAttribute('open', ''); }, 'btn sm'),
+    ...names.map(name => button('최신 기준으로 재분석', () => fillQuestion(panels[name].lastQuestion || `남은 ${after.promise_remaining_qty}대, 납기 안에 고객에게 도착할 수 있어?`, name), 'suggestion'))]);
+}
 async function pollChanges() {
   updateTwinActivity();
   if (polling || !snapshot || !identity || document.hidden || (window.frameElement && !window.frameElement.getBoundingClientRect().height)) return;
@@ -559,6 +573,8 @@ async function pollChanges() {
     if (!(changes.current_ledger_version > snapshot.meta.ledger_version)) return;
     latestVersion = changes.current_ledger_version; refreshButton.textContent = `새 원장 v${latestVersion} 조회`; refreshButton.hidden = false;
     const reserved = reservationEvents(changes.events).filter(event => !handledEvents.has(event.event_id));
+    const arrivals = (changes.events || []).filter(event => event.document_kind === 'ARRIVAL' && !handledEvents.has(event.event_id));
+    const roundTopic = `round:${snapshot.summary?.delivery_round_id}`;
     const calculated = new Set((snapshot.material_requirements?.items || []).map(item => item.item_id));
     const relevant = reserved.filter(event => calculated.has(event.reservation.item_id));
     const ready = changes.projection_state === 'READY' && changes.snapshot_ledger_version === changes.current_ledger_version;
@@ -567,19 +583,24 @@ async function pollChanges() {
       lane?.setLag(`원장 v${changes.current_ledger_version} 반영 · 그래프 갱신 중 (표시 v${snapshot.meta.projection_version})`);
       for (const event of relevant) setStatus(relevantPanels([event.reservation.item_id]), [element('b', '', '원장 사건 확인'),
         ` ${event.summary} · 수량·그래프 갱신 중 · 현재 표시 원장 v${snapshot.meta.ledger_version}`]);
+      for (const event of arrivals) setStatus(relevantPanels([roundTopic]), [element('b', '', '원장 사건 확인'),
+        ` ${event.summary} · 수량 갱신 완료 전 · 그래프 갱신 중`]);
       return;
     }
     if (!liveEnabled || !canAutoApply()) {
+      for (const event of arrivals) setStatus(relevantPanels([roundTopic]), [element('b', '', '근거 변경 대기'),
+        ` ${event.summary} · 작성·답변 중이라 자동 갱신을 미뤘습니다 `, button('최신 기준으로 보기', refreshSnapshot, 'btn sm')]);
       for (const event of relevant) setStatus(relevantPanels([event.reservation.item_id]), [element('b', '', '근거 변경 대기'),
         ` ${event.summary} · 작성·답변 중이라 자동 갱신을 미뤘습니다 `, button('최신 기준으로 보기', refreshSnapshot, 'btn sm')]);
       return;
     }
-    const startedAt = Date.now();
+    const startedAt = Date.now(), before = { ...snapshot.summary };
     await refreshSnapshot();
     if (generation === requestGeneration + 1 && snapshot?.meta.ledger_version === changes.current_ledger_version) {
       lane?.setLag(null);
-      for (const event of reserved) handledEvents.add(event.event_id);
+      for (const event of [...reserved, ...arrivals]) handledEvents.add(event.event_id);
       announceApplied(relevant, startedAt);
+      if (arrivals.length) announceArrival(before, roundTopic, arrivals.at(-1));
     }
   } catch (error) {
     if (error.status === 401) { identity = null; csrfToken = null; invalidateView(); }

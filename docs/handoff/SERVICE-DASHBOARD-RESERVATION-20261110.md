@@ -92,8 +92,8 @@ DEC-H47 실행 기록이다. 브랜치 `feat/mks2-dashboard-reservation`, 기준
 | 시나리오 2~3절 기준 흐름 1~3 | 68대 질문 → 40/43 → BOM 등록·5품목 → 부족 20/23 | T1·T3·T7 | VERIFIED(격리) |
 | 3절 4~6 | 23개 확보안 → PR → PO → 모의 공급확인 → 입하23(가용20) → IQC23(가용43·부족0) → 68대 재질문 | T8 | VERIFIED(격리, 아래) |
 | 4절·요청서 전체 | 다른 주문 예약5 → 23→28, 관련 대화 상태 줄, 변경 원인·공급사 A~D 재비교·납기 영향 | T4·T5 | VERIFIED(격리) · T5 예외 검사 남음 |
-| 4절 후속·7절 카드 | 고객 도착1대 → 32→33·68→67 카드와 상태 줄 | T6 | T9로 구현 예정 |
-| 6절 CQ3 | LOT-PWR-02 → 소비·장착 → 보드3 생산 → 입고 → 출하2 → 도착1, LOT 추적 질문 | T9 | NOT_STARTED · 공식 T-Box 용어 확인됨 |
+| 4절 후속·7절 카드 | 고객 도착1대 → 32→33·68→67 카드와 상태 줄 | T6 | VERIFIED(격리, 아래 T9) |
+| 6절 CQ3 | LOT-PWR-02 → 소비·장착 → 보드3 생산 → 입고 → 출하2 → 도착1, LOT 추적 질문 | T9 | VERIFIED(격리, 아래) |
 | 6절 전체 도착 | 약속100 전부 도착 확인 | T10 | NOT_STARTED |
 | 6절 예비 CQ4 | Rev L → L1 변경 영향 | T11 | NOT_STARTED · Rev L 원장 문서 필요 |
 | 6절 What-if | 수율·공급·대체 조건 비교 | T12 | 일부(수율·목표만) |
@@ -115,3 +115,13 @@ DEC-H47 실행 기록이다. 브랜치 `feat/mks2-dashboard-reservation`, 기준
 ### T9 설계 (다음 구현)
 
 공식 용어만 사용한다: `ConsumptionEvent`(consumesLot, consumedForJob), `InstallationEvent`(installedOn → `BoardUnit`, installationForLine, supportedByConsumption), `ProductionReport`(reportedBoard, productionAttributedToRound), `FinishedGoodsReceipt`, `Allocation`(allocationFromReceipt, allocatedToRound), `Shipment`/`ShipmentLine`(shipsBoard, shipmentForRound), `ArrivalRecord`(arrivalOfShipment, arrivedBoard). 각 사건은 구매와 같은 문서 작성 → 독립 검토·승인 → 명시 반영과 정확 버전·멱등·감사·outbox를 따른다. 반영 후 회차 수량(양품·입고·출하·도착·남은 약속)은 서버 reducer가 바꾸며, 도착 반영 시 관련 대화 상태 줄과 도착 카드(32→33·68→67)를 예약과 같은 규칙으로 표시한다. LOT 추적 CQ는 기록된 관계만 따라간다. 미래 결과를 미리 넣지 않는다.
+
+### T9/T6 실행 결과
+
+- 서버: migration 011(문서 종류 `PRODUCTION`·`FG_RECEIPT`·`SHIPMENT`·`ARRIVAL`), `procurement_contracts.py`(보드 serial 목록), `procurement.py`의 `_resolve_fulfillment`(IQC 합격 LOT → 생산, 생산 → 입고 → 출하 → 도착 순서와 보드 상태·남은 양품 목표·LOT 가용·BOM 대당 수량 검사), `procurement_state.py` reducer(LOT 소비, `current_delivery_round` 수량 갱신 — 기초 이관 수량은 보존, 보드 상태). 그래프는 공식 용어만 사용: `ConsumptionEvent`(consumesLot, consumedForJob), `InstallationEvent`(usesLot·installedOn·installationForLine·supportedByConsumption), `BoardUnit`(boardForRound·manufacturingConfiguration), `ProductionReport`(reportedBoard·reportForJob·productionAttributedToRound), `FinishedGoodsReceipt`(fgReceiptFromReport)·`Allocation`, `Shipment`(shipsBoard·shipmentForRound), `ArrivalRecord`(arrivalOfShipment·arrivedBoard·receivedByCustomer). 첫 시도에서 `InstallationEvent`의 필수 `usesLot`이 빠져 SHACL 위반으로 투영이 막혔고, 추가 후 모든 버전이 CONFORMS/READY.
+- 질의: `trace` 의도와 LOT 코드 식별(`LOT-` 코드를 수량으로 오인하지 않음). 기록된 관계만 따라 보드·작업·입고·출하·도착·회차를 답하고 기록 없는 단계는 추정하지 않는다(DEMO-CQ-03).
+- 화면: 공급 흐름 카드에 IQC 이후 `생산 실적 기록` → `완성품 입고 기록` → `출하 기록` → `고객 도착 기록`(이전 단계 보드 serial 자동 채움, 작성·독립 승인·반영). 도착 반영 시 해당 회차를 다룬 대화에만 "현재 대화의 근거 변경 · 고객 도착 1대 반영 · 누적 도착 32→33대 · 남은 약속 68→67대" 상태 줄과 `원장 사건 보기`·`최신 기준으로 재분석`(입력만 채움), 대시보드에 "합성 시연 · 고객 도착 1대 반영" 카드.
+- 격리 실행(구매 완료 v11에서): 생산 3(v12, 양품 60→63, 남은 양품 목표 40→37, LOT-PWR-02 23→20, IM-0016 계획 부족 0) → 입고 3(v13) → 출하 2(v14) → 도착 1(v15, 도착 32→33, 남은 약속 68→67). A의 화면은 자동 v15, 회차 대화에만 상태 줄, 대시보드 도넛 67. 그래프 탭 질문 "LOT-PWR-02는 어느 보드·작업·출하·납품회차에 연결되어 있어?"는 보드 3대·입고 3·출하 2·도착 1(BRD-001)·회차 33/67을 답하고 근거 경로를 재생했다. 모델 호출 0.
+- 검증: Python 전체 OK(skip 12, `test_fulfillment.py` 3개 포함), Node 191 PASS(도착 상태 줄 검사 포함).
+- 초기화 지점: `reset_demo.py start`(v5) · `purchased`(v11) · `arrived`(v15) · `ready`(예약 분기 v9).
+- 남은 일: 전체 약속 100대 도착(T10), Rev L→L1 변경 영향(T11, Rev L 원장 문서 필요), What-if 확장(T12), 실시간 예외 검사(T5), PR #7 병합과 8870 적용.

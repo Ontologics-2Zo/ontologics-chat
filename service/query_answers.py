@@ -17,13 +17,13 @@ from service.query_intents import interpret_question
 
 
 RULE_VERSION = "cq-read-analysis/2"
-LABELS = {"change": "수량 변경 원인", "sourcing": "부족 자재 확보안 비교", "fulfillment": "납품 이행", "production": "추가 생산·투입",
+LABELS = {"trace": "LOT 추적", "change": "수량 변경 원인", "sourcing": "부족 자재 확보안 비교", "fulfillment": "납품 이행", "production": "추가 생산·투입",
           "materials": "자재 소요·부족", "inventory": "가용 재고",
           "delivery": "고객 도착·납기 판단", "ontology": "전체 온톨로지"}
 SYNTHETIC = "synthetic_opening_balance"
 DEMO = "conditional_demo"
 # DEC-H47 branches explain existing material CQs; no new official CQ IDs.
-CQ_REFS = {"change": ("B-CQ01", "B-CQ04"), "sourcing": ("CQ09", "B-CQ01", "B-CQ04"),
+CQ_REFS = {"trace": ("DEMO-CQ-03",), "change": ("B-CQ01", "B-CQ04"), "sourcing": ("CQ09", "B-CQ01", "B-CQ04"),
            "fulfillment": ("DEMO-CQ-01", "B-CQ02"), "production": ("DEMO-CQ-02", "B-CQ03"),
            "materials": ("CQ09", "B-CQ04"), "inventory": ("B-CQ01", "B-CQ04"),
            "delivery": ("DEMO-CQ-01", "B-CQ01", "B-CQ04"), "ontology": ()}
@@ -493,6 +493,63 @@ def _material_change_answer(view, plan, req):
     return result
 
 
+def _lot_trace_answer(question, view, plan):
+    """Follow only recorded relations from a LOT: consumption → installation on
+    boards → production report → finished goods → shipment → arrival → round."""
+    import re
+    lots = {row.get("lot_id") for row in view["inventory"] if row.get("lot_id")}
+    asked = [lot for lot in lots if re.search(re.escape(lot.casefold()), question.casefold())]
+    kinds = {"PartLot", "InternalItem", "ConsumptionEvent", "InstallationEvent", "BoardUnit", "ProductionReport",
+             "FinishedGoodsReceipt", "Allocation", "Shipment", "ArrivalRecord", "DeliveryRound", "ProductionJob"}
+    if len(asked) != 1:
+        return _clarify(view, plan, "추적할 LOT를 현재 원장의 LOT 코드 하나로 지정해 주세요.")
+    lot = asked[0]
+    stock = next(row for row in view["inventory"] if row.get("lot_id") == lot)
+    boards = {serial: value for serial, value in view.get("fulfillment", {}).get("boards", {}).items() if value.get("lot_code") == lot}
+    documents = view.get("procurement", {}).get("documents", [])
+    by_id = {row["id"]: row for row in documents}
+    receipts = [row for row in documents if row["kind"] == "RECEIPT" and row["content"].get("lot_code") == lot]
+    related = {row["id"] for row in receipts} | {row["id"] for row in documents if row["kind"] == "IQC" and row["content"]["resolved"]["parent"]["id"] in {r["id"] for r in receipts}}
+    for value in boards.values():
+        related.update(value[key] for key in ("production_id", "fg_receipt_id", "shipment_id", "arrival_id") if value.get(key))
+    s = view["summary"]
+    counts = {state: sorted(serial for serial, value in boards.items() if value["status"] == state) for state in ("PRODUCED", "RECEIVED", "SHIPPED", "ARRIVED")}
+    sections, answers = [], []
+    origin = "development_workflow" if receipts else SYNTHETIC
+    answers.append(f"{lot}({stock['item_id']})의 현재 보유 {number(stock.get('on_hand_qty'))} · 가용 {number(stock.get('available_qty'))} {stock.get('unit') or ''}입니다."
+                   + (f" 소비 기록 {number(stock.get('consumed_qty', 0))}개." if stock.get("consumed_qty") else ""))
+    if not boards:
+        answers.append("이 LOT의 소비·장착·생산 기록이 아직 없어 연결된 보드·출하·납품회차가 없습니다. 예약·계획만으로 연결하지 않습니다.")
+        status = "ANSWERED"
+    else:
+        produced = sorted(boards)
+        production_ids = sorted({value["production_id"] for value in boards.values()})
+        per_board = next((by_id[pid]["content"]["resolved"]["quantity_per_board"] for pid in production_ids if pid in by_id), "미확인")
+        answers.append(f"{lot}에서 소비된 부품이 보드 {len(produced)}대({', '.join(produced)})에 장착 기록됐고, 작업 {s['production_job_id']}의 생산 실적으로 회차 {s['delivery_round_id']}에 귀속됩니다(보드당 {number(per_board)}{'개' if stock.get('unit') == 'EA' else ''}).")
+        reached_fg = len(counts["RECEIVED"]) + len(counts["SHIPPED"]) + len(counts["ARRIVED"])
+        reached_ship = len(counts["SHIPPED"]) + len(counts["ARRIVED"])
+        answers.append(f"그중 완성품 입고 {reached_fg}대, 출하 {reached_ship}대, 고객 도착 {len(counts['ARRIVED'])}대입니다"
+                       + (f"(도착 {', '.join(counts['ARRIVED'])})" if counts["ARRIVED"] else "") + ".")
+        answers.append(f"회차 {s['delivery_round_id']}의 누적 고객 도착은 {number(s['arrived_qty'])}대, 남은 약속은 {number(s['promise_remaining_qty'])}대입니다. 장착은 BOM 적용 시연 가정에 근거한 기록이며 제조 기술검수가 아닙니다.")
+        sections.append(section("trace", f"{lot} 추적 · 기록된 관계", "development_workflow", [
+            item(serial, {"PRODUCED": "생산", "RECEIVED": "완성품 입고", "SHIPPED": "출하", "ARRIVED": "고객 도착"}[value["status"]],
+                 "생산 → 입고 → 출하 → 도착 중 현재 단계")
+            for serial, value in sorted(boards.items())]))
+        status = "ANSWERED"
+    sections.insert(0, section("lot", f"{lot} 재고", origin, [
+        item("보유 / 가용", f"{number(stock.get('on_hand_qty'))} / {number(stock.get('available_qty'))} {stock.get('unit') or ''}"),
+        item("입하 문서", f"{len(receipts)}건", "입하·수입검사 합격 후 가용으로 전환됩니다."),
+    ]))
+    result = _result(view, plan, answer=" ".join(answers), status=status, sections=sections, kinds=kinds,
+                     selected_items=[stock["item_id"]], conclusion="기록된 LOT 추적 관계", offer_documents=sorted(related))
+    result["calculation"] = {"lot_code": lot, "boards": {serial: value["status"] for serial, value in boards.items()},
+                             "counts": {key: len(value) for key, value in counts.items()},
+                             "actual_delivery_feasibility": None, "estimated_arrival": None, "delivery_probability": None}
+    result["steps"] = ["LOT와 회차·조회 버전을 확인했습니다.", "소비·장착·생산·입고·출하·도착 기록을 원장 관계로 따라갔습니다.",
+                       "기록이 없는 단계는 추정하지 않고 비워 두었습니다."]
+    return result
+
+
 def answer_query(question, view, ontology, *, context_entity_id=None):
     plan = interpret_question(question)
     if plan.clarification:
@@ -508,6 +565,8 @@ def answer_query(question, view, ontology, *, context_entity_id=None):
     intents = set(plan.intents)
     s = view["summary"]
     req = _requirements(view, plan)
+    if "trace" in intents:
+        return _lot_trace_answer(question, view, plan)
     if intents & {"change", "sourcing"}:
         return _material_change_answer(view, plan, req)
     basis = req["basis"]
