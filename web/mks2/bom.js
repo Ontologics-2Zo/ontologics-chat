@@ -4,7 +4,7 @@ import { createProductReview } from './product.js';
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 const count = value => Number.isInteger(value) ? value.toLocaleString('ko-KR') : '미확인';
 const stages = ['원본 접수', '개정 식별', '추출·검증', '개정 차이', '품목 연결', '등록 초안', '검토·승인', '반영'];
-const statuses = { DRAFT: '초안', REVIEWED: '검토 완료', APPROVED: '승인 완료 · 미반영', POSTED: '원장 반영' };
+const statuses = { DRAFT: '초안', REVIEWED: '검토 완료', APPROVED: '승인 완료 · 미반영', POSTED: '원장 반영', REJECTED: '반려' };
 const applications = { UNRESOLVED: '미확인', APPLICABLE: '적용 가정', NOT_MOUNTED: '비실장', SETTING: '설정' };
 const bases = { UNREVIEWED: '미검수', SOURCE_VERIFIED: '원문 대조', DEMO_ASSUMPTION: '시연 가정' };
 const linked = value => value?.application_status === 'APPLICABLE' && !!value.item_id;
@@ -139,7 +139,7 @@ export function createBomComparison({ api, onChange = () => {} }) {
     const reasons = { MISSING_DESIGNATOR:'위치 식별값 없음', DUPLICATE_DESIGNATOR:'중복된 위치 표기', AMBIGUOUS_ROW_CORRESPONDENCE:'행 분할·병합 또는 중복 대응', SHEET_CORRESPONDENCE_UNKNOWN:'시트 대응 확인 필요', UNRESOLVED_DESIGNATOR:'실제 위치인지 확인할 표기', QUANTITY_UNCONFIRMED:'원문 수량 미확인', DESIGNATOR_SET_CHANGED:'부품 위치 묶음 변경', SAME_SOURCE_EXTRACTION_DIFFERS:'같은 원본의 추출 결과가 다름' };
     const warningLabels = {DIFFERENT_CONFIGURATION_EXPLICIT_BASELINE:'선택한 두 문서의 기준 구성이 다릅니다.', SINGLE_SHEET_NAMES_DIFFER:'두 원본의 시트명이 다릅니다. 위치 표기를 기준으로 비교한 결과입니다.', SAME_SOURCE_EXTRACTION_DIFFERS:'같은 원본 hash에서 추출 결과 차이가 발견됐습니다.'};
     const changes = (result?.rows || []).filter(row => row.change_type !== 'UNCHANGED');
-    return `<section class="mk-drawer-block" data-bom-section="3"><h3>개정 차이</h3><label class="mk-bom-field">비교 기준 문서<select data-bom-field="compare-baseline"${busy ? ' disabled' : ''}>${option('','기준 없음 · 최초 등록 / 비교하지 않음',baseline)}${documents.filter(doc => doc.id !== document.id).map(doc => option(doc.id, `${doc.content?.source?.filename || doc.id} · 문서 v${doc.version} · ${statuses[doc.status] || doc.status} · ${doc.id.slice(-6)}`,baseline)).join('')}</select></label>
+    return `<section class="mk-drawer-block" data-bom-section="3"><h3>개정 대비 차이${result && result.status !== 'NO_BASELINE' ? ` <span class="mk-pill info">${count((result.rows || []).filter(row => row.change_type !== 'UNCHANGED').length)}위치</span>` : ''}</h3><label class="mk-bom-field">비교 기준 문서<select data-bom-field="compare-baseline"${busy ? ' disabled' : ''}>${option('','기준 없음 · 최초 등록 / 비교하지 않음',baseline)}${documents.filter(doc => doc.id !== document.id).map(doc => option(doc.id, `${doc.content?.source?.filename || doc.id} · 문서 v${doc.version} · ${statuses[doc.status] || doc.status} · ${doc.id.slice(-6)}`,baseline)).join('')}</select></label>
       <p class="mk-small-note">기준 문서를 선택하면 원문 위치·수량·값을 비교합니다. 두 문서의 제조 구성이나 개정 계보를 자동 확정하지 않습니다.</p>
       ${busy ? '<p role="status">저장된 두 원본을 비교하고 있습니다…</p>' : failure ? `<p role="status" class="mk-bom-notice error">${esc(failure)}</p>` : result ? `<p class="mk-bom-compare-summary">${result.status === 'NO_BASELINE' ? '비교 기준 없음 · 최초 등록으로 원문 검토를 진행할 수 있습니다.' : result.status === 'IDENTICAL_SOURCE' ? '같은 원본입니다. 원문 변경은 없으며, 문서별 검수 판단·승인 상태는 별개입니다.' : `추가 ${count(result.summary.added)} · 삭제 ${count(result.summary.removed)} · 변경 ${count(result.summary.changed)} · 동일 ${count(result.summary.unchanged)} · 대응 확인 ${count(result.summary.needs_review)}`}</p>
       ${result.left ? `<p class="mk-small-note">기준 ${esc(result.left.filename)} v${count(result.left.version)} → 현재 ${esc(result.right.filename)} v${count(result.right.version)}</p>` : ''}${(result.warnings || []).map(warning => `<p class="mk-small-note">${esc(warningLabels[warning] || '원본 대응의 추가 확인이 필요합니다.')}</p>`).join('')}${result.source_warnings?.left?.length ? '<p class="mk-small-note">기준 문서에도 원본 식별·검수 경고가 있습니다. 비교 완료가 경고 해소를 뜻하지 않습니다.</p>' : ''}
@@ -147,6 +147,25 @@ export function createBomComparison({ api, onChange = () => {} }) {
       <div class="mk-bom-actions">${button('다시 비교', 'compare', busy)}</div><p class="mk-small-note">비교는 읽기 전용입니다. 미확인·중복 위치는 별도 검토하며, 이전 품목 연결과 승인을 자동 이월하지 않습니다.</p></section>`;
   }
   return { load, render, reset, result: () => result };
+}
+
+/** Identify a local file only by SHA-256 against stored server sources.
+ *  The file content is never uploaded or parsed in the browser. */
+export function identifyBomFile(sha, sources, documents, configurationId) {
+  if (!sha) return { ok: false, why: '이 환경에서는 파일 해시를 계산할 수 없어 개정을 식별하지 못했습니다.' };
+  const match = sources.find(source => source.sha256 === sha);
+  if (!match) return { ok: false, why: '보관된 원본 목록과 해시가 일치하지 않습니다. 파일 이름이 같아도 근거가 확인되지 않은 구성은 등록하지 않습니다.' };
+  if (!['ods', 'csv'].includes(match.format)) return { ok: false, source: match, why: `보관 원본 ${match.filename}과 일치하지만 ${String(match.format).toUpperCase()}는 BOM 표 등록을 지원하지 않습니다.` };
+  const other = documents.find(doc => doc.status === 'POSTED' && doc.content?.source?.sha256 === sha && doc.content?.configuration_id !== configurationId);
+  if (other) return { ok: false, source: match, why: `이 원본은 이미 ${other.content.configuration_id} 구성으로 등록돼 있어 ${configurationId} 구성으로 새로 등록하지 않습니다.` };
+  return { ok: true, source: match };
+}
+
+/** Reviewer flow shown as 초안 → 검토 → 승인 → 반영 from the server status. */
+export function bomFlowStates(status) {
+  const index = { DRAFT: 0, REVIEWED: 1, APPROVED: 2, POSTED: 3 }[status];
+  return ['초안', '검토', '승인', '반영'].map((label, i) => ({ label,
+    state: status === 'REJECTED' ? 'rejected' : index === undefined ? 'pending' : i < index || status === 'POSTED' ? 'done' : i === index ? 'on' : 'pending' }));
 }
 
 export function bomReferenceMatches(document, reference, configurationId) {
@@ -159,10 +178,10 @@ export function bomReferenceMatches(document, reference, configurationId) {
     && document.content?.configuration_id === configurationId;
 }
 
-export function createBomDrawer({ snapshot, api, getIdentity = () => null, onPosted = () => {}, onRefresh = () => {} }) {
+export function createBomDrawer({ snapshot, api, getIdentity = () => null, onPosted = () => {}, onRefresh = () => {}, onShowGraph = null }) {
   let wrap = null, focusBefore = null, step = 0, active = null, sources = [], documents = [], runner = null;
   let busy = false, operation = '', generation = 0, notice = '', failure = false, selectedRow = null;
-  let selectedSource = '', scrollTarget = null;
+  let selectedSource = '', scrollTarget = null, fileCheck = null, outcomeReason = '';
   let focusResult = null, focusFailure = false, rowFilter = 'focus';
   let drafts = new Map(), dirty = false, reviewNote = '', reviewerNote = '', acknowledged = false;
   // Text still being typed is separate from explicitly staged row decisions.
@@ -195,7 +214,22 @@ export function createBomDrawer({ snapshot, api, getIdentity = () => null, onPos
     focusResult = null; focusFailure = false; rowFilter = 'focus';
     drafts = new Map(); dirty = false; selectedRow = null;
     rowInputs = new Map(); discardRowInputs = true;
-    reviewNote = content().review_note || ''; reviewerNote = ''; acknowledged = false;
+    reviewNote = content().review_note || ''; reviewerNote = ''; acknowledged = false; outcomeReason = '';
+  }
+  async function handleFile(file) {
+    if (!file || busy || !wrap) return;
+    let sha = null;
+    try {
+      if (globalThis.crypto?.subtle) sha = [...new Uint8Array(await crypto.subtle.digest('SHA-256', await file.arrayBuffer()))]
+        .map(value => value.toString(16).padStart(2, '0')).join('');
+    } catch { sha = null; }
+    if (!wrap) return;
+    const result = identifyBomFile(sha, sources, documents, snapshot.summary.configuration_id);
+    fileCheck = { file: file.name, sha, ...result };
+    if (!result.ok) { setNotice('선택한 파일을 등록하지 않았습니다. 보류 사유를 확인해 주세요.', true); render(); return; }
+    selectedSource = result.source.source_id;
+    setNotice(`보관 원본 ${result.source.filename}과 SHA-256이 일치합니다. 보관 원본으로 추출·검증합니다.`);
+    activate('create');
   }
   function close() {
     generation++;
@@ -262,7 +296,7 @@ export function createBomDrawer({ snapshot, api, getIdentity = () => null, onPos
   }
   function stats() {
     const summary = bomPresentation(allRows(), decision);
-    return `<div class="mk-bom-stats"><div><b>${count(summary.rows)}</b><span>BOM 행 · 원본 보존</span></div><div><b>${count(summary.positions)}</b><span>부품 위치 표기</span></div><div><b>${count(focusRows().length)}</b><span>시연 검토 대상</span></div><div><b>${count(summary.linked)}</b><span>사내 품목 연결${dirty ? ' · 초안' : ''}</span></div></div>`;
+    return `<div class="mk-bom-stats"><div><b>${count(summary.rows)}</b><span>BOM 행 · 원본 보존</span></div><div><b>${count(summary.positions)}</b><span>부품 위치 표기</span></div><div><b class="mk-warn-number">${count(allRows().filter(row => decision(row).application_status === 'UNRESOLVED').length)}</b><span>적용 미확인 행</span></div><div><b>${count(summary.linked)}</b><span>사내 품목 연결${dirty ? ' · 초안' : ''}</span></div></div>`;
   }
   function validationChecks() {
     const summary = bomPresentation(allRows()), available = summary.rows > 0;
@@ -295,7 +329,7 @@ export function createBomDrawer({ snapshot, api, getIdentity = () => null, onPos
   }
   function documentHeader(compact = false) {
     if (!active) return '';
-    if (compact) return `<section class="mk-drawer-block mk-bom-identity-compact" data-bom-section="1"><div class="mk-bom-report-header"><h3>개정 식별</h3><span class="mk-pill info">${esc(statuses[active.status] || active.status)} · v${count(active.version)}</span></div><dl class="mk-key-values"><dt>원본 파일</dt><dd>${esc(content().source?.filename)}</dd><dt>제품 구성</dt><dd>${esc(content().configuration_id)}</dd><dt>원문 시트</dt><dd>${esc([...new Set(allRows().map(row => row.sheet))].join(' · '))}</dd></dl><details class="mk-bom-source-details"><summary>원본·버전·검수 근거</summary>${documentHeader()}</details></section>`;
+    if (compact) return `<section class="mk-drawer-block mk-bom-identity-compact" data-bom-section="1"><div class="mk-bom-report-header"><h3>개정 식별</h3>${content().source?.sha256 && sources.some(source => source.sha256 === content().source.sha256) ? '<span class="mk-pill ok">SHA-256 일치</span>' : ''}<span class="mk-pill info">${esc(statuses[active.status] || active.status)} · v${count(active.version)}</span></div><dl class="mk-key-values"><dt>원본 파일</dt><dd>${esc(content().source?.filename)}</dd><dt>SHA-256</dt><dd class="mk-hash">${esc(content().source?.sha256)}</dd><dt>제품 구성</dt><dd>${esc(content().configuration_id)}</dd><dt>원문 시트</dt><dd>${esc([...new Set(allRows().map(row => row.sheet))].join(' · '))}</dd></dl><details class="mk-bom-source-details"><summary>원본·버전·검수 근거</summary>${documentHeader()}</details></section>`;
     return `<section class="mk-drawer-block"><h3>${esc(statuses[active.status] || active.status)} · 문서 v${count(active.version)}</h3><dl class="mk-key-values"><dt>원본</dt><dd>${esc(content().source?.filename)}</dd><dt>기준 구성</dt><dd>${esc(content().configuration_id)}</dd><dt>기준 원장</dt><dd>v${count(content().expected_ledger_version)}</dd><dt>기술 검수</dt><dd>${esc(content().technical_review === 'UNREVIEWED' ? '미검수' : content().technical_review || '미확인')} · 제조 적용과 구분</dd><dt>문서 hash</dt><dd>${esc(active.payload_hash)}</dd><dt>원본 SHA-256</dt><dd>${esc(content().source?.sha256)}</dd></dl><div class="mk-bom-actions">${button('보관 원본 내려받기', 'download', busy)}</div></section>`;
   }
   function rawTable() {
@@ -349,32 +383,61 @@ export function createBomDrawer({ snapshot, api, getIdentity = () => null, onPos
       return `<tr><td><button type="button" class="mk-link" data-bom-edit="${esc(row.row_id)}">${esc(row.source_row)}</button></td><td>${esc((row.designators || []).join(', ') || '미확인')}</td><td>${esc(row.source_description)}</td><td>${esc(value.item_id || '미연결')}<small>${esc(itemNames.get(value.item_id) || '')}</small></td><td>${esc(value.quantity_per_unit ?? '미확인')} / ${esc(value.unit || '미확인')}</td><td>${esc(applications[value.application_status] || '미확인')}<small>${esc(bases[value.review_basis] || '미검수')}</small></td></tr>`;
     }).join('')}</tbody></table></div>` : '<p>이 원본에는 확인된 시연 검토 대상이 없습니다. 원본 상세에서 검토할 행을 선택할 수 있습니다.</p>'}<p class="mk-small-note">선택한 대상만 사내 적용 정보를 검토합니다. 나머지 행은 원본 상세에 보존합니다.</p></section>`;
   }
+  function changedLocators() {
+    return new Set((comparison.result()?.rows || []).filter(row => !['UNCHANGED'].includes(row.change_type))
+      .map(row => row.right?.locator).filter(Boolean));
+  }
   function extractionReport() {
-    const focus = focusRows(), rows = rowFilter === 'linked' ? focus.filter(row => linked(decision(row))) : focus;
-    const total = allRows().length, unresolved = allRows().filter(row => decision(row).application_status === 'UNRESOLVED').length;
-    return `<section class="mk-drawer-block" data-bom-section="2"><div class="mk-bom-report-header"><h3>추출·검증</h3><span class="mk-pill info">${content().source?.source_kind === 'actual_bom' ? '실제 원본' : '저장된 원본'}</span></div>${stats()}${validationChecks()}<p class="mk-bom-scope-note">전체 BOM 중 일부 품목 기준 · 시연 검토 ${count(focus.length)}행 · 원본 ${count(total)}행 보존${dirty ? ' · 미저장 선택 포함' : ''}</p><div class="mk-bom-filter" aria-label="추출 결과 표시"><button type="button" data-bom-filter="focus" aria-pressed="${rowFilter === 'focus'}">시연 대상 ${count(focus.length)}</button><button type="button" data-bom-filter="linked" aria-pressed="${rowFilter === 'linked'}">품목 연결 ${count(focus.filter(row => linked(decision(row))).length)}</button><button type="button" data-bom-action="show-original">원본 전체 ${count(total)}</button></div>${rows.length ? `<div class="mk-table-scroll mk-bom-review-table"><table class="mk-bom-source-table" data-bom-table="extraction"><thead><tr><th>행</th><th>부품 위치</th><th>원문 값</th><th>원문 수량</th><th>검토</th></tr></thead><tbody>${rows.map(row => `<tr><td><button type="button" class="mk-link" data-bom-edit="${esc(row.row_id)}">${esc(row.source_row)}</button></td><td>${esc((row.designators || []).join(', ') || '미확인')}</td><td>${esc(row.source_description)}</td><td>${esc(row.source_quantity_text || '미확인')}</td><td>${esc(applications[decision(row).application_status] || '미확인')}</td></tr>`).join('')}</tbody></table></div>` : '<p class="mk-small-note">표시할 시연 대상이 없습니다. 원본 전체에서 필요한 행을 확인하세요.</p>'}${focusResult?.basis === 'POSTED_SAME_SOURCE' ? '<p class="mk-small-note">같은 원본의 기존 검토 이력에서 대상 행만 불러왔습니다. 품목·수량·판단·승인은 복사하지 않습니다.</p>' : ''}${focusFailure ? '<p class="mk-small-note">이전 시연 대상 조회를 확인하지 못했습니다. 현재 문서에 연결된 행만 표시합니다.</p>' : ''}<p class="mk-small-note">원본 적용 판단 미확인 ${count(unresolved)}행 · 제조 기술검수는 별도입니다.</p>${content().source_conflicts?.length ? `<details class="mk-bom-source-details"><summary>원본 식별·검수 확인 필요 · ${count(content().source_conflicts.length)}항목</summary>${conflicts()}</details>` : ''}${rawTable()}</section>`;
+    const focus = focusRows(), changed = changedLocators(), all = allRows();
+    const unresolvedRows = all.filter(row => decision(row).application_status === 'UNRESOLVED');
+    const filters = { focus: ['시연 대상', focus], all: ['전체', all], unresolved: ['적용 미확인', unresolvedRows],
+      changed: ['개정 변경', all.filter(row => changed.has(row.locator))], linked: ['품목 연결', all.filter(row => linked(decision(row)))] };
+    const rows = (filters[rowFilter] || filters.focus)[1];
+    const itemNames = new Map((snapshot.entities || []).filter(entity => entity.type === 'InternalItem').map(entity => [entity.display_id, entity.label || entity.display_id]));
+    return `<section class="mk-drawer-block" data-bom-section="2"><div class="mk-bom-report-header"><h3>추출·검증</h3><span class="mk-pill info">${content().source?.source_kind === 'actual_bom' ? '실제 원본' : '저장된 원본'}</span></div>${stats()}${validationChecks()}<p class="mk-bom-scope-note">전체 BOM 중 일부 품목 기준 · 시연 검토 ${count(focus.length)}행 · 원본 ${count(all.length)}행 보존${dirty ? ' · 미저장 선택 포함' : ''}</p>
+      <div class="mk-bom-filter" role="group" aria-label="추출 결과 표시">${Object.entries(filters).map(([key, [label, list]]) => `<button type="button" data-bom-filter="${key}" aria-pressed="${rowFilter === key}"${key === 'changed' && !comparison.result() ? ' title="개정 차이에서 비교 기준을 선택하면 표시됩니다"' : ''}>${label} ${count(list.length)}</button>`).join('')}</div>
+      ${rows.length ? `<div class="mk-table-scroll mk-bom-review-table"><table class="mk-bom-source-table" data-bom-table="extraction"><thead><tr><th>행</th><th>수량</th><th>위치</th><th>원문 값</th><th>적용</th><th>사내 품목</th></tr></thead><tbody>${rows.map(row => { const value = decision(row); return `<tr class="${value.application_status === 'UNRESOLVED' ? 'mk-row-unresolved' : changed.has(row.locator) ? 'mk-row-changed' : ''}"><td><button type="button" class="mk-link" data-bom-edit="${esc(row.row_id)}">${esc(row.source_row)}</button></td><td class="mk-numeric">${esc(row.source_quantity_text || '미확인')}</td><td>${esc((row.designators || []).join(' ') || '미확인')}</td><td>${esc(row.source_description)}</td><td>${value.application_status === 'UNRESOLVED' ? '<span class="mk-pill warn">미확인</span>' : esc(applications[value.application_status] || '미확인')}</td><td>${linked(value) ? `<span class="chip" title="${esc(itemNames.get(value.item_id) || '')}">${esc(value.item_id)}</span>` : ''}</td></tr>`; }).join('')}</tbody></table></div>` : `<p class="mk-small-note">${rowFilter === 'changed' && !comparison.result() ? '개정 차이 단계에서 비교 기준 문서를 고르면 변경 행을 표시합니다.' : '조건에 맞는 행이 없습니다.'}</p>`}
+      <p class="mk-small-note">원문의 NA·NS·Opened 같은 표기는 실장 여부를 확정하지 않고 미확인으로 남깁니다. 미확인 행은 소요 계산에 넣지 않으며 부족 0을 뜻하지 않습니다.</p>
+      ${focusResult?.basis === 'POSTED_SAME_SOURCE' ? '<p class="mk-small-note">같은 원본의 기존 검토 이력에서 대상 행만 불러왔습니다. 품목·수량·판단·승인은 복사하지 않습니다.</p>' : ''}${focusFailure ? '<p class="mk-small-note">이전 시연 대상 조회를 확인하지 못했습니다. 현재 문서에 연결된 행만 표시합니다.</p>' : ''}<p class="mk-small-note">원본 적용 판단 미확인 ${count(unresolvedRows.length)}행 · 제조 기술검수는 별도입니다.</p>${content().source_conflicts?.length ? `<details class="mk-bom-source-details"><summary>원본 식별·검수 확인 필요 · ${count(content().source_conflicts.length)}항목</summary>${conflicts()}</details>` : ''}${rawTable()}</section>`;
   }
   function reviewPage() {
     const postedNotice = active.status === 'POSTED' ? `<section class="mk-drawer-block"><h3>현재 원장 반영본 · 확인용</h3><p>이 반영본은 수정하지 않습니다. 적용 정보를 보완하려면 등록 문서에서 작성 중인 초안을 선택하거나, 보관된 원본으로 새 검수 초안을 접수하세요. 품목 연결·검토·정확 버전 승인·반영은 각각 확인하여 진행합니다.</p>${button('원본 접수로 이동', 'source-view', busy)}<p class="mk-small-note">이전 품목 판단과 승인은 자동 복사하지 않습니다.</p></section>` : '';
     return `<div class="mk-bom-review-page">${documentHeader(true)}${extractionReport()}<div data-bom-comparison-slot>${comparison.render(active, documents)}</div><div data-bom-section="4">${postedNotice}${mappingTable()}<div data-bom-section="editor">${rowEditor()}</div>${draftForm()}<div class="mk-bom-actions"><button type="button" class="mk-btn" data-bom-action="approval-view"${busy ? ' disabled' : ''}>검토·승인 단계 보기</button></div></div></div>`;
   }
   function draftForm() {
-    return `<section class="mk-drawer-block"><h3>검수 초안 ${dirty ? '· 미저장 선택 있음' : '· 서버 저장본'}</h3><label class="mk-bom-field">등록·검수 의견<select data-bom-field="review-preset"${!editable() || busy ? ' disabled' : ''}>${option('', reviewNote ? '현재 기록된 의견 유지' : '의견 선택', '')}${option('preserve','원문 전체 보존 · 선택 행만 조건부 시연 적용','')}${option('hold','미확인 항목은 보완 검토 대기로 유지','')}</select></label><details class="mk-bom-row-details"><summary>기록될 의견 확인 / 직접 수정</summary><label class="mk-bom-field">등록·검수 의견<textarea data-bom-field="review-note" rows="2" maxlength="3000"${!editable() || busy ? ' disabled' : ''}>${esc(reviewNote)}</textarea></label></details><p class="mk-small-note">저장하면 새 문서 버전이 생기고 기존 검토·승인은 해제됩니다. 미확인 행은 그대로 보존합니다.</p>${button('검수 초안 저장', 'revise', !editable() || busy, true)}</section>`;
+    return `<section class="mk-drawer-block"><h3>검수 초안 ${dirty ? '· 미저장 선택 있음' : '· 서버 저장본'}</h3>${flowChips()}${outcomeBanner()}<label class="mk-bom-field">등록·검수 의견<select data-bom-field="review-preset"${!editable() || busy ? ' disabled' : ''}>${option('', reviewNote ? '현재 기록된 의견 유지' : '의견 선택', '')}${option('preserve','원문 전체 보존 · 선택 행만 조건부 시연 적용','')}${option('hold','미확인 항목은 보완 검토 대기로 유지','')}</select></label><details class="mk-bom-row-details"><summary>기록될 의견 확인 / 직접 수정</summary><label class="mk-bom-field">등록·검수 의견<textarea data-bom-field="review-note" rows="2" maxlength="3000"${!editable() || busy ? ' disabled' : ''}>${esc(reviewNote)}</textarea></label></details><p class="mk-small-note">저장하면 새 문서 버전이 생기고 기존 검토·승인은 해제됩니다. 미확인 행은 그대로 보존합니다.</p>${button('검수 초안 저장', 'revise', !editable() || busy, true)}</section>`;
+  }
+  function flowChips() {
+    if (!active) return '';
+    return `<div class="mk-flow" aria-label="검토 흐름">${bomFlowStates(active.status).map(item => `<span class="${item.state}">${esc(item.label)}</span>`).join('<i aria-hidden="true">→</i>')}</div>`;
+  }
+  function outcomeBanner() {
+    if (active?.status === 'REJECTED') return `<div class="mk-warnbox" role="status"><b>반려된 문서입니다.</b> ${esc(active.rejection?.reason || '')}<div class="mk-small-note">반려 문서는 수정·승인·반영할 수 없습니다. 원본 접수에서 새 검수 초안을 시작하세요.</div></div>`;
+    if (active?.change_request) return `<div class="mk-warnbox" role="status"><b>보완 요청</b> ${esc(active.change_request.reason)}<div class="mk-small-note">문서 v${count(active.change_request.version)} 검토 중 요청됨. 작성자가 검수 초안을 다시 저장하면 이 요청은 닫히고 새 버전으로 다시 검토합니다.</div></div>`;
+    return '';
+  }
+  function reviewerOutcomes() {
+    const allowed = active && !isAuthor() && permitted('document.review') && ['DRAFT', 'REVIEWED', 'APPROVED'].includes(active.status);
+    if (!allowed) return '';
+    const disabled = busy || dirty;
+    return `<details class="mk-bom-row-details" data-bom-outcomes><summary>보완 요청 · 반려</summary><label class="mk-bom-field">사유 (8자 이상)<textarea data-bom-field="outcome-reason" rows="2" maxlength="2000"${disabled ? ' disabled' : ''}>${esc(outcomeReason)}</textarea></label><div class="mk-bom-actions">${button('보완 요청', 'request-changes', disabled)}${button('반려', 'reject', disabled)}</div><p class="mk-small-note">보완 요청은 초안으로 되돌리고 기존 검토·승인을 해제합니다. 반려는 이 문서를 종료합니다. 어느 쪽도 원장에 반영하지 않습니다.</p></details>`;
   }
   function approvalForm() {
     const other = active && !isAuthor();
-    return `<section class="mk-drawer-block"><h3>정확 버전 검토·승인</h3><p>대상은 위 문서 v${count(active.version)}와 hash입니다. 작성자와 다른 계정이 원문·모든 행·미해결 사항을 확인합니다.</p><label class="mk-bom-field">검토 의견<select data-bom-field="reviewer-preset"${busy ? ' disabled' : ''}><option value="">검토 의견 선택</option><option value="source">원본 등록 검토 · 미확인/기술검수 구분 유지</option></select></label><details class="mk-bom-row-details"><summary>검토 의견 확인 / 직접 수정</summary><label class="mk-bom-field">검토 의견<textarea data-bom-field="reviewer-note" rows="3" maxlength="3000"${busy ? ' disabled' : ''}>${esc(reviewerNote)}</textarea></label></details><label class="mk-bom-ack"><input type="checkbox" data-bom-field="acknowledge"${acknowledged ? ' checked' : ''}${busy ? ' disabled' : ''}>미확인 행과 원본 식별 충돌을 확인했으며, 원본 등록과 제조 기술 승인을 구분합니다.</label><div class="mk-bom-actions">${button('검토 기록', 'review', busy || dirty || !other || !permitted('document.review') || active.status !== 'DRAFT')}${button('이 버전 승인', 'approve', busy || dirty || !other || !permitted('document.approve') || active.status !== 'REVIEWED', true)}</div>${isAuthor() ? '<p>작성 계정으로는 자기 검토·승인을 할 수 없습니다. 상단의 다른 개발 계정으로 전환한 뒤 이 문서를 다시 열어 주세요.</p>' : ''}${dirty ? '<p>미저장 행 변경을 먼저 저장해 주세요.</p>' : ''}</section>`;
+    return `<section class="mk-drawer-block"><h3>정확 버전 검토·승인<span class="mk-spacer"></span><small>작성 ${esc(active.created_by)}${active.reviewed_by ? ` · 검토 ${esc(active.reviewed_by)}` : ''}${active.approved_by ? ` · 승인 ${esc(active.approved_by)}` : ''}</small></h3>${flowChips()}${outcomeBanner()}<p>대상은 위 문서 v${count(active.version)}와 hash입니다. 작성자와 다른 계정이 원문·모든 행·미해결 사항을 확인합니다.</p><label class="mk-bom-field">검토 의견<select data-bom-field="reviewer-preset"${busy ? ' disabled' : ''}><option value="">검토 의견 선택</option><option value="source">원본 등록 검토 · 미확인/기술검수 구분 유지</option></select></label><details class="mk-bom-row-details"><summary>검토 의견 확인 / 직접 수정</summary><label class="mk-bom-field">검토 의견<textarea data-bom-field="reviewer-note" rows="3" maxlength="3000"${busy ? ' disabled' : ''}>${esc(reviewerNote)}</textarea></label></details><label class="mk-bom-ack"><input type="checkbox" data-bom-field="acknowledge"${acknowledged ? ' checked' : ''}${busy ? ' disabled' : ''}>미확인 행과 원본 식별 충돌을 확인했으며, 원본 등록과 제조 기술 승인을 구분합니다.</label><div class="mk-bom-actions">${button('검토 기록', 'review', busy || dirty || !other || !permitted('document.review') || active.status !== 'DRAFT')}${button('이 버전 승인', 'approve', busy || dirty || !other || !permitted('document.approve') || active.status !== 'REVIEWED', true)}</div>${reviewerOutcomes()}${isAuthor() ? '<p>작성 계정으로는 자기 검토·승인을 할 수 없습니다. 상단의 다른 개발 계정으로 전환한 뒤 이 문서를 다시 열어 주세요.</p>' : ''}${dirty ? '<p>미저장 행 변경을 먼저 저장해 주세요.</p>' : ''}</section>`;
   }
   function postedSection() {
-    return `<section class="mk-drawer-block"><h3>승인된 등록 원장 반영</h3><p>원본과 승인된 행별 판단을 새 원장 버전으로 기록합니다. 기존 재고·생산·출하·도착 수량을 변경하지 않습니다.</p><dl class="mk-key-values"><dt>상태</dt><dd>${esc(statuses[active.status] || active.status)}</dd><dt>반영 원장</dt><dd>${active.ledger_version ? `v${count(active.ledger_version)}` : '미반영'}</dd><dt>기술 검수</dt><dd>${esc(content().technical_review === 'UNREVIEWED' ? '미검수' : content().technical_review || '미확인')}</dd></dl><div class="mk-bom-actions">${button('승인 버전 원장 반영', 'post', busy || dirty || active.status !== 'APPROVED' || !permitted('document.post'), true)}${button('최신 원장·소요량 조회', 'refresh', busy || active.status !== 'POSTED')}</div><p>반영 이후 그래프가 같은 버전으로 준비되면 최신 원장을 조회하세요. 누락된 매핑·단위·재고는 소요량과 부족량에서 미확인으로 표시합니다.</p></section>`;
+    const verdict = active.status === 'POSTED' ? `<div class="mk-verdict ok"><b>${esc(content().configuration_id)} 반영 완료</b>BOM ${count(allRows().length)}행이 원장 v${count(active.ledger_version)}에 반영됐습니다. 그래프에 구성 → BOM 스냅샷 → BOM 행 → 원문 행·적용 → 사내 품목 관계가 생깁니다. 적용 미확인 행은 소요 계산에서 미확인으로 남습니다.${onShowGraph ? `<div class="mk-bom-actions">${button('그래프에서 보기', 'show-graph', busy, true)}</div>` : ''}</div>` : '';
+    return `${verdict}<section class="mk-drawer-block"><h3>승인된 등록 원장 반영</h3>${flowChips()}<p>원본과 승인된 행별 판단을 새 원장 버전으로 기록합니다. 기존 재고·생산·출하·도착 수량을 변경하지 않습니다.</p><dl class="mk-key-values"><dt>상태</dt><dd>${esc(statuses[active.status] || active.status)}</dd><dt>반영 원장</dt><dd>${active.ledger_version ? `v${count(active.ledger_version)}` : '미반영'}</dd><dt>기술 검수</dt><dd>${esc(content().technical_review === 'UNREVIEWED' ? '미검수' : content().technical_review || '미확인')}</dd></dl><div class="mk-bom-actions">${button('승인 버전 원장 반영', 'post', busy || dirty || active.status !== 'APPROVED' || !permitted('document.post'), true)}${button('최신 원장·소요량 조회', 'refresh', busy || active.status !== 'POSTED')}</div><p>반영 이후 그래프가 같은 버전으로 준비되면 최신 원장을 조회하세요. 누락된 매핑·단위·재고는 소요량과 부족량에서 미확인으로 표시합니다.</p></section>`;
   }
   function sourcePicker() {
     const shortcut = preferredBomSource(sources, documents, snapshot.summary.configuration_id);
     const disabled = busy || runner?.ready !== true || !permitted('document.create');
-    return `<section class="mk-drop"><b>BOM 파일 등록</b><span>보관된 BOM 원본을 선택하세요</span><span class="mk-small-note">ODS · CSV 표 등록 · 원문 전체와 SHA-256 보존</span><div class="mk-bom-file-choice">${button('파일 선택', 'choose-source', busy)}</div></section>
+    const check = fileCheck && !fileCheck.ok ? `<div class="mk-warnbox" role="alert"><b>등록 보류.</b> ${esc(fileCheck.why)}<div class="mk-hash">${esc(fileCheck.file)} · ${esc(fileCheck.sha || '해시 없음')}</div></div>` : '';
+    return `${check}<label class="mk-drop" data-bom-drop><b>BOM 원본 파일을 끌어다 놓거나 선택하세요</b><span>ODS · CSV · PDF. 파일의 SHA-256으로 보관된 원본과 개정을 식별합니다.</span><span class="mk-small-note">파일 내용은 서버로 올리지 않습니다. 해시가 일치하는 보관 원본만 제한된 처리기로 추출합니다.</span><input type="file" data-bom-field="file" accept=".ods,.csv,.pdf" hidden${busy || !permitted('document.create') ? ' disabled' : ''}><span class="mk-btn">파일 선택</span></label>
       ${shortcut && ['ods','csv'].includes(shortcut.format) ? `<div class="mk-bom-source-pick"><button type="button" class="mk-btn primary" data-bom-source="${esc(shortcut.source_id)}"${disabled ? ' disabled' : ''}>보관된 원본 사용 · ${esc(shortcut.filename)}</button><span class="mk-small-note">서버 보관 원본 · ${count(shortcut.bytes)} bytes</span></div>` : ''}
       <details class="mk-bom-source-details" data-bom-source-picker><summary>다른 보관 파일 선택</summary><label class="mk-bom-field">원본 파일<select data-bom-field="source"${busy ? ' disabled' : ''}><option value="">원본을 선택하세요</option>${sources.map(source => `<option value="${esc(source.source_id)}"${source.source_id === selectedSource ? ' selected' : ''}${['ods','csv'].includes(source.format) ? '' : ' disabled'}>${esc(source.filename)} · ${esc(source.format.toUpperCase())}${['ods','csv'].includes(source.format) ? '' : ' · BOM 표 등록 미지원'}</option>`).join('')}</select></label><div class="mk-bom-actions">${button('선택 원본 추출·검증', 'create', disabled, true)}</div></details>
-      <p class="mk-small-note">${runner?.ready === true ? '파일 처리기 준비됨' : runner?.code === 'RUNNER_ENFORCEMENT_UNAVAILABLE' ? '파일 처리 자원 제한 미지원 · 원본 접수 차단' : '파일 처리기 준비 필요'} · 현재는 서버에 보관된 원본을 사용합니다.</p><details class="mk-bom-source-details"><summary>지원 형식 안내</summary><p>ODS·CSV: 지원 열 구조의 BOM 표를 등록합니다. PDF: 텍스트 추출만 준비돼 있으며 BOM 열 인식·스캔 문서 OCR은 미지원입니다. TXT와 새 로컬 파일 업로드는 아직 연결되지 않았습니다.</p></details>`;
+      <p class="mk-small-note">${runner?.ready === true ? '파일 처리기 준비됨' : runner?.code === 'RUNNER_ENFORCEMENT_UNAVAILABLE' ? '파일 처리 자원 제한 미지원 · 원본 접수 차단' : '파일 처리기 준비 필요'} · 현재는 서버에 보관된 원본을 사용합니다.</p><details class="mk-bom-source-details"><summary>지원 형식 안내</summary><p>ODS·CSV: 지원 열 구조의 BOM 표를 등록합니다. PDF: 텍스트 추출만 준비돼 있으며 BOM 열 인식·스캔 문서 OCR은 미지원입니다. 보관 목록에 없는 새 파일의 업로드·등록은 아직 연결되지 않았습니다.</p></details>`;
   }
   function stageBody() {
     if (operation === 'create') return `<section class="mk-drawer-block mk-bom-processing"><h3>추출·검증 중</h3><p>${esc(sources.find(source => source.source_id === selectedSource)?.filename || '선택한 원본')}</p><div class="mk-bom-progress" role="progressbar" aria-label="BOM 원본 추출·검증 진행 중"><span></span></div><p>원본 식별 · 시트와 행 추출 · 수량과 부품 위치 확인</p><p class="mk-small-note">서버 처리 중입니다. 완료되면 검증 결과와 품목 연결을 함께 보여드립니다.</p></section>`;
@@ -442,6 +505,7 @@ export function createBomDrawer({ snapshot, api, getIdentity = () => null, onPos
     if (action === 'compare' && active && !busy) { comparison.load(active, documents); return; }
     if (action === 'close-row' && !busy) { selectedRow = null; product.reset(); scrollTarget = 4; render(); return; }
     if (action === 'approval-view' && !busy) { selectStep(6); return; }
+    if (action === 'show-graph' && onShowGraph) { close(); onShowGraph(); return; }
     if (action === 'reload') { await reload(); return; }
     if (action === 'refresh') { close(); onRefresh(); return; }
     if (action === 'download' && active) {
@@ -456,7 +520,8 @@ export function createBomDrawer({ snapshot, api, getIdentity = () => null, onPos
       });
       return;
     }
-    if (!['create','revise','review','approve','post'].includes(action)) return;
+    if (!['create','revise','review','approve','post','request-changes','reject'].includes(action)) return;
+    if (['request-changes', 'reject'].includes(action) && outcomeReason.trim().length < 8) { setNotice('보완 요청·반려 사유를 8자 이상 적어 주세요.', true); render(); return; }
     const sourceId = selectedSource || wrap?.querySelector('[data-bom-field="source"]')?.value;
     if (action === 'create' && !sourceId) { setNotice('접수할 실제 원본을 선택해 주세요.', true); render(); return; }
     if (action === 'create' && !['ods','csv'].includes(sources.find(source => source.source_id === sourceId)?.format)) { setNotice(errors.BOM_TABLE_FORMAT_NOT_SUPPORTED, true); render(); return; }
@@ -470,6 +535,7 @@ export function createBomDrawer({ snapshot, api, getIdentity = () => null, onPos
       if (action === 'revise') payload = { ...payload, expected_ledger_version: currentLedger(), review_note: reviewNote,
         rows: allRows().map(row => ({ row_id: row.row_id, ...decision(row) })) };
       if (action === 'review') payload = { ...payload, review_note: reviewerNote, acknowledge_unresolved: acknowledged };
+      if (action === 'request-changes' || action === 'reject') payload = { ...payload, reason: outcomeReason.trim() };
     }
     await work(async current => {
       const result = await command(action, path, payload);
@@ -479,15 +545,15 @@ export function createBomDrawer({ snapshot, api, getIdentity = () => null, onPos
       if (index >= 0) documents[index] = active; else documents.push(active);
       await loadFocus(current);
       if (!current()) return;
-      step = action === 'create' ? 2 : action === 'post' ? 7 : action === 'revise' ? 5 : 6;
-      setNotice({ create: '실제 원본을 접수했습니다. 전체 행과 원본 식별 차이를 검토해 주세요.', revise: '새 버전의 검수 초안을 저장했습니다. 이전 검토·승인은 해제됩니다.', review: '서버에 검토를 기록했습니다. 아직 승인·원장 반영 전입니다.', approve: '이 버전의 등록 내용을 승인했습니다. 원장 반영은 다음 단계입니다.', post: '원장에 등록했습니다. 같은 버전의 그래프 준비 후 최신 원장에서 소요량을 확인하세요.' }[action]);
+      step = action === 'create' ? 2 : action === 'post' ? 7 : action === 'revise' || action === 'request-changes' ? 5 : 6;
+      setNotice({ create: '실제 원본을 접수했습니다. 전체 행과 원본 식별 차이를 검토해 주세요.', revise: '새 버전의 검수 초안을 저장했습니다. 이전 검토·승인은 해제됩니다.', review: '서버에 검토를 기록했습니다. 아직 승인·원장 반영 전입니다.', approve: '이 버전의 등록 내용을 승인했습니다. 원장 반영은 다음 단계입니다.', post: '원장에 등록했습니다. 같은 버전의 그래프 준비 후 최신 원장에서 소요량을 확인하세요.', 'request-changes': '보완 요청을 기록했습니다. 문서는 초안으로 돌아가고 기존 검토·승인은 해제됐습니다.', reject: '이 문서를 반려했습니다. 원장에는 반영되지 않습니다.' }[action]);
       scrollTarget = step;
       if (action === 'post') onPosted(active);
     }, action);
   }
   function open(initialStep = 0, preferredId, preferredRow = null, expectedDocument = null) {
     close(); focusBefore = document.activeElement; step = initialStep;
-    active = null; sources = []; documents = []; runner = null; selectedSource = ''; resetDrafts();
+    active = null; sources = []; documents = []; runner = null; selectedSource = ''; fileCheck = null; resetDrafts();
     wrap = document.createElement('div'); wrap.className = 'mk-drawer-wrap'; document.body.append(wrap);
     render();
     wrap.addEventListener('click', event => {
@@ -513,10 +579,19 @@ export function createBomDrawer({ snapshot, api, getIdentity = () => null, onPos
       if (field === 'row' && !busy) { selectedRow = event.target.value; render(); }
       if (event.target.closest('[data-bom-form="row"]')) syncRowChoices();
       if (field === 'acknowledge') acknowledged = event.target.checked;
+      if (field === 'file') { handleFile(event.target.files?.[0]); event.target.value = ''; }
+    });
+    for (const type of ['dragenter', 'dragover', 'dragleave', 'drop']) wrap.addEventListener(type, event => {
+      const zone = event.target.closest?.('[data-bom-drop]');
+      if (!zone) return;
+      event.preventDefault();
+      zone.classList.toggle('over', type === 'dragenter' || type === 'dragover');
+      if (type === 'drop') handleFile(event.dataTransfer?.files?.[0]);
     });
     wrap.addEventListener('input', event => {
       if (event.target.dataset.bomField === 'review-note') { reviewNote = event.target.value; dirty = drafts.size > 0 || reviewNote !== (content().review_note || ''); }
       if (event.target.dataset.bomField === 'reviewer-note') reviewerNote = event.target.value;
+      if (event.target.dataset.bomField === 'outcome-reason') outcomeReason = event.target.value;
     });
     wrap.addEventListener('submit', event => {
       if (event.target.dataset.bomForm !== 'row') return;

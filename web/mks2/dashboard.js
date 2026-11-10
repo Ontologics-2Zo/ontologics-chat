@@ -195,7 +195,7 @@ function reservationForm(snapshot) {
     <p class="mk-small-note">재고 이동·소비가 아니라 다른 수요 예약만 늘립니다. 현재 원장 v${num(snapshot.meta?.ledger_version)} 기준으로 서버가 권한·가용·버전을 다시 확인합니다.</p><p class="mk-small-note" data-reserve-status role="status"></p></section>`;
 }
 
-export function mountDashboard(container, { snapshot, onSelect = () => {}, onAsk = () => {}, onGraph = () => {}, api, getIdentity, onPosted, onRefresh, live = null }) {
+export function mountDashboard(container, { snapshot, onSelect = () => {}, onAsk = () => {}, onGraph = () => {}, api, getIdentity, onPosted, onRefresh, live = null, onShowBomGraph = null }) {
   const summary = snapshot.summary || {}, meta = snapshot.meta || {};
   const previousEvents = eventCursors.get(container);
   const renderEvents = createLedgerEventRenderer(snapshot, previousEvents);
@@ -212,7 +212,7 @@ export function mountDashboard(container, { snapshot, onSelect = () => {}, onAsk
   const delivery = { ...summary, promised_qty: summary.promised_qty ?? summary.promise_qty,
     breakdown: Object.fromEntries(segmentKeys.map(key => [key, summary[key]])) };
   let selected = null, filter = 'all';
-  const bom = createBomDrawer({ snapshot, api, getIdentity, onPosted, onRefresh });
+  const bom = createBomDrawer({ snapshot, api, getIdentity, onPosted, onRefresh, onShowGraph: onShowBomGraph });
   let procurement = null;
   const requirements = snapshot.material_requirements || {};
   const requirementRows = requirements.rows || [], requirementItems = requirements.items || [];

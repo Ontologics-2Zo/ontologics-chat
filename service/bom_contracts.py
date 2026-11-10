@@ -87,3 +87,15 @@ class BomRevise(DocumentAction):
 class BomReview(DocumentAction):
     review_note: str = Field(min_length=8, max_length=3000)
     acknowledge_unresolved: bool = False
+
+
+class BomReviewerOutcome(DocumentAction):
+    """Reviewer's reason for returning a draft for changes or rejecting it."""
+    reason: str = Field(min_length=8, max_length=2000)
+
+    @field_validator("reason")
+    @classmethod
+    def plain_reason(cls, value):
+        if value != value.strip() or any(ord(c) < 32 and c not in "\n\t" for c in value):
+            raise ValueError("BOM_TEXT_INVALID")
+        return value

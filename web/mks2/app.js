@@ -120,6 +120,35 @@ function focusEvidence(id) {
   lane?.focus(id);
 }
 function fillQuestion(text, name = currentScreen()) { panels[name].input.value = text; panels[name].input.focus(); }
+// After an explicit BOM post, offer to resend the last question; it only fills the draft.
+function offerRerun(kind) {
+  for (const name of ['dashboard', 'graph']) {
+    const panel = panels[name], question = panel?.lastQuestion;
+    if (!question) continue;
+    const message = element('div', 'message assistant');
+    message.append(element('p', '', `${kind}이 원장에 반영됐습니다. 그래프 준비 후 같은 질문을 최신 기준으로 다시 보낼 수 있습니다. 이전 답변은 당시 버전으로 남습니다.`),
+      button('같은 질문 다시 실행', () => fillQuestion(question, name), 'btn sm'));
+    panel.messages.append(message);
+  }
+}
+async function showBomGraph() {
+  // Open the graph only after the posted version's projection is ready; never
+  // show the newer ledger with an older graph.
+  location.hash = '#graph';
+  for (let attempt = 0; attempt < 90 && identity; attempt++) {
+    try {
+      const changes = await api(`/api/mks2/events?after=${encodeURIComponent(snapshot.meta.ledger_version)}`);
+      if (changes.current_ledger_version === snapshot.meta.ledger_version) break;
+      if (changes.projection_state === 'READY' && changes.snapshot_ledger_version === changes.current_ledger_version) { await refreshSnapshot(); break; }
+      lane?.setLag(`원장 v${changes.current_ledger_version} 반영 · 그래프 갱신 중 (표시 v${snapshot.meta.projection_version})`);
+    } catch (error) { if (error.status === 401) return; }
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+  lane?.setLag(null);
+  const configuration = (snapshot?.entities || []).find(entity => entity.type === 'ProductConfiguration' && entity.display_id === snapshot.summary?.configuration_id);
+  location.hash = '#graph';
+  if (configuration) requestAnimationFrame(() => lane?.focus(configuration.id));
+}
 function updateSuggestions(container, name) {
   container.replaceChildren();
   const questions = snapshot.suggested_questions || snapshot.suggestions || [];
@@ -278,7 +307,7 @@ async function agentQuery(panel, question, message, requestGeneration) {
 async function runQuery(name, question) {
   const panel = panels[name], requestGeneration = generation;
   settleAnswer(panel);
-  panel.messages.append(element('div', 'message user', question)); panel.submit.disabled = true;
+  panel.messages.append(element('div', 'message user', question)); panel.submit.disabled = true; panel.lastQuestion = question;
   const message = element('div', 'message assistant', '원장과 근거를 조회하고 있습니다.'); panel.messages.append(message);
   let followAnswer = true, presentationOwnsScroll = false;
   const trackScroll = () => {
@@ -443,7 +472,8 @@ async function loadSnapshot({ preserveMessages = false } = {}) {
   dashboard?.destroy();
   dashboard = mountDashboard($('dashboard-stage'), { snapshot, onSelect: setContext,
     onAsk: text => fillQuestion(text, 'dashboard'), onGraph: focusEvidence, api, getIdentity: () => identity,
-    onPosted: () => { refreshButton.textContent = '업무 반영 · 최신 원장 조회'; notify(liveEnabled ? '업무 사건이 원장에 반영됐습니다. 그래프 투영 후 화면이 자동으로 갱신됩니다.' : '업무 사건이 반영됐습니다. 그래프 준비 후 최신 원장을 조회해 주세요.'); pollChanges(); },
+    onShowBomGraph: showBomGraph,
+    onPosted: posted => { if (posted?.status === 'POSTED' && posted?.content?.rows) offerRerun('BOM'); refreshButton.textContent = '업무 반영 · 최신 원장 조회'; notify(liveEnabled ? '업무 사건이 원장에 반영됐습니다. 그래프 투영 후 화면이 자동으로 갱신됩니다.' : '업무 사건이 반영됐습니다. 그래프 준비 후 최신 원장을 조회해 주세요.'); pollChanges(); },
     onRefresh: refreshSnapshot, live: { get: () => liveEnabled, set: value => { liveEnabled = !!value; notify(liveEnabled ? '확정 원장 사건을 자동으로 반영합니다.' : '자동 반영을 끕니다. 새 원장은 버튼으로 조회합니다.'); } } });
   lane?.destroy();
   lane = mountLaneGraph($('graph-stage'), { data: { meta: data.meta, nodes: data.entities || [], edges: data.relationships || [] },

@@ -17,7 +17,7 @@ import psycopg
 from dev.preview_server import CSP, REPO_ROOT, STATIC_FILES, PreviewServer, PreviewUnavailable
 from service.contracts import Contract, CreateDocument, DocumentAction, ReviseDocument
 from service.bom import BomService
-from service.bom_contracts import BomCompare, BomCreate, BomRevise, BomReview, BomReviewFocus
+from service.bom_contracts import BomCompare, BomCreate, BomRevise, BomReview, BomReviewFocus, BomReviewerOutcome
 from service.bom_runner import BomRunner
 from service.domain import DomainService
 from service.errors import ServiceError
@@ -207,6 +207,9 @@ def create_app(db, *, private_root: str, origin="http://127.0.0.1:8870", dev_mod
     class BomActionCall(DocumentAction):
         bom_id: str = Field(min_length=1, max_length=100)
 
+    class BomOutcomeCall(BomReviewerOutcome):
+        bom_id: str = Field(min_length=1, max_length=100)
+
     def bom_handler(action, model):
         def execute(actor,args,ctx):
             values=args.model_dump()
@@ -223,6 +226,8 @@ def create_app(db, *, private_root: str, origin="http://127.0.0.1:8870", dev_mod
         ("review",BomReview,BomReviewCall,"document.review"),
         ("approve",DocumentAction,BomActionCall,"document.approve"),
         ("post",DocumentAction,BomActionCall,"document.post"),
+        ("request_changes",BomReviewerOutcome,BomOutcomeCall,"document.review"),
+        ("reject",BomReviewerOutcome,BomOutcomeCall,"document.review"),
     ):
         gateway.register(ToolSpec("bom."+action,permission,True,input_model,bom_handler(action,model)))
 
@@ -432,6 +437,14 @@ def create_app(db, *, private_root: str, origin="http://127.0.0.1:8870", dev_mod
     @app.post("/api/mks2/bom/documents/{bom_id}/review")
     def review_bom(request:Request,bom_id:str,body:BomReview):
         return execute_bom(request,"review",body,bom_id)
+
+    @app.post("/api/mks2/bom/documents/{bom_id}/request-changes")
+    def request_bom_changes(request:Request,bom_id:str,body:BomReviewerOutcome):
+        return execute_bom(request,"request_changes",body,bom_id)
+
+    @app.post("/api/mks2/bom/documents/{bom_id}/reject")
+    def reject_bom(request:Request,bom_id:str,body:BomReviewerOutcome):
+        return execute_bom(request,"reject",body,bom_id)
 
     @app.post("/api/mks2/bom/documents/{bom_id}/{action}")
     def act_bom(request:Request,bom_id:str,action:str,body:DocumentAction):
