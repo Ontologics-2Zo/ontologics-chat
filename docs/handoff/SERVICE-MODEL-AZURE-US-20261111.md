@@ -28,7 +28,7 @@
 ## 8874 시연·화면 연결 · DEC-H55
 
 - `--model-budget-runtime-file`/`--model-budget-postgres-port`: 모델 예산 기록을 다른 로컬 runtime의 PostgreSQL에 둔다. 두 옵션은 함께만 허용하고 자신의 포트와 겹칠 수 없다. 그 DB는 migrate하지 않고 `model_budget_accounts`·`model_executions`·`model_attempts` 존재만 확인한다(`MODEL_BUDGET_DATABASE_UNAVAILABLE`).
-- 시연 launcher는 live 모드·같은 예산 ID·기존 `.env`(복사 없음)·8870 예산 DB를 사용하고 관측은 끈다. `DEMO_MODEL=off`이면 이전처럼 모델 없이 시작한다.
+- 시연 launcher는 live 모드·같은 예산 ID·기존 `.env`(복사 없음)·8870 예산 DB를 사용한다. 관측은 8870과 같다: 로컬 Langfuse 선택 본문 기록, LangSmith 메타데이터만(입력·출력 본문 비움), 자동 SDK tracing OFF. `DEMO_MODEL=off`이면 이전처럼 모델 없이 시작한다.
 - 화면: 모델이 켜져 있으면 운영 대시보드·온톨로지 질의·프로젝트 그래프의 질문이 AI 경로를 쓴다. 디지털 트윈은 근거 강조 계약 때문에 결정적 조회를 유지한다.
 - AI 경로에서 완료된 고객 도착 답변도 시연 자동 예약 신호를 보낸다(격리 시연 플래그가 켜진 서버만).
 
@@ -38,6 +38,8 @@
 - 8874 `ready`(v9)에서 작성자 A가 온톨로지 질의에 68대 질문: 모델 호출1회·COMPLETED, 이어 다른 주문 예약 자동 반영(v10, 가용 20→15·계획 부족 23→28), 이전 답변 재검토 표시.
 - 같은 상태의 운영 대시보드 질문: 모델 호출1회, 원형 카드(68대 의미·불량률·부족 표 IM-0016 28·일정 가정·견적 4·판정) 표시.
 - 두 호출 모두 Azure·$0.000473. 8870과 8874 `/health`의 누적이 같다(46건·$0.019319). 시연을 `start`(v5)로 초기화한 뒤에도 예산 기록은 유지됐고, 8870 원장 v4는 불변이다.
+
+- 관측 확인: 8874 운영 대시보드 질문 1회 → 로컬 Langfuse `ontologics.execution` trace와 `model.route` generation(입력 기능 플래그 7개, 출력 `capability=fulfillment_read`, $0.000473), `/health`의 Langfuse exported 6·LangSmith exported 6·실패0.
 
 ## 남은 범위
 
