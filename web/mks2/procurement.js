@@ -38,6 +38,56 @@ const errors = {
   FULFILLMENT_BOM_APPLICATION_REQUIRED: '이 품목의 BOM 적용(대당 수량)이 반영돼 있어야 합니다.',
 };
 
+// Compact 'IM-xxxx 확보 진행' card from the same server documents (DEC-H53).
+// Steps: 초안 → 승인 요청 (saving a draft requests review) → 승인 → 확정 (ledger posting).
+const progressSteps = ['초안', '승인 요청', '승인', '확정'];
+export function supplyProgress(documents, snapshot, identity) {
+  const item = snapshot?.summary?.item_id;
+  const live = row => !row.cancelled_by && row.status !== 'REJECTED';
+  const pr = (documents || []).filter(row => row.kind === 'PR' && live(row) && row.content?.resolved?.item_id === item).at(-1);
+  if (!pr) return null;
+  const po = (documents || []).filter(row => row.kind === 'PO' && live(row) && (row.parent_id === pr.id || row.content?.pr_id === pr.id)).at(-1) || null;
+  const focus = po || pr;
+  const reached = { DRAFT: 2, REVIEWED: 2, APPROVED: 3, POSTED: 4 }[focus.status] ?? 0;
+  const steps = progressSteps.map((label, index) => ({ label, state: index < reached ? 'done' : index === reached ? 'current' : 'pending' }));
+  const status = focus.status === 'POSTED' ? (po ? '발주 확정' : '발주 작성 필요') : focus.status === 'APPROVED' ? '확정 대기' : '승인 진행';
+  const resolved = pr.content?.resolved || {}, quote = resolved.quote || {};
+  const unit = resolved.unit === 'EA' ? '개' : ` ${resolved.unit || ''}`;
+  const short = id => String(id || '').slice(0, 8);
+  const requirement = (snapshot?.material_requirements?.items || []).find(row => row.item_id === item);
+  const needed = requirement ? Number(pr.content?.material_basis === 'planned' ? requirement.planned_shortage_qty : requirement.shortage_qty) : NaN;
+  const shortfall = Number.isFinite(needed) && pr.status !== 'POSTED' && needed > pr.quantity ? needed - pr.quantity : 0;
+  const mine = focus.created_by === identity?.actor_id, can = permission => (identity?.permitted_actions || []).includes(permission);
+  // A draft written on an older ledger version must be revised before review (server rule).
+  const basis = focus.content?.basis_ledger_version, current = snapshot?.meta?.ledger_version;
+  const stale = focus.status !== 'POSTED' && Number.isInteger(basis) && Number.isInteger(current) && basis < current;
+  let next = null;
+  if (stale) next = mine ? { label: '초안 수정', action: 'revise', disabled: !can('document.update') } : { label: '작성자의 초안 수정 대기', disabled: true };
+  else if (focus.status === 'DRAFT') next = mine ? { label: '승인 요청됨 · 다른 계정 검토 대기', disabled: true } : { label: '검토 기록', action: 'review', disabled: !can('document.review') };
+  else if (focus.status === 'REVIEWED') next = mine ? { label: '승인 대기 · 다른 계정', disabled: true } : { label: '승인', action: 'approve', disabled: !can('document.approve') };
+  else if (focus.status === 'APPROVED') next = { label: '확정 · 원장 반영', action: 'post', disabled: !can('document.post') };
+  else if (!po && pr.remaining_qty > 0) next = { label: '내부 발주 초안', action: 'new-po', disabled: !can('document.create') };
+  return {
+    item, status, steps, focusId: focus.id, next, shortfall, stale: stale ? { basis, current } : null,
+    rows: [
+      ['구매 요청', `${short(pr.id)} · ${pr.quantity}${unit}`],
+      ['내부 발주', po ? `${short(po.id)} · ${resolved.supplier_id || '공급사 미확인'} · ${po.quantity}${unit}` : '미작성'],
+      ['납기 가정', quote.lead_business_days != null ? `견적 리드타임 ${quote.lead_business_days}영업일 · 필요일 근거 없음` : '리드타임·필요일 근거 없음'],
+      ['작성 · 승인', `${focus.created_by || '미확인'} · ${focus.approved_by || '—'}`],
+    ],
+  };
+}
+function progressCard(progress, busy) {
+  if (!progress) return '';
+  const pill = (progress.shortfall > 0 ? `<span class="mk-pill bad">${esc(progress.shortfall)}개 미충족 · 재검토 필요</span>` : '')
+    + (progress.stale ? `<span class="mk-pill warn">기준 원장 v${esc(progress.stale.basis)}→v${esc(progress.stale.current)} · 초안 재검토 필요</span>` : '');
+  const next = progress.next ? `<button type="button" class="mk-btn primary" ${progress.next.action ? `data-purchase-action="${progress.next.action}" data-doc="${esc(progress.focusId)}"` : ''}${progress.next.disabled || busy ? ' disabled' : ''}>${esc(progress.next.label)}</button>` : '';
+  return `<section class="mk-supply-progress" data-supply-progress><div class="mk-supply-head"><h4>${esc(progress.item)} 확보 진행</h4>${pill}<span class="mk-pill warn">${esc(progress.status)}</span></div>
+    <div class="mk-supply-steps" role="list" aria-label="확보 단계">${progress.steps.map(step => `<span role="listitem" class="mk-step-${step.state}"${step.state === 'current' ? ' aria-current="step"' : ''}>${esc(step.label)}</span>`).join('<i aria-hidden="true">→</i>')}</div>
+    <dl class="mk-supply-rows">${progress.rows.map(([label, value]) => `<dt>${esc(label)}</dt><dd>${esc(value)}</dd>`).join('')}</dl>
+    ${next}<p class="mk-small-note">내부 발주는 공급사 확약이 아닙니다. 외부 송신은 없습니다.</p></section>`;
+}
+
 export function mountProcurementFlow(container, { snapshot, api, getIdentity = () => null, onPosted = () => {}, onRefresh = () => {} }) {
   const abort = new AbortController(), pending = new Map();
   let documents = [], choices = [], activeId = null, editor = null, busy = false, destroyed = false;
@@ -152,7 +202,7 @@ export function mountProcurementFlow(container, { snapshot, api, getIdentity = (
   }
   function render() {
     if (destroyed) return;
-    container.innerHTML = `<div class="mk-quote-preview"><p class="mk-preview-notice">내부 시연 기록 · 실제 공급사 송신·확약 없음. 합격분만 가용재고에 반영합니다.</p>
+    container.innerHTML = `${progressCard(supplyProgress(documents, snapshot, getIdentity()), busy)}<div class="mk-quote-preview"><p class="mk-preview-notice">내부 시연 기록 · 실제 공급사 송신·확약 없음. 합격분만 가용재고에 반영합니다.</p>
       <p role="status" aria-live="polite" class="${failed ? 'mk-bom-warning' : ''}">${esc(notice)}</p>
       ${needsRefresh ? `<p>원장에 새 사건이 반영되었습니다. 최신 원장 조회 후 다음 업무를 진행해 주세요.</p>${button('최신 원장 조회', 'refresh', busy)}` : ''}
       <div class="mk-bom-actions">${button('서버 문서 조회', 'reload', busy)}${documents.length ? `<label>구매 문서 <select data-purchase-document ${busy ? 'disabled' : ''}>${documents.map(doc => `<option value="${esc(doc.id)}" ${doc.id === activeId ? 'selected' : ''}>${esc(kinds[doc.kind])} · ${esc(doc.content.quote_ref || doc.content.receipt_ref || doc.content.inspection_ref || doc.id.slice(0, 8))} · ${esc(statuses[doc.status])}</option>`).join('')}</select></label>` : ''}</div>
@@ -163,6 +213,7 @@ export function mountProcurementFlow(container, { snapshot, api, getIdentity = (
   container.addEventListener('click', event => {
     const target = event.target.closest('[data-purchase-action]');
     if (!target || target.disabled || busy) return;
+    if (target.dataset.doc && documents.some(row => row.id === target.dataset.doc)) activeId = target.dataset.doc;
     const action = target.dataset.purchaseAction, doc = active();
     if (action === 'refresh') { onRefresh(); return; }
     if (action === 'reload') { work(() => reload()); return; }
