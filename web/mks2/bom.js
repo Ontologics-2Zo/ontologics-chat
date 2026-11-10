@@ -161,6 +161,36 @@ export function identifyBomFile(sha, sources, documents, configurationId) {
   return { ok: true, source: match };
 }
 
+/** Prefill only from the initial ledger's synthetic mapping assumptions.
+ *  Rows must match the candidate's source row number and designators exactly;
+ *  rows already decided are left alone. Nothing is copied from past approvals. */
+export function candidateDecisions(rows, candidates = []) {
+  const same = (a = [], b = []) => a.length === b.length && [...a].sort().join('|') === [...b].sort().join('|');
+  const result = new Map();
+  for (const candidate of candidates) {
+    const quantity = candidate?.qty_per_board_assumption;
+    if (!candidate?.item_id || !candidate.unit_assumption || !(Number(quantity) > 0)) continue;
+    const matches = rows.filter(row => row.source_row === candidate.source_row_number && same(row.designators, candidate.refdes));
+    if (matches.length !== 1 || (matches[0].decision?.application_status || 'UNRESOLVED') !== 'UNRESOLVED') continue;
+    const row = matches[0];
+    result.set(row.row_id, { application_status: 'APPLICABLE', review_basis: 'DEMO_ASSUMPTION', item_id: candidate.item_id,
+      quantity_per_unit: String(quantity), unit: candidate.unit_assumption,
+      evidence_note: `기초 원장 시연 매핑 가정 ${(candidate.assumption_refs || []).join(', ') || '참조 미기재'} · 원문 ${row.locator}. 제조 기술검수·품목 동일성·단위 확정 승인이 아님.` });
+  }
+  return result;
+}
+
+/** Reference sheet flow: 초안 → 승인 요청 → 승인 → 반영.
+ *  A saved draft with decisions is the author's approval request. */
+export function bomRequestFlow(document, { dirty = false } = {}) {
+  const status = document?.status;
+  const decided = (document?.content?.rows || []).some(row => ['APPLICABLE', 'NOT_MOUNTED', 'SETTING'].includes(row.decision?.application_status));
+  const requested = status === 'DRAFT' && !dirty && decided && document.version > 1;
+  const index = status === 'POSTED' ? 4 : status === 'APPROVED' ? 2 : status === 'REVIEWED' || requested ? 1 : 0;
+  return { requested, steps: ['초안', '승인 요청', '승인', '반영'].map((label, i) => ({ label,
+    state: status === 'REJECTED' ? 'rejected' : i < index ? 'done' : i === index ? 'on' : 'pending' })) };
+}
+
 /** Reviewer flow shown as 초안 → 검토 → 승인 → 반영 from the server status. */
 export function bomFlowStates(status) {
   const index = { DRAFT: 0, REVIEWED: 1, APPROVED: 2, POSTED: 3 }[status];
@@ -181,7 +211,7 @@ export function bomReferenceMatches(document, reference, configurationId) {
 export function createBomDrawer({ snapshot, api, getIdentity = () => null, onPosted = () => {}, onRefresh = () => {}, onShowGraph = null }) {
   let wrap = null, focusBefore = null, step = 0, active = null, sources = [], documents = [], runner = null;
   let busy = false, operation = '', generation = 0, notice = '', failure = false, selectedRow = null;
-  let selectedSource = '', scrollTarget = null, fileCheck = null, outcomeReason = '';
+  let selectedSource = '', scrollTarget = null, fileCheck = null, outcomeReason = '', sourceFirst = false, candidateStaged = 0;
   let focusResult = null, focusFailure = false, rowFilter = 'focus';
   let drafts = new Map(), dirty = false, reviewNote = '', reviewerNote = '', acknowledged = false;
   // Text still being typed is separate from explicitly staged row decisions.
@@ -262,7 +292,7 @@ export function createBomDrawer({ snapshot, api, getIdentity = () => null, onPos
     const response = await api('/api/mks2/bom/documents');
     const rows = response.documents || [];
     let doc = null;
-    const id = preferred || active?.id || rows[0]?.id;
+    const id = preferred || active?.id || (rows.find(row => row.status !== 'REJECTED') || rows[0])?.id;
     if (id) doc = await api(`/api/mks2/bom/documents/${encodeURIComponent(id)}`);
     return { rows, doc };
   }
@@ -278,6 +308,8 @@ export function createBomDrawer({ snapshot, api, getIdentity = () => null, onPos
       await loadFocus(current);
       if (!current()) return;
       setNotice('서버의 원본 목록과 등록 문서를 조회했습니다.');
+      if (step === 0 && active && !sourceFirst) step = 1;
+      prepareSheet();
       if (step >= 1 && step <= 4) scrollTarget = rowId ? 'editor' : step;
     });
   }
@@ -293,6 +325,23 @@ export function createBomDrawer({ snapshot, api, getIdentity = () => null, onPos
           || response.decisions_copied !== false || response.approvals_copied !== false) throw Error('FOCUS_RESULT_MISMATCH');
       focusResult = response;
     } catch { if (current() && active === selected) focusFailure = true; }
+  }
+  // Reference sheet: stage the initial ledger's five mapping assumptions into a
+  // fresh draft (author still saves and requests approval) and compare with the
+  // latest other posted document, read-only.
+  function prepareSheet() {
+    candidateStaged = 0;
+    if (!active) return;
+    if (active.status === 'DRAFT' && editable() && drafts.size === 0 && !allRows().some(row => linked(row.decision))) {
+      const staged = candidateDecisions(allRows(), snapshot.mapping_candidates || []);
+      if (staged.size) {
+        drafts = staged; dirty = true; candidateStaged = staged.size;
+        if (!reviewNote) reviewNote = '원문 전체 행과 미확인을 보존하고, 기초 원장의 시연 매핑 가정 5행만 조건부 적용 판단으로 저장합니다. 제조 기술검수 승인이 아닙니다.';
+      }
+    }
+    const baseline = documents.filter(doc => doc.id !== active.id && doc.status === 'POSTED' && doc.content?.configuration_id === content().configuration_id)
+      .sort((a, b) => (b.ledger_version || 0) - (a.ledger_version || 0))[0];
+    comparison.load(active, documents, baseline?.id || '');
   }
   function stats() {
     const summary = bomPresentation(allRows(), decision);
@@ -439,14 +488,40 @@ export function createBomDrawer({ snapshot, api, getIdentity = () => null, onPos
       <details class="mk-bom-source-details" data-bom-source-picker><summary>다른 보관 파일 선택</summary><label class="mk-bom-field">원본 파일<select data-bom-field="source"${busy ? ' disabled' : ''}><option value="">원본을 선택하세요</option>${sources.map(source => `<option value="${esc(source.source_id)}"${source.source_id === selectedSource ? ' selected' : ''}${['ods','csv'].includes(source.format) ? '' : ' disabled'}>${esc(source.filename)} · ${esc(source.format.toUpperCase())}${['ods','csv'].includes(source.format) ? '' : ' · BOM 표 등록 미지원'}</option>`).join('')}</select></label><div class="mk-bom-actions">${button('선택 원본 추출·검증', 'create', disabled, true)}</div></details>
       <p class="mk-small-note">${runner?.ready === true ? '파일 처리기 준비됨' : runner?.code === 'RUNNER_ENFORCEMENT_UNAVAILABLE' ? '파일 처리 자원 제한 미지원 · 원본 접수 차단' : '파일 처리기 준비 필요'} · 현재는 서버에 보관된 원본을 사용합니다.</p><details class="mk-bom-source-details"><summary>지원 형식 안내</summary><p>ODS·CSV: 지원 열 구조의 BOM 표를 등록합니다. PDF: 텍스트 추출만 준비돼 있으며 BOM 열 인식·스캔 문서 OCR은 미지원입니다. 보관 목록에 없는 새 파일의 업로드·등록은 아직 연결되지 않았습니다.</p></details>`;
   }
+  function actBlock() {
+    const flow = bomRequestFlow(active, { dirty }), status = active.status, author = isAuthor();
+    const reviewer = !author && permitted('document.review') && permitted('document.approve');
+    const chips = `<div class="mk-flow" aria-label="등록 흐름">${flow.steps.map(item => `<span class="${item.state}">${esc(item.label)}</span>`).join('<i aria-hidden="true">→</i>')}</div>`;
+    const people = `작성 ${esc(active.created_by)}${active.reviewed_by ? ` · 검토 ${esc(active.reviewed_by)}` : ''}${active.approved_by ? ` · 승인 ${esc(active.approved_by)}` : ''}`;
+    let actions = '', note = '';
+    if (status === 'DRAFT' && author) {
+      if (dirty || !flow.requested) { actions = button('등록 초안 저장 · 승인 요청', 'revise', busy || !editable(), true); note = '초안을 저장해도 승인·반영되지 않습니다. 다른 담당자의 검토·승인 후 반영해야 그래프와 자재 계산에 쓰입니다.'; }
+      else note = '승인 요청됨 · 다른 담당자의 검토·승인을 기다립니다. 작성자 본인은 승인할 수 없습니다.';
+    } else if ((status === 'DRAFT' && flow.requested) || status === 'REVIEWED') {
+      if (reviewer) actions = `<label class="mk-bom-ack"><input type="checkbox" data-bom-field="acknowledge"${acknowledged ? ' checked' : ''}${busy ? ' disabled' : ''}>미확인 행과 원본 식별 차이를 확인했으며, 원본 등록과 제조 기술 승인을 구분합니다.</label>${button('승인', 'approve-flow', busy || dirty || !acknowledged, true)}`;
+      else note = author ? '작성자 본인은 승인할 수 없습니다. 상단에서 역할을 다른 검토 계정으로 바꾸세요.' : '현재 계정에는 승인 권한이 없습니다.';
+    } else if (status === 'DRAFT') note = '작성자가 등록 초안을 저장해 승인을 요청하면 검토할 수 있습니다.';
+    else if (status === 'APPROVED') { actions = button('반영 (원장 확정)', 'post', busy || !permitted('document.post'), true); note = '승인됐지만 아직 원장과 그래프에 반영되지 않았습니다.'; }
+    else if (status === 'POSTED') actions = `<span class="mk-pill ok">반영 완료 · 원장 v${count(active.ledger_version)}</span>${onShowGraph ? button('그래프에서 보기', 'show-graph', busy, true) : ''}${button('최신 원장·소요량 조회', 'refresh', busy)}`;
+    return `<section class="mk-drawer-block" data-bom-section="5"><div class="mk-bom-report-header"><h3>${status === 'DRAFT' && !flow.requested ? '등록 초안' : '검토·승인'}</h3><span class="mk-small-note">${people}</span></div>${chips}${outcomeBanner()}<div class="mk-bom-actions">${actions}</div>${note ? `<p class="mk-small-note">${esc(note)}</p>` : ''}${reviewerOutcomes()}</section>`;
+  }
+  function linkBlock() {
+    const rows = allRows(), connected = rows.filter(row => linked(decision(row)));
+    const itemNames = new Map((snapshot.entities || []).filter(entity => entity.type === 'InternalItem').map(entity => [entity.display_id, entity.attributes?.display_name || entity.label || entity.display_id]));
+    return `<section class="mk-drawer-block" data-bom-section="4"><div class="mk-bom-report-header"><h3>사내 품목 연결</h3><span class="mk-pill mute">${count(connected.length)}행 연결 · ${count(rows.length - connected.length)}행 미연결</span></div>
+      ${connected.length ? `<div class="mk-table-scroll mk-bom-review-table"><table class="mk-bom-source-table" data-bom-table="mapping"><thead><tr><th>행</th><th>위치</th><th>원문 값</th><th>사내 품목</th><th>대당</th><th>근거</th></tr></thead><tbody>${connected.map(row => { const value = decision(row); return `<tr><td><button type="button" class="mk-link" data-bom-edit="${esc(row.row_id)}">${esc(row.source_row)}</button></td><td>${esc((row.designators || []).join(' '))}</td><td>${esc(row.source_description)}</td><td><span class="chip">${esc(value.item_id)}</span><small>${esc(itemNames.get(value.item_id) || '')}</small></td><td class="mk-numeric">${esc(value.quantity_per_unit)} ${esc(value.unit)}</td><td>${esc(bases[value.review_basis] || '미검수')}</td></tr>`; }).join('')}</tbody></table></div>` : '<p class="mk-small-note">연결된 사내 품목이 없습니다.</p>'}
+      <p class="mk-small-note">${candidateStaged ? `기초 원장의 시연 매핑 가정 ${count(candidateStaged)}행을 초안에 담았습니다(미저장). ` : ''}연결은 시연 가정이며 품목 동일성·단위·실장 확정이 아닙니다. 연결하지 않은 행은 소요 계산에서 미확인으로 남습니다.</p>
+      <details class="mk-bom-row-details"><summary>연결 수정 · 행 선택</summary><div data-bom-section="editor">${rowEditor()}</div></details></section>`;
+  }
+  function sheetPage() {
+    const verdict = active.status === 'POSTED' ? `<div class="mk-verdict ok"><b>${esc(content().configuration_id)} 반영 완료</b>BOM ${count(allRows().length)}행이 원장 v${count(active.ledger_version)}에 반영됐고, 그래프에 구성 → BOM 스냅샷 → BOM 행 → 원문 행·적용 → 사내 품목 관계가 생겼습니다. 적용 미확인 행은 소요 계산에서 미확인으로 남습니다.</div>` : '';
+    return `<div class="mk-bom-review-page">${verdict}${actBlock()}${documentHeader(true)}${extractionReport()}<div data-bom-comparison-slot>${comparison.render(active, documents)}</div>${linkBlock()}
+      <details class="mk-bom-source-details"><summary>등록 문서 · 검토 의견 · 원본 관리</summary><div class="mk-bom-toolbar"><label class="mk-bom-field">등록 문서<select data-bom-field="document"${busy ? ' disabled' : ''}>${documents.map(doc => option(doc.id, `${doc.content?.source?.filename || doc.id} · v${doc.version} · ${statuses[doc.status] || doc.status}`, active?.id)).join('')}</select></label>${button('다시 조회', 'reload', busy)}${button('새 원본 접수', 'source-view', busy)}</div>${draftForm()}${documentHeader()}</details></div>`;
+  }
   function stageBody() {
     if (operation === 'create') return `<section class="mk-drawer-block mk-bom-processing"><h3>추출·검증 중</h3><p>${esc(sources.find(source => source.source_id === selectedSource)?.filename || '선택한 원본')}</p><div class="mk-bom-progress" role="progressbar" aria-label="BOM 원본 추출·검증 진행 중"><span></span></div><p>원본 식별 · 시트와 행 추출 · 수량과 부품 위치 확인</p><p class="mk-small-note">서버 처리 중입니다. 완료되면 검증 결과와 품목 연결을 함께 보여드립니다.</p></section>`;
-    if (step === 0) return sourcePicker();
-    if (!active) return '<section class="mk-drawer-block"><h3>등록 문서 없음</h3><p>현재 원장에는 이 단계의 실행 결과가 없습니다. 원본 접수에서 실제 BOM을 선택하거나 기존 문서를 다시 조회하세요.</p></section>';
-    if (step >= 1 && step <= 4) return reviewPage();
-    if (step === 5) return `${documentHeader()}${stats()}${draftForm()}${rawTable()}`;
-    if (step === 6) return `${documentHeader()}${conflicts()}${stats()}${approvalForm()}${rawTable()}`;
-    return `${documentHeader()}${postedSection()}`;
+    if (step === 0 || !active) return `${sourcePicker()}${active ? `<div class="mk-bom-actions">${button('현재 등록 문서 보기', 'sheet-view', busy)}</div>` : ''}`;
+    return sheetPage();
   }
   function updateStepAppearance() {
     if (!wrap) return;
@@ -472,7 +547,7 @@ export function createBomDrawer({ snapshot, api, getIdentity = () => null, onPos
     if (step >= 1 && step <= 4 && active && !busy) product.load(snapshot, active, selectedRow);
     const restoreFocus = wrap.contains(document.activeElement);
     const previousScroll = wrap.querySelector('.mk-drawer-body')?.scrollTop || 0;
-    wrap.innerHTML = `<div class="mk-drawer-scrim" data-close></div><section class="mk-drawer" role="dialog" aria-modal="true" aria-labelledby="mk-drawer-title" aria-busy="${busy}"><header><div><div class="mk-drawer-eyebrow">제품 구성 · BOM 원본 등록</div><h2 id="mk-drawer-title">${esc(snapshot.summary.configuration_id || 'BOM 등록')}</h2></div><button type="button" class="mk-btn" data-close>닫기</button></header><nav class="mk-drawer-steps" aria-label="BOM 처리 단계">${stages.map((label,index) => `<button type="button" data-bom-step="${index}" aria-current="${index === (operation === 'create' ? 2 : step) ? 'step' : 'false'}"${busy ? ' disabled' : ''}>${label}</button>`).join('')}</nav><div class="mk-drawer-body"><div class="mk-bom-toolbar"><label class="mk-bom-field">등록 문서<select data-bom-field="document"${busy ? ' disabled' : ''}><option value="">등록 문서를 선택하세요</option>${documents.map(doc => option(doc.id, `${doc.content?.source?.filename || doc.id} · v${doc.version} · ${statuses[doc.status] || doc.status}`, active?.id)).join('')}</select></label>${button('다시 조회', 'reload', busy)}</div><p class="mk-bom-notice${failure ? ' error' : ''}" role="status" aria-live="polite">${esc(notice)}</p>${stageBody()}<p class="mk-preview-notice">현재 회사·계정의 서버 문서만 조회합니다. 단계 선택은 상태를 바꾸지 않으며 검토·승인·반영은 각각 명시적으로 실행합니다.</p></div></section>`;
+    wrap.innerHTML = `<div class="mk-drawer-scrim" data-close></div><section class="mk-drawer" role="dialog" aria-modal="true" aria-labelledby="mk-drawer-title" aria-busy="${busy}"><header><div><div class="mk-drawer-eyebrow">제품 구성 · BOM 원본 등록</div><h2 id="mk-drawer-title">${esc(snapshot.summary.configuration_id || 'BOM 등록')}</h2></div><button type="button" class="mk-btn" data-close>닫기</button></header><nav class="mk-drawer-steps" aria-label="BOM 처리 단계">${stages.map((label,index) => `<button type="button" data-bom-step="${index}" aria-current="${index === (operation === 'create' ? 2 : step) ? 'step' : 'false'}"${busy ? ' disabled' : ''}>${label}</button>`).join('')}</nav><div class="mk-drawer-body"><p class="mk-bom-notice${failure ? ' error' : ''}" role="status" aria-live="polite">${esc(notice)}</p>${stageBody()}<p class="mk-preview-notice">현재 회사·계정의 서버 문서만 조회합니다. 단계 선택은 상태를 바꾸지 않으며 검토·승인·반영은 각각 명시적으로 실행합니다.</p></div></section>`;
     const form = wrap.querySelector('[data-bom-form="row"]');
     const inputValues = rowInputs.get(form?.elements.namedItem('row_id')?.value);
     if (form && inputValues && editable()) for (const [name, value] of Object.entries(inputValues)) {
@@ -488,18 +563,19 @@ export function createBomDrawer({ snapshot, api, getIdentity = () => null, onPos
     scrollTarget = null;
   }
   function selectStep(next) {
-    // Sections 1–4 share one page. Moving between them must not replace a
-    // partially typed row form before the author explicitly stages the edit.
-    if (step >= 1 && step <= 4 && next >= 1 && next <= 4 && wrap.querySelector('.mk-bom-review-page')) {
-      step = next;
-      updateStepAppearance();
-      wrap.querySelector(`[data-bom-section="${step}"]`)?.scrollIntoView({ block: 'start' });
+    // Steps 1–7 share one sheet page; moving only scrolls, so a partially
+    // typed row form is never replaced before the author stages it.
+    const section = next >= 5 ? 5 : next;
+    if (next >= 1 && active && wrap.querySelector('.mk-bom-review-page')) {
+      step = next; updateStepAppearance();
+      wrap.querySelector(`[data-bom-section="${section}"]`)?.scrollIntoView({ block: 'start' });
       return;
     }
-    step = next; scrollTarget = next; render();
+    step = next; scrollTarget = section; render();
   }
   async function activate(action) {
     if (action === 'source-view' && !busy) { selectStep(0); return; }
+    if (action === 'sheet-view' && !busy && active) { selectStep(1); return; }
     if (action === 'choose-source' && !busy) { const picker = wrap?.querySelector('[data-bom-source-picker]'); if (picker) { picker.open = true; picker.querySelector('select')?.focus(); } return; }
     if (action === 'show-original' && !busy) { const original = wrap?.querySelector('[data-bom-original]'); if (original) { original.open = true; original.scrollIntoView({ block: 'start' }); } return; }
     if (action === 'compare' && active && !busy) { comparison.load(active, documents); return; }
@@ -520,6 +596,26 @@ export function createBomDrawer({ snapshot, api, getIdentity = () => null, onPos
       });
       return;
     }
+    if (action === 'approve-flow' && active && !busy) {
+      if (!acknowledged) { setNotice(errors.BOM_UNRESOLVED_ACKNOWLEDGEMENT_REQUIRED, true); render(); return; }
+      const base = `/api/mks2/bom/documents/${encodeURIComponent(active.id)}`;
+      await work(async current => {
+        let document = active;
+        if (document.status === 'DRAFT') {
+          document = await command('review', `${base}/review`, { ...exact(), review_note: reviewerNote || '원문과 등록 판단 및 미확인 사항을 검토했습니다. 미해결 항목을 유지하며 원본 등록 승인과 제조 기술검수를 구분합니다.', acknowledge_unresolved: true });
+          if (!current()) return;
+          active = document;
+        }
+        document = await command('approve', `${base}/approve`, { expected_version: document.version, payload_hash: document.payload_hash });
+        if (!current()) return;
+        active = document; resetDrafts();
+        const index = documents.findIndex(doc => doc.id === active.id);
+        if (index >= 0) documents[index] = active;
+        step = 6; scrollTarget = 5;
+        setNotice('검토를 기록하고 이 버전을 승인했습니다. 원장 반영은 다음 단계입니다.');
+      }, 'approve');
+      return;
+    }
     if (!['create','revise','review','approve','post','request-changes','reject'].includes(action)) return;
     if (['request-changes', 'reject'].includes(action) && outcomeReason.trim().length < 8) { setNotice('보완 요청·반려 사유를 8자 이상 적어 주세요.', true); render(); return; }
     const sourceId = selectedSource || wrap?.querySelector('[data-bom-field="source"]')?.value;
@@ -532,7 +628,7 @@ export function createBomDrawer({ snapshot, api, getIdentity = () => null, onPos
     else {
       path += `/${encodeURIComponent(active.id)}/${action}`;
       payload = exact();
-      if (action === 'revise') payload = { ...payload, expected_ledger_version: currentLedger(), review_note: reviewNote,
+      if (action === 'revise') payload = { ...payload, expected_ledger_version: currentLedger(), review_note: reviewNote || '원문 전체 행과 미확인을 보존하고, 기초 원장의 시연 매핑 가정 5행만 조건부 적용 판단으로 저장합니다. 제조 기술검수 승인이 아닙니다.',
         rows: allRows().map(row => ({ row_id: row.row_id, ...decision(row) })) };
       if (action === 'review') payload = { ...payload, review_note: reviewerNote, acknowledge_unresolved: acknowledged };
       if (action === 'request-changes' || action === 'reject') payload = { ...payload, reason: outcomeReason.trim() };
@@ -546,13 +642,15 @@ export function createBomDrawer({ snapshot, api, getIdentity = () => null, onPos
       await loadFocus(current);
       if (!current()) return;
       step = action === 'create' ? 2 : action === 'post' ? 7 : action === 'revise' || action === 'request-changes' ? 5 : 6;
+      prepareSheet();
       setNotice({ create: '실제 원본을 접수했습니다. 전체 행과 원본 식별 차이를 검토해 주세요.', revise: '새 버전의 검수 초안을 저장했습니다. 이전 검토·승인은 해제됩니다.', review: '서버에 검토를 기록했습니다. 아직 승인·원장 반영 전입니다.', approve: '이 버전의 등록 내용을 승인했습니다. 원장 반영은 다음 단계입니다.', post: '원장에 등록했습니다. 같은 버전의 그래프 준비 후 최신 원장에서 소요량을 확인하세요.', 'request-changes': '보완 요청을 기록했습니다. 문서는 초안으로 돌아가고 기존 검토·승인은 해제됐습니다.', reject: '이 문서를 반려했습니다. 원장에는 반영되지 않습니다.' }[action]);
-      scrollTarget = step;
+      scrollTarget = action === 'create' ? 2 : 5;
+      if (action === 'create' && candidateStaged) setNotice(`실제 원본을 접수했습니다. 기초 원장의 시연 매핑 가정 ${count(candidateStaged)}행을 초안에 담았습니다. 확인 후 등록 초안을 저장해 승인을 요청하세요.`);
       if (action === 'post') onPosted(active);
     }, action);
   }
-  function open(initialStep = 0, preferredId, preferredRow = null, expectedDocument = null) {
-    close(); focusBefore = document.activeElement; step = initialStep;
+  function open(initialStep = 0, preferredId, preferredRow = null, expectedDocument = null, { source = false } = {}) {
+    close(); focusBefore = document.activeElement; step = initialStep; sourceFirst = source;
     active = null; sources = []; documents = []; runner = null; selectedSource = ''; fileCheck = null; resetDrafts();
     wrap = document.createElement('div'); wrap.className = 'mk-drawer-wrap'; document.body.append(wrap);
     render();
@@ -578,7 +676,7 @@ export function createBomDrawer({ snapshot, api, getIdentity = () => null, onPos
       if (field === 'source' && !busy) selectedSource = event.target.value;
       if (field === 'row' && !busy) { selectedRow = event.target.value; render(); }
       if (event.target.closest('[data-bom-form="row"]')) syncRowChoices();
-      if (field === 'acknowledge') acknowledged = event.target.checked;
+      if (field === 'acknowledge') { acknowledged = event.target.checked; render(); }
       if (field === 'file') { handleFile(event.target.files?.[0]); event.target.value = ''; }
     });
     for (const type of ['dragenter', 'dragover', 'dragleave', 'drop']) wrap.addEventListener(type, event => {

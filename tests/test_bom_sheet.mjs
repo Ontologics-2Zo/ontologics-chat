@@ -32,3 +32,35 @@ test('flow chips follow the server status, including rejection', () => {
   assert.equal(states('POSTED'), 'done,done,done,done');
   assert.equal(states('REJECTED'), 'rejected,rejected,rejected,rejected');
 });
+
+import { candidateDecisions, bomRequestFlow } from '../web/mks2/bom.js';
+
+test('initial mapping assumptions prefill only exact unresolved rows as conditional decisions', () => {
+  const rows = [
+    { row_id: 'r1', source_row: 51, designators: ['U3'], locator: 'S!row=51', decision: { application_status: 'UNRESOLVED' } },
+    { row_id: 'r2', source_row: 6, designators: ['R10', 'R11'], locator: 'S!row=6', decision: { application_status: 'UNRESOLVED' } },
+    { row_id: 'r3', source_row: 53, designators: ['U6'], locator: 'S!row=53', decision: { application_status: 'NOT_MOUNTED' } },
+  ];
+  const candidates = [
+    { item_id: 'IM-1', source_row_number: 51, refdes: ['U3'], qty_per_board_assumption: 1, unit_assumption: 'EA', assumption_refs: ['ASM-1'] },
+    { item_id: 'IM-2', source_row_number: 6, refdes: ['R10'], qty_per_board_assumption: 4, unit_assumption: 'EA' },
+    { item_id: 'IM-3', source_row_number: 53, refdes: ['U6'], qty_per_board_assumption: 1, unit_assumption: 'EA' },
+  ];
+  const staged = candidateDecisions(rows, candidates);
+  assert.deepEqual([...staged.keys()], ['r1']);
+  const decision = staged.get('r1');
+  assert.equal(decision.review_basis, 'DEMO_ASSUMPTION');
+  assert.equal(decision.quantity_per_unit, '1');
+  assert.match(decision.evidence_note, /ASM-1.*제조 기술검수·품목 동일성·단위 확정 승인이 아님/);
+});
+
+test('reference flow treats a saved decided draft as an approval request', () => {
+  const doc = (status, version, decided = true) => ({ status, version, content: { rows: [{ decision: { application_status: decided ? 'APPLICABLE' : 'UNRESOLVED' } }] } });
+  const states = (document, options) => bomRequestFlow(document, options).steps.map(item => item.state).join(',');
+  assert.equal(states(doc('DRAFT', 1, false)), 'on,pending,pending,pending');
+  assert.equal(states(doc('DRAFT', 2)), 'done,on,pending,pending');
+  assert.equal(states(doc('DRAFT', 2), { dirty: true }), 'on,pending,pending,pending');
+  assert.equal(states(doc('APPROVED', 3)), 'done,done,on,pending');
+  assert.equal(states(doc('POSTED', 3)), 'done,done,done,done');
+  assert.equal(bomRequestFlow(doc('DRAFT', 2)).requested, true);
+});
