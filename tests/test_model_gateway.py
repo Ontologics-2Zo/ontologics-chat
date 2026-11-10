@@ -226,29 +226,32 @@ class ModelContractTests(unittest.TestCase):
                         "choices": [{"finish_reason": "stop", "message": {
                             "content": '{"capability":"material_analysis"}'}}]})
                 with httpx.Client(transport=httpx.MockTransport(handler)) as client:
-                    result = adapter(client, provider_slug="azure", output_token_parameter="max_completion_tokens").complete(request(), timeout_seconds=2)
+                    result = adapter(client, provider_slug="azure/us", output_token_parameter="max_completion_tokens").complete(request(), timeout_seconds=2)
                 self.assertEqual(seen[0]["max_completion_tokens"], 128)
                 self.assertNotIn("max_tokens", seen[0])
-                self.assertEqual(seen[0]["provider"], {"only": ["azure"], "allow_fallbacks": False,
+                self.assertEqual(seen[0]["provider"], {"only": ["azure/us"], "allow_fallbacks": False,
                     "require_parameters": True, "data_collection": "deny", "zdr": True,
                     "max_price": {"prompt": 2, "completion": 10, "request": 0}})
                 self.assertEqual(result.error_code, None if actual == "Azure" else "MODEL_RETURNED_PROVIDER_MISMATCH")
         with self.assertRaises(ServiceError):
             adapter(None, output_token_parameter="arbitrary_parameter")
+        for slug in ("azure/us/x", "azure/", "Azure/us", "azure us"):
+            with self.subTest(slug=slug), self.assertRaises(ServiceError):
+                adapter(None, provider_slug=slug)
 
     def test_zdr_catalog_requires_exact_fixed_endpoint_and_safe_price_tiers(self):
-        baseline = {"model_id": "openai/gpt-6.1-sol", "tag": "azure", "provider_name": "Azure",
+        baseline = {"model_id": "openai/gpt-6.1-sol", "tag": "azure/us", "provider_name": "Azure",
             "status": 0, "safety_retention": False,
             "supported_parameters": ["max_completion_tokens", "response_format", "structured_outputs"],
-            "pricing": {"prompt": "0.000002", "completion": "0.00001", "web_search": "0.01",
+            "pricing": {"prompt": "0.0000022", "completion": "0.000011", "web_search": "0.01",
                         "overrides": [{"min_prompt_tokens": 272000, "prompt": "0.000004", "completion": "0.000015"}]}}
         cases = [(None, [baseline]), ("missing", []), ("duplicate", [baseline, baseline])]
-        for field, value in (("model_id", "openai/other"), ("tag", "openai"), ("provider_name", "OpenAI"),
+        for field, value in (("model_id", "openai/other"), ("tag", "openai"), ("tag", "azure"), ("tag", "azure/eu"), ("provider_name", "OpenAI"),
                 ("safety_retention", True), ("safety_retention", 0), ("status", 1), ("status", False),
                 ("supported_parameters", ["max_tokens", "response_format", "structured_outputs"]),
                 ("supported_parameters", ["max_completion_tokens", "response_format"])):
             cases.append((field, [{**baseline, field: value}]))
-        for change in ({"prompt": "0.000003"}, {"completion": "0.00002"}, {"request": "0.01"},
+        for change in ({"prompt": "0"}, {"completion": "-0.00001"}, {"prompt": "NaN"}, {"request": "0.01"},
                        {"overrides": [{"min_prompt_tokens": 3000}]}, {"overrides": [{"min_prompt_tokens": "272000"}]},
                        {"overrides": [{}]}, {"overrides": {}}):
             cases.append(("pricing", [{**baseline, "pricing": {**baseline["pricing"], **change}}]))
@@ -261,12 +264,13 @@ class ModelContractTests(unittest.TestCase):
                 client = httpx.Client(transport=httpx.MockTransport(handler))
                 with patch("service.agent_host.httpx.Client", return_value=client):
                     if error is None:
-                        self.assertTrue(verified_zdr_endpoint("openai/gpt-6.1-sol", Decimal("0.000002"),
-                            Decimal("0.00001"), input_token_bound=3000))
+                        prompt, completion, digest = verified_zdr_endpoint("openai/gpt-6.1-sol", input_token_bound=3000)
+                        # The regional endpoint's own price, not the lower catalog price.
+                        self.assertEqual((prompt, completion), (Decimal("0.0000022"), Decimal("0.000011")))
+                        self.assertTrue(digest)
                     else:
                         with self.assertRaises(ServiceError) as caught:
-                            verified_zdr_endpoint("openai/gpt-6.1-sol", Decimal("0.000002"),
-                                Decimal("0.00001"), input_token_bound=3000)
+                            verified_zdr_endpoint("openai/gpt-6.1-sol", input_token_bound=3000)
                         self.assertEqual(caught.exception.code, "MODEL_ZDR_PROFILE_UNVERIFIED")
                 self.assertEqual(str(seen[0].url), "https://openrouter.ai/api/v1/endpoints/zdr")
                 self.assertEqual(seen[0].method, "GET")

@@ -38,8 +38,16 @@ def verified_prices(model):
         raise ServiceError("MODEL_PRICING_UNVERIFIED", 503) from None
 
 
-def verified_zdr_endpoint(model, input_price, output_price, *, input_token_bound):
-    """Require the fixed Azure route in the public ZDR catalog; never reroute."""
+ROUTE_TAG = "azure/us"
+
+
+def verified_zdr_endpoint(model, *, input_token_bound, tag=ROUTE_TAG):
+    """Require one fixed Azure endpoint in the public ZDR catalog; never reroute.
+
+    Returns the endpoint's own prices. A regional endpoint can cost more than
+    the model's catalog price, so the budget and the provider price cap use
+    the endpoint price, never the lower catalog figure.
+    """
     try:
         if type(input_token_bound) is not int or not 0 < input_token_bound <= 10000:
             raise ValueError()
@@ -47,7 +55,7 @@ def verified_zdr_endpoint(model, input_price, output_price, *, input_token_bound
             response = client.get("https://openrouter.ai/api/v1/endpoints/zdr")
             response.raise_for_status()
             matches = [row for row in response.json()["data"]
-                       if row.get("model_id") == model and row.get("tag") == "azure"]
+                       if row.get("model_id") == model and row.get("tag") == tag]
         if len(matches) != 1:
             raise ValueError()
         record = matches[0]
@@ -58,7 +66,8 @@ def verified_zdr_endpoint(model, input_price, output_price, *, input_token_bound
                 or not required.issubset(record["supported_parameters"])):
             raise ValueError()
         prices = record["pricing"]
-        if (Decimal(prices["prompt"]) != input_price or Decimal(prices["completion"]) != output_price
+        input_price, output_price = Decimal(prices["prompt"]), Decimal(prices["completion"])
+        if (not all(p.is_finite() and p > 0 for p in (input_price, output_price))
                 or Decimal(prices.get("request", "0")) != 0):
             raise ValueError()
         # The fixed synthetic route cannot reach long-context price tiers.
@@ -70,9 +79,8 @@ def verified_zdr_endpoint(model, input_price, output_price, *, input_token_bound
             threshold = tier["min_prompt_tokens"]
             if type(threshold) is not int or threshold <= input_token_bound:
                 raise ValueError()
-        return content_hash({"model": model, "provider": "azure", "safety_retention": False,
-                             "pricing": prices, "required_parameters": sorted(required),
-                             "input_token_bound": input_token_bound})
+        return input_price, output_price, content_hash({"model": model, "provider": tag, "safety_retention": False,
+            "pricing": prices, "required_parameters": sorted(required), "input_token_bound": input_token_bound})
     except Exception:
         raise ServiceError("MODEL_ZDR_PROFILE_UNVERIFIED", 503) from None
 
@@ -103,15 +111,15 @@ def build_agent_host(db, identity, gateway, context_provider, settings, *, recei
             raise ServiceError("MODEL_CREDENTIAL_MISSING", 503)
         if settings.prior_spend_usd is None:
             raise ServiceError("MODEL_PRIOR_SPEND_UNKNOWN", 503)
-        prompt, completion, digest, canonical = verified_prices(settings.model)
+        _, _, digest, canonical = verified_prices(settings.model)
         # First-party OpenAI is not ZDR-eligible. This is one fixed, verified
-        # Azure route for the same approved model, not a fallback list.
+        # Azure endpoint for the same approved model, not a fallback list.
         provider = OpenRouterRouteProvider(settings.openrouter_api_key, model_id=settings.model,
-            canonical_model_id=canonical, provider_slug="azure", output_token_parameter="max_completion_tokens",
-            input_usd_per_token=prompt, output_usd_per_token=completion)
+            canonical_model_id=canonical, provider_slug=ROUTE_TAG, output_token_parameter="max_completion_tokens")
         bound = provider.input_token_bound(ModelRequest(call_id="profile-preflight", features=("unknown",),
                                                        max_output_tokens=256))
-        endpoint_digest = verified_zdr_endpoint(settings.model, prompt, completion, input_token_bound=bound)
+        prompt, completion, endpoint_digest = verified_zdr_endpoint(settings.model, input_token_bound=bound)
+        provider.configure_price_caps(prompt, completion)
         options.update(live_enabled=True, transmission_approved=True,
                        input_usd_per_token=prompt, output_usd_per_token=completion,
                        pricing_version=content_hash({"catalog": digest, "endpoint": endpoint_digest}))
