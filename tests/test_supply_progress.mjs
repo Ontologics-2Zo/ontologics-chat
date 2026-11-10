@@ -2,54 +2,73 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { supplyProgress } from '../web/mks2/procurement.js';
 
-const snapshot = shortage => ({ summary: { item_id: 'item-x' }, material_requirements: { items: [{ item_id: 'item-x', planned_shortage_qty: String(shortage), shortage_qty: '1' }] } });
-const pr = (status, extra = {}) => ({ id: 'pr-00000001-x', kind: 'PR', status, quantity: 23, remaining_qty: 23, created_by: 'actor-a', approved_by: status === 'APPROVED' || status === 'POSTED' ? 'actor-b' : null,
-  content: { material_basis: 'planned', resolved: { item_id: 'item-x', unit: 'EA', supplier_id: 'sup-d', quote: { lead_business_days: 3 } } }, ...extra });
-const author = { actor_id: 'actor-a', permitted_actions: ['document.create', 'document.post'] };
-const reviewer = { actor_id: 'actor-b', permitted_actions: ['document.review', 'document.approve', 'document.post'] };
+const snapshot = (shortage, version = 9) => ({ summary: { item_id: 'item-x' }, meta: { ledger_version: version },
+  material_requirements: { items: [{ item_id: 'item-x', planned_shortage_qty: String(shortage), shortage_qty: '1' }] } });
+const quote = { id: 'quote-1', kind: 'QUOTE', status: 'POSTED', content: { unit: 'EA', lead_business_days: 3, resolved: { supplier_id: 'sup-d' } } };
+const pr = (status, extra = {}) => ({ id: 'pr-00000001-x', kind: 'PR', status, quantity: 23, remaining_qty: 23, created_by: 'actor-a',
+  approved_by: ['APPROVED', 'POSTED'].includes(status) ? 'actor-b' : null,
+  content: { material_basis: 'planned', basis_ledger_version: 9, resolved: { item_id: 'item-x', unit: 'EA', supplier_id: 'sup-d', quote: { lead_business_days: 3 } } }, ...extra });
+const po = (status, extra = {}) => ({ id: 'po-00000002-x', kind: 'PO', status, parent_id: 'pr-00000001-x', quantity: 23, confirmed_qty: 0, receivable_qty: 0,
+  created_by: 'actor-a', approved_by: status === 'POSTED' ? 'actor-b' : null, content: { basis_ledger_version: 9 }, ...extra });
+const author = { actor_id: 'actor-a', permitted_actions: ['document.create', 'document.update', 'document.post'] };
+const reviewer = { actor_id: 'actor-b', permitted_actions: ['document.create', 'document.review', 'document.approve', 'document.post'] };
 const states = progress => progress.steps.map(step => step.state).join(',');
+const actions = progress => progress.next.map(entry => entry.action || `(${entry.label})`);
 
-test('no purchase request means no progress card', () => {
-  assert.equal(supplyProgress([], snapshot(23), author), null);
+test('before any request the card says there is no order yet', () => {
+  const empty = supplyProgress([quote], snapshot(23), author);
+  assert.equal(empty.empty, true); assert.equal(empty.status, '발주 없음');
+  assert.match(empty.text, /아직 item-x 구매 요청·발주가 없습니다/);
 });
 
-test('a saved draft has requested approval; only another account can review it', () => {
+test('an open request form is the 초안 step; its button submits the same form', () => {
+  const editor = { kind: 'PR', values: { quote_id: 'quote-1', quantity: 23 } };
+  const draft = supplyProgress([quote], snapshot(23), author, editor);
+  assert.equal(states(draft), 'current,pending,pending,pending');
+  assert.deepEqual(actions(draft), ['submit-draft']);
+  assert.deepEqual(draft.rows[1], ['내부 발주', '미작성 · 견적 sup-d']);
+});
+
+test('a saved draft waits for another account; the reviewer approves in one button', () => {
   const mine = supplyProgress([pr('DRAFT')], snapshot(23), author);
-  assert.equal(states(mine), 'done,done,current,pending');
-  assert.equal(mine.status, '승인 진행');
-  assert.equal(mine.next.disabled, true);
-  assert.deepEqual(mine.rows[0], ['구매 요청', 'pr-00000 · 23개']);
-  assert.deepEqual(mine.rows[1], ['내부 발주', '미작성']);
-  assert.match(mine.rows[2][1], /견적 리드타임 3영업일 · 필요일 근거 없음/);
+  assert.equal(states(mine), 'done,current,pending,pending');
+  assert.deepEqual(actions(mine), ['(승인)', '(반려)']);
+  assert.match(mine.notes[0], /작성자 본인은 승인할 수 없습니다/);
   const other = supplyProgress([pr('DRAFT')], snapshot(23), reviewer);
-  assert.deepEqual([other.next.label, other.next.action], ['검토 기록', 'review']);
+  assert.deepEqual(actions(other), ['review-approve', 'reject']);
+  const approved = supplyProgress([pr('APPROVED')], snapshot(23), author);
+  assert.deepEqual([approved.status, actions(approved)[0]], ['확정 대기', 'post']);
 });
 
-test('posting the PO confirms; a grown shortage is reported but nothing is changed', () => {
-  const po = { id: 'po-00000002-x', kind: 'PO', status: 'POSTED', parent_id: 'pr-00000001-x', quantity: 23, created_by: 'actor-a', approved_by: 'actor-b', content: { pr_id: 'pr-00000001-x' } };
-  const done = supplyProgress([pr('POSTED'), po], snapshot(0), reviewer);
-  assert.equal(states(done), 'done,done,done,done'); assert.equal(done.status, '발주 확정');
-  assert.equal(done.rows[1][1], 'po-00000 · sup-d · 23개'); assert.equal(done.next, null);
-  const grown = supplyProgress([pr('DRAFT')], snapshot(28), author);
-  assert.equal(grown.shortfall, 5);
-  const posted = supplyProgress([pr('POSTED')], snapshot(0), author);
-  assert.deepEqual([posted.status, posted.next.action], ['발주 작성 필요', 'new-po']);
+test('after posting, the card follows the order through receipt and inspection', () => {
+  assert.deepEqual(actions(supplyProgress([pr('POSTED')], snapshot(0), author)), ['new-po']);
+  const ordered = supplyProgress([pr('POSTED'), po('POSTED')], snapshot(0), author);
+  assert.equal(ordered.status, '입하 예정'); assert.equal(states(ordered), 'done,done,done,done');
+  assert.deepEqual(actions(ordered), ['new-confirmation']);
+  assert.equal(ordered.rows[1][1], 'po-00000 · sup-d · 23개');
+  const confirmed = supplyProgress([pr('POSTED'), po('POSTED', { confirmed_qty: 23, receivable_qty: 23 })], snapshot(0), author);
+  assert.deepEqual(actions(confirmed), ['new-receipt']);
+  const receipt = { id: 'rc-1', kind: 'RECEIPT', status: 'POSTED', parent_id: 'po-00000002-x', quantity: 23, remaining_qty: 23, content: {} };
+  const waiting = supplyProgress([pr('POSTED'), po('POSTED', { confirmed_qty: 23 }), receipt], snapshot(0), author);
+  assert.deepEqual([waiting.status, actions(waiting)[0]], ['검사 대기', 'new-iqc']);
+  const iqc = { id: 'iqc-1', kind: 'IQC', status: 'POSTED', parent_id: 'rc-1', quantity: 23, content: {} };
+  const done = supplyProgress([pr('POSTED'), po('POSTED', { confirmed_qty: 23 }), receipt, iqc], snapshot(0), author);
+  assert.equal(done.status, '가용'); assert.deepEqual(done.next, []);
+  const poDraft = supplyProgress([pr('POSTED'), po('DRAFT')], snapshot(0), reviewer);
+  assert.equal(poDraft.focusLabel, '내부 발주'); assert.equal(states(poDraft), 'done,current,pending,pending');
+});
+
+test('a grown shortage or a changed ledger basis is reported; only the author revises', () => {
+  assert.equal(supplyProgress([pr('DRAFT')], snapshot(28), author).shortfall, 5);
+  const stale = supplyProgress([pr('DRAFT')], snapshot(28, 10), author);
+  assert.deepEqual(stale.stale, { basis: 9, current: 10 });
+  assert.deepEqual(actions(stale), ['revise']);
+  assert.equal(supplyProgress([pr('DRAFT')], snapshot(28, 10), reviewer).next[0].disabled, true);
 });
 
 test('rejected or cancelled requests and other items are ignored', () => {
-  assert.equal(supplyProgress([pr('REJECTED')], snapshot(23), author), null);
-  assert.equal(supplyProgress([pr('DRAFT', { cancelled_by: 'c' })], snapshot(23), author), null);
+  assert.equal(supplyProgress([pr('REJECTED')], snapshot(23), author).empty, true);
+  assert.equal(supplyProgress([pr('DRAFT', { cancelled_by: 'c' })], snapshot(23), author).empty, true);
   const other = pr('DRAFT'); other.content.resolved.item_id = 'item-y';
-  assert.equal(supplyProgress([other], snapshot(23), author), null);
-});
-
-test('a draft on an older ledger version asks its author to revise, not to review', () => {
-  const old = pr('DRAFT'); old.content.basis_ledger_version = 9;
-  const view = { ...snapshot(28), meta: { ledger_version: 10 } };
-  const mine = supplyProgress([old], view, { ...author, permitted_actions: ['document.update'] });
-  assert.deepEqual(mine.stale, { basis: 9, current: 10 });
-  assert.deepEqual([mine.next.label, mine.next.action, mine.next.disabled], ['초안 수정', 'revise', false]);
-  const other = supplyProgress([old], view, reviewer);
-  assert.equal(other.next.disabled, true);
-  assert.equal(supplyProgress([old], { ...snapshot(23), meta: { ledger_version: 9 } }, reviewer).stale, null);
+  assert.equal(supplyProgress([other], snapshot(23), author).empty, true);
 });
