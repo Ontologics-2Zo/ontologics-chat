@@ -106,9 +106,10 @@ def snapshot_view(payload):
     from service.reservations import reservation_impacts
     impacts = reservation_impacts(requirements, payload.get("reservations", []))
     suggestions = []
-    if impacts:
+    from decimal import Decimal
+    first = next((row for row in impacts if row["item_id"] == impacts[-1]["item_id"]), None) if impacts else None
+    if first and Decimal(impacts[-1]["planned_shortage_after"]) > Decimal(first["planned_shortage_before"]):
         # Selecting a suggestion only fills the question draft (no model call).
-        first = next(row for row in impacts if row["item_id"] == impacts[-1]["item_id"])
         suggestions = [f"왜 부족이 {impacts[-1]['planned_shortage_after']}개로 늘었어?",
                        f"기존 {first['planned_shortage_before']}개 안이면 충분해? 어떤 안을 다시 검토할까?"]
     return {

@@ -303,6 +303,9 @@ class BomService(DomainService):
                 raise ServiceError("SELF_REVIEW_FORBIDDEN", 403)
             if document["status"] != "DRAFT":
                 raise ServiceError("DOCUMENT_STATE_CHANGED", 409)
+            if document.get("change_request"):
+                # A returned version must be revised by its author first.
+                raise ServiceError("BOM_CHANGES_REQUESTED", 409)
             # Physical technical approval is unavailable in this source-registration
             # slice. Every reviewer must acknowledge that persistent limitation.
             if not body.acknowledge_unresolved:

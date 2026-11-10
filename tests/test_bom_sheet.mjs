@@ -83,3 +83,8 @@ test('after posting, review and first-registration chips show as done with notes
   assert.match(posted[3].note, /최초 등록/);
   assert.deepEqual(bomStageDisplay(states, { status: 'APPROVED' }).map(item => item.state), states);
 });
+
+test('a draft returned for changes is not shown as an approval request', () => {
+  const doc = { status: 'DRAFT', version: 2, change_request: { reason: '근거 보완 필요합니다' }, content: { rows: [{ decision: { application_status: 'APPLICABLE' } }] } };
+  assert.equal(bomRequestFlow(doc).requested, false);
+});

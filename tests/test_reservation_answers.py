@@ -140,3 +140,13 @@ class OrderReferenceTests(unittest.TestCase):
         self.assertIn("ORD-90001의 선택 회차", str(result["sections"]))
         other = answer_query("ORD-90002 남은 17대, 도착기한 안에 가능해?", view, self.ontology)
         self.assertEqual(other["status"], "NEEDS_CLARIFICATION")
+
+
+class UnchangedShortageTests(unittest.TestCase):
+    def test_no_increase_suggestion_when_the_shortage_does_not_grow(self):
+        payload = base_payload()
+        lot = next(row for row in payload["opening_balance"]["inventory"] if row.get("lot_id") == "lot-a")
+        lot.update(on_hand_qty=lot["on_hand_qty"] + 40, available_qty=lot["available_qty"] + 40)
+        view = view_of(reserve(payload, quantity=1))
+        self.assertEqual(view["reservation_impacts"][-1]["planned_shortage_after"], "0")
+        self.assertFalse(any("늘었어" in q for q in view["suggested_questions"]))

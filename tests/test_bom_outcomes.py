@@ -63,3 +63,13 @@ class BomOutcomeTests(unittest.TestCase):
     def test_posted_document_cannot_be_returned(self):
         posted = self.f.action("post", self.f.author, self.f.approved(), "post")
         self.assert_code("DOCUMENT_STATE_CHANGED", lambda: self.outcome("request_changes", self.f.reviewer, posted, "posted"))
+
+    def test_a_returned_draft_cannot_be_reviewed_until_revised(self):
+        draft = self.f.revised()
+        returned = self.outcome("request_changes", self.f.reviewer, draft, "return-before-review")
+        self.assert_code("BOM_CHANGES_REQUESTED", lambda: self.f.action("review", self.f.reviewer, returned, "review-returned",
+                         review_note="Source rows checked; no physical technical approval", acknowledge_unresolved=True))
+        revised = self.revise(returned, "revise-returned")
+        reviewed = self.f.action("review", self.f.reviewer, revised, "review-revised",
+                                 review_note="Source rows checked; no physical technical approval", acknowledge_unresolved=True)
+        self.assertEqual(reviewed["status"], "REVIEWED")

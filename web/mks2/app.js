@@ -538,11 +538,14 @@ function announceApplied(events, startedAt) {
     const names = relevantPanels([impact.item_id]);
     const unit = impact.unit === 'EA' ? '개' : ` ${impact.unit}`;
     const question = `왜 부족이 ${impact.planned_shortage_after}개로 늘었어?`;
+    const grew = Number(impact.planned_shortage_after) > Number(impact.planned_shortage_before);
     const latency = Date.parse(event.recorded_at) ? Date.now() - Date.parse(event.recorded_at) : null;
     setStatus(names, [element('b', '', '근거 변경'),
-      ` 관련 재고 변경 · 다른 주문 ${impact.demand_ref} 예약 +${impact.quantity}${unit} · 가용 ${impact.available_before}→${impact.available_after} · 계획 부족 ${impact.planned_shortage_before}→${impact.planned_shortage_after}${unit} · 기존 확보안 재검토 필요 · 원장 v${impact.ledger_version} `,
+      ` 관련 재고 변경 · 다른 주문 ${impact.demand_ref} 예약 +${impact.quantity}${unit} · 가용 ${impact.available_before}→${impact.available_after} · `
+        + (grew ? `계획 부족 ${impact.planned_shortage_before}→${impact.planned_shortage_after}${unit} · 기존 확보안 재검토 필요` : `계획 부족 ${impact.planned_shortage_after}${unit} 유지`)
+        + ` · 원장 v${impact.ledger_version} `,
       button('원장 사건 보기', () => focusEvidence(impact.entity_id), 'btn sm'),
-      ...names.map(name => button(question, () => fillQuestion(question, name), 'suggestion'))].filter(Boolean));
+      ...(grew ? names.map(name => button(question, () => fillQuestion(question, name), 'suggestion')) : [])].filter(Boolean));
     for (const name of names) {
       panels[name].status.dataset.eventId = event.event_id;
       if (latency !== null) panels[name].status.dataset.latencyMs = String(latency);

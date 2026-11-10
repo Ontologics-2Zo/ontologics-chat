@@ -181,7 +181,8 @@ export function renderReservationImpact(snapshot) {
   const latest = impacts[impacts.length - 1];
   const first = impacts.find(row => row.item_id === latest.item_id) || latest;
   const unit = latest.unit === 'EA' ? '개' : ` ${latest.unit}`;
-  return `<div class="mk-config-banner mk-change-banner" data-reservation-impact><b>근거 변경</b><span>다른 수요 ${esc(latest.demand_ref)} 예약 +${num(latest.quantity)}${esc(unit)} · ${esc(latest.item_id)} 가용 ${num(first.available_before)}→${num(latest.available_after)} · 계획 부족 ${num(first.planned_shortage_before)}→${num(latest.planned_shortage_after)}${esc(unit)} · 기존 확보안 재검토 필요 · 원장 v${num(latest.ledger_version)}</span>${button('변경 원인 질문', 'ask-change')}</div>`;
+  const grew = Number(latest.planned_shortage_after) > Number(first.planned_shortage_before);
+  return `<div class="mk-config-banner mk-change-banner" data-reservation-impact><b>근거 변경</b><span>다른 수요 ${esc(latest.demand_ref)} 예약 +${num(latest.quantity)}${esc(unit)} · ${esc(latest.item_id)} 가용 ${num(first.available_before)}→${num(latest.available_after)} · ${grew ? `계획 부족 ${num(first.planned_shortage_before)}→${num(latest.planned_shortage_after)}${esc(unit)} · 기존 확보안 재검토 필요` : `계획 부족 ${num(latest.planned_shortage_after)}${esc(unit)} 유지`} · 원장 v${num(latest.ledger_version)}</span>${grew ? button('변경 원인 질문', 'ask-change') : ''}</div>`;
 }
 
 /** Latest posted customer arrival from server documents and the current round. */
@@ -229,7 +230,7 @@ export function mountDashboard(container, { snapshot, onSelect = () => {}, onAsk
   const requirements = snapshot.material_requirements || {};
   const requirementRows = requirements.rows || [], requirementItems = requirements.items || [];
   let basis = 'production_remaining';
-  const abort = new AbortController(), { signal } = abort;
+  const abort = new AbortController(), { signal } = abort, reservationKeys = new Map();
   container.classList.add('mk-dashboard');
   const blockedBom = ['unregistered', 'UNREGISTERED', 'NOT_REGISTERED', 'BLOCKED_NO_BOM', 'missing'].includes(summary.bom_status);
   const statusText = blockedBom ? 'BOM 미등록 · 소요 계산 보류' : summary.bom_status === 'POSTED_SOURCE' ? 'BOM 원본 등록 반영 · 기술 검수 별도' : summary.bom_status || 'BOM 상태 미확인';
@@ -306,10 +307,14 @@ export function mountDashboard(container, { snapshot, onSelect = () => {}, onAsk
     const option = form.lot.selectedOptions[0];
     if (!option) { status.textContent = '예약할 수 있는 LOT가 없습니다.'; return; }
     submit.disabled = true; status.textContent = '서버에서 권한·가용·원장 버전을 확인하고 있습니다.';
+    const request = { item_id: option.dataset.item, lot_id: form.lot.value, quantity: Number(form.quantity.value),
+      demand_ref: form.demand.value.trim(), note: form.note.value.trim(), expected_ledger_version: version };
+    // A retry of the same request reuses its key, so a lost response cannot reserve twice.
+    const signature = JSON.stringify(request);
+    if (!reservationKeys.has(signature)) reservationKeys.set(signature, crypto.randomUUID());
     try {
-      const result = await api('/api/mks2/inventory/reservations', { item_id: option.dataset.item, lot_id: form.lot.value,
-        quantity: Number(form.quantity.value), demand_ref: form.demand.value.trim(), note: form.note.value.trim(),
-        expected_ledger_version: version, idempotency_key: crypto.randomUUID() });
+      const result = await api('/api/mks2/inventory/reservations', { ...request, idempotency_key: reservationKeys.get(signature) });
+      reservationKeys.delete(signature);
       status.textContent = `원장 v${result.ledger_version} 반영 · ${result.item_id} 가용 ${num(result.before.available_qty)}→${num(result.after.available_qty)}. 그래프 투영 후 화면이 갱신됩니다.`;
       onPosted?.();
     } catch (error) {
