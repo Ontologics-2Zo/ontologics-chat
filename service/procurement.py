@@ -426,7 +426,8 @@ class ProcurementService(DomainService):
                 raise ServiceError("POSTED_DOCUMENT_IMMUTABLE", 409)
             if document["created_by"] == principal.actor_id:
                 raise ServiceError("SELF_REVIEW_FORBIDDEN", 403)
-            self._snapshot(conn, company_id, document["content"]["basis_ledger_version"])
+            # Returning a draft writes nothing to the ledger, so a draft whose basis is
+            # outdated can still be returned to its author (it must be revised anyway).
             document = conn.execute("UPDATE procurement_documents SET status='DRAFT',reviewed_by=NULL,approved_by=NULL,approved_version=NULL,approved_hash=NULL,approval_policy_version=NULL,rejection_reason=%s,updated_at=now() WHERE id=%s RETURNING *", (body.reason, document["id"])).fetchone()
             self._audit(conn, principal, document, "procurement.reject")
             return document

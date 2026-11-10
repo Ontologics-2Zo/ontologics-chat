@@ -48,7 +48,8 @@ export function supplyProgress(documents, snapshot, identity, editor = null) {
   const item = snapshot?.summary?.item_id;
   const live = row => !row.cancelled_by && row.status !== 'REJECTED';
   const rows = (documents || []).filter(live);
-  const pr = rows.filter(row => row.kind === 'PR' && row.content?.resolved?.item_id === item).at(-1) || null;
+  const pr = rows.filter(row => row.kind === 'PR' && row.content?.resolved?.item_id === item
+    && !(row.status === 'DRAFT' && row.rejection_reason)).at(-1) || null;
   const can = permission => (identity?.permitted_actions || []).includes(permission);
   const unitWord = unit => unit === 'EA' || !unit ? '개' : ` ${unit}`;
   const short = id => String(id || '').slice(0, 8);
@@ -73,11 +74,13 @@ export function supplyProgress(documents, snapshot, identity, editor = null) {
     grew = false;
     for (const row of rows) if (!chain.includes(row) && chain.some(parent => parent.id === row.parent_id)) { chain.push(row); grew = true; }
   }
-  const latest = kind => chain.filter(row => row.kind === kind).at(-1) || null;
+  const latest = kind => chain.filter(row => row.kind === kind && !(row.status === 'DRAFT' && row.rejection_reason)).at(-1) || null;
   const po = latest('PO'), receipt = latest('RECEIPT'), iqc = latest('IQC');
   const resolved = pr.content?.resolved || {}, quote = resolved.quote || {}, unit = unitWord(resolved.unit);
   // The document still moving through approval is the one the chips describe.
-  const focus = chain.filter(row => row.status !== 'POSTED').at(-1) || null;
+  // A returned draft (반려) waits for its author; it is set aside so the flow can continue.
+  const returned = chain.filter(row => row.status === 'DRAFT' && row.rejection_reason);
+  const focus = chain.filter(row => row.status !== 'POSTED' && !returned.includes(row)).at(-1) || null;
   const requirement = (snapshot?.material_requirements?.items || []).find(row => row.item_id === item);
   const needed = requirement ? Number(pr.content?.material_basis === 'planned' ? requirement.planned_shortage_qty : requirement.shortage_qty) : NaN;
   const shortfall = Number.isFinite(needed) && pr.status !== 'POSTED' && needed > pr.quantity ? needed - pr.quantity : 0;
@@ -149,7 +152,8 @@ export function supplyProgress(documents, snapshot, identity, editor = null) {
   }
   return {
     item, status, tone, steps: stepsAt(focus ? reachedStep[focus.status] ?? 0 : 4), focusId: focus?.id || null,
-    focusLabel: focus && focus !== pr ? kindLabel[focus.kind] : null, next, notes, shortfall, stale, rows: progressRows,
+    focusLabel: focus && focus !== pr ? kindLabel[focus.kind] : null, next, shortfall, stale, rows: progressRows,
+    notes: returned.length ? [...notes, `반려된 초안 ${returned.length}건은 작성자 수정 전까지 진행에서 제외했습니다.`] : notes,
   };
 }
 const toneClass = { ok: 'ok', warn: 'warn', mute: 'mute', info: 'info' };

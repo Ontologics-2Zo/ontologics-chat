@@ -302,6 +302,15 @@ class ProcurementDomainTests(unittest.TestCase):
         self.assertEqual(payload["procurement"]["receipts"][0]["lot_code"], "known-new-lot")
         self.assertEqual(payload["opening_balance"], self.original)
 
+    def test_a_draft_on_an_outdated_ledger_basis_can_still_be_returned(self):
+        stale = self.create(offer(quote_ref="stale-basis-draft"))
+        self.post(offer(quote_ref="advances-the-ledger"))
+        body = ProcurementReject(expected_version=stale["version"], payload_hash=stale["payload_hash"],
+            idempotency_key="reject-stale-draft", reason="Basis changed; the author must revise or drop it")
+        returned = self.service.reject(self.reviewer, self.company, stale["id"], body)
+        self.assertEqual((returned["status"], returned["rejection_reason"]), ("DRAFT", body.reason))
+        self.assert_code("PROCUREMENT_LEDGER_VERSION_CHANGED", lambda: self.action("review", returned))
+
     def test_independent_rejection_revokes_grant_and_cannot_reject_posted(self):
         draft = self.create(offer())
         approved = self.action("approve", self.action("review", draft))

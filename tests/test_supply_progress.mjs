@@ -106,3 +106,11 @@ test('the approving account does not get the next creation step', () => {
   assert.match(asReviewer.notes[0], /작성자 계정이 만듭니다/);
   assert.equal(supplyProgress([pr('POSTED')], snapshot(0), author).next[0].disabled, false);
 });
+
+test('a returned draft is set aside so the author can start the step again', () => {
+  const returned = po('DRAFT', { created_by: 'actor-b', rejection_reason: '검토자 작성' });
+  const view = supplyProgress([pr('POSTED'), returned], snapshot(0), author);
+  assert.equal(view.status, '발주 작성 필요'); assert.deepEqual(actions(view), ['new-po']);
+  assert.match(view.notes.at(-1), /반려된 초안 1건/);
+  assert.equal(supplyProgress([pr('DRAFT', { rejection_reason: 'x' })], snapshot(23), author).empty, true);
+});
