@@ -82,3 +82,36 @@ DEC-H47 실행 기록이다. 브랜치 `feat/mks2-dashboard-reservation`, 기준
 - 프로젝트 그래프 탭의 코드는 바뀌지 않았다. 시작점에는 BOM 등록이 없어 노드 30개(INITIAL 18 + 견적 4건 × 3)만 보이며, BOM을 등록하면 원문 행·BOM 행 노드가 추가돼 다시 넓어진다.
 - 검증: Python 전체 OK(skip 12), Node 188 PASS(`candidateDecisions`·`bomRequestFlow` 포함). 사용자가 시작점 이후 만든 초안(EVB Rev C)은 보존하고, 격리 브라우저에서 처음부터 확인했다: A가 L1 보관 원본 접수 → 5품목 자동 연결(5행 연결·69행 미연결) → `등록 초안 저장 · 승인 요청` → B가 확인 체크 후 `승인`(검토·승인 각각 기록) → A가 반영(원장 v6) → 화면 자동 v6 → 68대 질문에서 IM-0016 기본 부족 20(계획 23), 프로젝트 그래프 객체 188·관계 268. 예약 분기는 이전에 검증했으며 이번에는 시연 지점을 보존하려고 실행하지 않았다.
 - 단계 칩: 반영 전에는 기존 의미(✓ 완료 · ! 확인 필요 · 회색 대기)를 유지하고, 반영 후에는 레퍼런스처럼 모두 ✓로 표시한다. 확인 필요 항목이 남은 단계(개정 식별의 파일명·시트명 차이, 품목 연결의 미확인 69행)와 비교 기준이 없던 개정 차이는 점선 ✓와 툴팁 사유로 구분한다(`bomStageDisplay`). 개정 식별에는 시트명 차이 안내와 변형 확인 근거 후보(U6 원문 값)를 표시하되 구성을 자동 확정하지 않는다. 처음 시작 시 `보관된 원본 사용`은 기초 원장 매핑 가정이 가리키는 원본(SHA-256 접두)과 정확히 하나 일치할 때만 보인다(`candidateSource`). Node 190 PASS.
+
+## 시나리오 문서 → Task 대응 (DEC-H49)
+
+사용자의 시나리오 문서는 저장소 `docs/`의 미추적 파일 `CQ_DEMO_SCENARIO.md`·`CQ_DEMO_SCENARIO.mmd`·`REALTIME_CQ_IMPLEMENTATION_REQUEST.md`다(사용자 소유, 커밋하지 않음).
+
+| 문서 절 | 내용 | Task | 상태 |
+|---|---|---|---|
+| 시나리오 2~3절 기준 흐름 1~3 | 68대 질문 → 40/43 → BOM 등록·5품목 → 부족 20/23 | T1·T3·T7 | VERIFIED(격리) |
+| 3절 4~6 | 23개 확보안 → PR → PO → 모의 공급확인 → 입하23(가용20) → IQC23(가용43·부족0) → 68대 재질문 | T8 | VERIFIED(격리, 아래) |
+| 4절·요청서 전체 | 다른 주문 예약5 → 23→28, 관련 대화 상태 줄, 변경 원인·공급사 A~D 재비교·납기 영향 | T4·T5 | VERIFIED(격리) · T5 예외 검사 남음 |
+| 4절 후속·7절 카드 | 고객 도착1대 → 32→33·68→67 카드와 상태 줄 | T6 | T9로 구현 예정 |
+| 6절 CQ3 | LOT-PWR-02 → 소비·장착 → 보드3 생산 → 입고 → 출하2 → 도착1, LOT 추적 질문 | T9 | NOT_STARTED · 공식 T-Box 용어 확인됨 |
+| 6절 전체 도착 | 약속100 전부 도착 확인 | T10 | NOT_STARTED |
+| 6절 예비 CQ4 | Rev L → L1 변경 영향 | T11 | NOT_STARTED · Rev L 원장 문서 필요 |
+| 6절 What-if | 수율·공급·대체 조건 비교 | T12 | 일부(수율·목표만) |
+
+### T8 실행 결과
+
+격리 시연(시작점 → 사용자 초안 보존 → L1 5품목 BOM 반영 v6)에서 공급 흐름 카드에 공급사별 판정(공급사·MOQ·배수·공급한도·수량 충족/미충족/판단 보류·여유, 확약 없음)을 표시하고, 수량 미충족 견적은 구매 요청을 막는다. A가 화면에서 비교안 C의 23개 구매 요청 초안을 만들고, 이후 각 문서를 B가 검토·승인, A가 반영했다.
+
+| 단계 | 원장 | IM-0016 가용 | 계획 부족 | 남은 약속 |
+|---|---:|---:|---:|---:|
+| PR 반영 | v7 | 20 | 23 | 68 |
+| PO 반영 | v8 | 20 | 23 | 68 |
+| 모의 공급확인 | v9 | 20 | 23 | 68 |
+| 입하 23(LOT-PWR-02, 검사대기) | v10 | 20 | 23 | 68 |
+| IQC 합격 23 | v11 | 43 | 0 | 68 |
+
+화면은 v11로 자동 갱신됐고 68대 재질문은 IM-0016 부족 0, 납기 판단 보류를 답했다. 상태는 `reset_demo.py purchased`로 되돌릴 수 있다.
+
+### T9 설계 (다음 구현)
+
+공식 용어만 사용한다: `ConsumptionEvent`(consumesLot, consumedForJob), `InstallationEvent`(installedOn → `BoardUnit`, installationForLine, supportedByConsumption), `ProductionReport`(reportedBoard, productionAttributedToRound), `FinishedGoodsReceipt`, `Allocation`(allocationFromReceipt, allocatedToRound), `Shipment`/`ShipmentLine`(shipsBoard, shipmentForRound), `ArrivalRecord`(arrivalOfShipment, arrivedBoard). 각 사건은 구매와 같은 문서 작성 → 독립 검토·승인 → 명시 반영과 정확 버전·멱등·감사·outbox를 따른다. 반영 후 회차 수량(양품·입고·출하·도착·남은 약속)은 서버 reducer가 바꾸며, 도착 반영 시 관련 대화 상태 줄과 도착 카드(32→33·68→67)를 예약과 같은 규칙으로 표시한다. LOT 추적 CQ는 기록된 관계만 따라간다. 미래 결과를 미리 넣지 않는다.
