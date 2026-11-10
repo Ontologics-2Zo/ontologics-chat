@@ -43,7 +43,7 @@ function stateAt(snapshot, { execution_id = 'synthetic-execution', revision = 2,
       allowed_capabilities: ['fulfillment_read', 'material_analysis'] } : null,
     result: status === 'COMPLETED' ? { answer: '합성 조회 결과', status: 'ANSWERED', meta: { ...snapshot.meta } } : null };
 }
-async function setup({ animated = false, reduced = false } = {}) {
+async function setup({ animated = false, reduced = false, agent = 'fake' } = {}) {
   const elements = new Map(), requests = [], twins = [], answers = [], bomOpens = [], bomOpenArguments = [], documentEvents = {};
   let data = snapshotAt(), handler = null, serial = 0;
   const get = id => { if (!elements.has(id)) elements.set(id, new Element('div')); return elements.get(id); };
@@ -81,7 +81,7 @@ async function setup({ animated = false, reduced = false } = {}) {
       const request = { path, method: options.method || 'GET', body: options.body && JSON.parse(options.body) };
       requests.push(request);
       let result;
-      if (path === '/health') result = { agent: { mode: 'fake' } };
+      if (path === '/health') result = { agent: { mode: agent } };
       else if (path === '/api/mks2/session') result = { authenticated: false, profiles: [] };
       else if (path === '/api/mks2/snapshot') result = data;
       else if (path === '/api/mks2/ontology') result = { meta: { ...data.meta }, graph: { data: { nodes: [], edges: [] } } };
@@ -329,7 +329,8 @@ test('workflow uses server cards without automatic graph replay and the manual a
 
 test('animated graph hands one replay hook to the renderer while twin and reduced motion never wait for it', async () => {
   for (const [surface, reduced] of [['graph', false], ['graph', true], ['twin', false]]) {
-    const h = await setup({ animated: true, reduced }); await h.app.load(); h.app.route(surface);
+    // Graph presentation on the read API, as when the model is off.
+    const h = await setup({ animated: true, reduced, agent: 'disabled' }); await h.app.load(); h.app.route(surface);
     h.setHandler(() => twinAnswer(h)); await (surface === 'graph' ? h.app.askGraph('합성 그래프 질문') : h.app.askTwin('합성 트윈 질문'));
     const shown = h.answers[0]; assert.equal(shown.options.mode, 'graph');
     if (surface === 'graph' && !reduced) {
@@ -404,7 +405,7 @@ test('reset and identity invalidation dispose presentations before removing thei
 });
 
 test('a response arriving on a hidden tab is complete without animation or mixing parallel panel answers', async () => {
-  const h = await setup(); await h.app.load(); h.app.route('twin');
+  const h = await setup({ agent: 'disabled' }); await h.app.load(); h.app.route('twin');
   let replyTwin, replyGraph;
   h.setHandler(request => new Promise(resolve => {
     if (request.body.question === '합성 트윈 요청') replyTwin = resolve; else replyGraph = resolve;
@@ -593,4 +594,17 @@ test('an answer still typing out does not block applying a committed event', asy
   await h.app.poll();
   assert.equal(h.app.current().meta.ledger_version, 8);
   assert.match(h.app.panels().dashboard.status.textContent, /23→28/);
+});
+
+test('with a model connected the graph assistant takes the agent path and the twin keeps the read API', async () => {
+  const h = await setup(); await h.app.load(); h.app.route('graph');
+  h.setHandler(request => request.path === '/api/mks2/query' ? twinAnswer(h)
+    : request.path.endsWith('/run') ? stateAt(h.snapshot(), { status: 'COMPLETED', revision: 3 })
+      : stateAt(h.snapshot(), { status: 'READY', revision: 1 }));
+  await h.app.askGraph('합성 그래프 질문');
+  assert.deepEqual(h.requests.filter(r => r.path.startsWith('/api/mks2/')).map(r => r.path).filter(p => /agent|query/.test(p)),
+    ['/api/mks2/agent/executions', '/api/mks2/agent/executions/synthetic-execution/run']);
+  assert.match(h.app.graphPanel().messages.textContent, /합성 조회 결과/);
+  h.app.route('twin'); await h.app.askTwin('합성 트윈 질문');
+  assert.equal(h.requests.filter(r => r.path === '/api/mks2/query').length, 1);
 });

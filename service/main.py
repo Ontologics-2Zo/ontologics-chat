@@ -50,7 +50,7 @@ class Snapshot(Contract):
 
 def create_app(db, *, private_root: str, origin="http://127.0.0.1:8870", dev_mode=False,
                reference_preview=False, catalog=None,projector=None,bom_runner=None,agent_settings=None,
-               agent_receipt_path=None, retrieval_embedding=None):
+               agent_receipt_path=None, retrieval_embedding=None, model_budget_db=None):
     parsed=urlsplit(origin)
     if parsed.scheme != "http" or parsed.hostname not in {"localhost","127.0.0.1"} or parsed.username or parsed.password or not parsed.port or parsed.path or parsed.query or parsed.fragment:
         raise ServiceError("LOCAL_ORIGIN_REQUIRED",503)
@@ -290,9 +290,12 @@ def create_app(db, *, private_root: str, origin="http://127.0.0.1:8870", dev_mod
             return ctx.model_copy(update={"execution_id": execution_id})
 
         workflow, model_summary, observer = build_agent_host(db, identity, gateway, agent_context,
-            agent_settings, receipt_path=agent_receipt_path)
+            agent_settings, receipt_path=agent_receipt_path, budget_db=model_budget_db)
     app.state.agent_workflow, app.state.agent_observer = workflow, observer
-    mount_agent_api(app, principal, workflow, model_summary)
+    def delivery_answered(actor, answer):
+        if app.state.demo_cue is not None and "delivery" in (answer.get("intent") or []):
+            app.state.demo_cue.delivery_answered(actor.company_id)
+    mount_agent_api(app, principal, workflow, model_summary, on_answer=delivery_answered)
 
     @app.get("/health")
     def health():

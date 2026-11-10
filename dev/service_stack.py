@@ -93,6 +93,18 @@ def load_runtime(path, ports):
         raise StackError("RUNTIME_CONFIGURATION_INVALID") from None
 
 
+def load_database_url(path, postgres_port):
+    """PostgreSQL URL only, from another local runtime (the shared model budget).
+
+    The same checks as load_runtime apply; that runtime's Neo4j is never used.
+    """
+    try:
+        bolt = urlsplit(json.loads(path.read_text()).get("NEO4J_URI") or "bolt://127.0.0.1:1").port
+    except (OSError, ValueError, AttributeError, TypeError):
+        raise StackError("RUNTIME_CONFIGURATION_INVALID") from None
+    return load_runtime(path, (postgres_port, None, bolt))["DATABASE_URL"]
+
+
 def new_runtime(path, ports):
     password = secrets.token_urlsafe(36)
     config = {

@@ -208,7 +208,7 @@ function productInput() {
   return bom ? { ledger_version: snapshot.meta.ledger_version, bom_id: bom.bom_id,
     bom_version: bom.bom_version, payload_hash: bom.payload_hash } : undefined;
 }
-async function agentQuery(panel, question, message, requestGeneration) {
+async function agentQuery(panel, question, message, requestGeneration, contextEntityId) {
   let state;
   const key = crypto.randomUUID();
   const waiting = panel.waiting;
@@ -225,7 +225,7 @@ async function agentQuery(panel, question, message, requestGeneration) {
     // original answer text remains in the conversation.
     clearAgentWaiting(panel);
     state = await api('/api/mks2/agent/executions', { question,
-      ledger_version: snapshot.meta.ledger_version, context_entity_id: contextId || undefined,
+      ledger_version: snapshot.meta.ledger_version, context_entity_id: contextEntityId || undefined,
       idempotency_key: key });
   }
   if (generation !== requestGeneration) return null;
@@ -322,10 +322,14 @@ async function runQuery(name, question) {
   scrollAnswer(); panel.messages.addEventListener('scroll', trackScroll, { passive: true });
   cancelPendingReplay();
   try {
-    const answer = name === 'dashboard' && agentMode !== 'disabled'
-      ? await agentQuery(panel, question, message, requestGeneration)
+    // With a model connected the graph, dashboard and project-graph assistants
+    // take the agent path. The digital twin keeps the read API its evidence
+    // highlight is built on; every screen uses it when the model is off.
+    const context = name === 'twin' ? twinContextId : contextId;
+    const answer = agentMode !== 'disabled' && name !== 'twin'
+      ? await agentQuery(panel, question, message, requestGeneration, context)
       : await api('/api/mks2/query', { question, ledger_version: snapshot.meta.ledger_version,
-        context_entity_id: (name === 'twin' ? twinContextId : contextId) || undefined });
+        context_entity_id: context || undefined });
     if (!answer) return;
     if (generation !== requestGeneration) return;
     if (answer.meta?.identity_revision !== identity?.identity_revision || answer.meta?.company_id !== identity?.company_id) {

@@ -99,10 +99,14 @@ class _ModelGuard:
         self.check()
 
 
-def build_agent_host(db, identity, gateway, context_provider, settings, *, receipt_path=None):
+def build_agent_host(db, identity, gateway, context_provider, settings, *, receipt_path=None, budget_db=None):
     if settings.langsmith_enabled and receipt_path is None:
         raise ServiceError("LANGSMITH_DURABLE_RECEIPT_REQUIRED", 503)
-    store = PostgresModelStore(db)
+    # An isolated demo can keep its model records in the original service's
+    # database, so both draw on one budget and a demo reset never erases spend.
+    store = PostgresModelStore(budget_db or db)
+    if budget_db is not None:
+        store.verify_schema()
     store.initialize_budget(settings.budget_id, prior_spend_usd=settings.prior_spend_usd,
                             authorization_ref=settings.budget_authorization_ref)
     options = {"budget_id": settings.budget_id}
