@@ -118,11 +118,25 @@ select,.btn { border:1px solid var(--line); background:var(--surface); border-ra
 .query-verdict { padding:0; }
 .query-prose { font-size:13px; line-height:1.65; overflow-wrap:anywhere; }
 .query-prose p { white-space:pre-wrap; }
+.query-workflow { display:grid; gap:8px; }
+.message.assistant[data-answer-layout="workflow"] { padding:0; border:0; background:transparent; }
+.query-answer-card { min-width:0; border:1px solid var(--line2); border-radius:10px; background:var(--raised); padding:10px 12px; font-size:12.5px; }
+.query-answer-card[hidden] { display:none !important; }
+.query-answer-heading { display:flex; align-items:center; gap:8px; font-size:13px; font-weight:600; }
+.query-answer-heading h3 { margin:0; font:inherit; }
+.query-answer-number { display:inline-flex; align-items:center; gap:4px; padding:0 5px; border-radius:4px; color:var(--accent); background:var(--accent-soft); font-family:var(--mono); font-size:11px; }
+.query-answer-tool { margin-left:auto; color:var(--fg3); font-family:var(--mono); font-size:10.5px; font-weight:500; }
+.query-answer-card p { margin:6px 0 0; color:var(--fg2); }
+.query-answer-card .query-quantity { color:var(--fg); }
+.query-answer-attention { border-color:color-mix(in srgb,var(--warn) 45%,var(--line)); background:var(--warn-soft); }
+.query-answer-card[data-display-state=active] .query-answer-number::after { content:''; width:8px; height:8px; border:1.5px solid var(--accent); border-top-color:transparent; border-radius:50%; animation:query-card-spin .7s linear infinite; }
+@keyframes query-card-spin { to { transform:rotate(360deg); } }
+@media(prefers-reduced-motion:reduce) { .query-answer-card[data-display-state=active] .query-answer-number::after { animation:none; } }
 .query-quantity { font-weight:700; }
 .query-scope-note { margin:6px 0 0; font-size:11px; line-height:1.5; }
 .query-details { margin-top:8px; font-size:11.5px; color:var(--fg2); }
 .query-details>summary { cursor:pointer; }
-.query-accessible-answer { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:pre-wrap; border:0; }
+.query-supplement[hidden] { display:none !important; }
 .query-typing-controls { display:flex; align-items:center; gap:6px; margin-top:6px; }
 .query-typing-status { font-size:11px; color:var(--fg3); }
 .query-delivery-status { font-size:11px; font-weight:600; color:var(--warn); }

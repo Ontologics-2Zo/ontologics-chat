@@ -6,6 +6,8 @@ import unittest
 
 from service.imports import convert_baseline
 from service.query_answers import answer_query
+from service.query_contracts import QueryAnswerBlock, QueryPrerequisite
+from service.materials import requirements_for_snapshot
 from service.views import snapshot_view
 from tests.test_imports import synthetic_baseline
 
@@ -161,7 +163,7 @@ class QueryAnswerTests(unittest.TestCase):
                                                   unknown_shortage_count=2)
         before = deepcopy(self.view)
         result = self.answer("남은 17대 납기 안에 도착할 수 있어?")
-        self.assertEqual(result["conclusion"], "현재 수량 확인 · 자재 소요·부족 미확인 · 납기 판단 보류")
+        self.assertEqual(result["conclusion"], "원본 등록 완료 · BOM 적용 검토 필요 · 납기 판단 보류")
         self.assertEqual(result["calculation"]["actual_delivery_feasibility"], "UNKNOWN")
         self.assertIn("17대", result["answer"])
         self.assertEqual(self.view, before)
@@ -243,6 +245,169 @@ class QueryAnswerTests(unittest.TestCase):
             result = self.answer(question)
             self.assertEqual(result["calculation"]["actual_delivery_feasibility"], "UNKNOWN")
             self.assertNotEqual(result["status"], "ANSWERED")
+
+    def recalculate_bom(self):
+        self.view["material_requirements"] = requirements_for_snapshot({
+            "opening_balance": {"delivery_round": {"remaining_good_target_qty": self.view["summary"]["production_remaining_qty"]},
+                                "inventory": self.view["inventory"]},
+            "bom": self.view["bom"], "entities": self.view["entities"]})
+
+    def test_unregistered_bom_action_is_distinct_from_registered_unreviewed_source(self):
+        self.view = query_view(with_bom=False)
+        missing = self.answer("남은 17대 납기 안에 도착할 수 있어?")
+        first = QueryPrerequisite.model_validate(missing["prerequisite"])
+        self.assertEqual(first.reason, "REGISTERED_BOM_MISSING")
+        self.assertEqual(first.next_action.type, "REGISTER_BOM")
+        self.assertIsNone(first.bom)
+        self.assertIn("계산을 보류", str(missing["steps"]))
+        self.assertNotIn("계산했습니다", str(missing["steps"]))
+
+        self.view = query_view()
+        for row in self.view["bom"]["rows"]:
+            row["decision"] = {"application_status": "UNRESOLVED", "review_basis": "UNREVIEWED"}
+        self.recalculate_bom()
+        before = deepcopy(self.view)
+        result = self.answer("남은 17대 납기 안에 도착할 수 있어?")
+        gate = QueryPrerequisite.model_validate(result["prerequisite"])
+        self.assertEqual((gate.status, gate.reason), ("BLOCKED", "NO_REVIEWED_APPLICABLE_ROWS"))
+        self.assertEqual(gate.next_action.type, "REVIEW_BOM_APPLICATION")
+        self.assertEqual(gate.bom.model_dump(), {"document_id": "test-bom", "version": 3, "payload_hash": "b" * 64})
+        self.assertEqual((gate.counts.source_rows, gate.counts.applicable_rows, gate.counts.calculation_items), (2, 0, 0))
+        self.assertIn("원본은 등록됐지만", result["answer"])
+        self.assertIn("적용 대상·사내 품목 연결·수량·단위", result["answer"])
+        self.assertNotIn("0개 품목", result["answer"])
+        self.assertNotIn("94%", result["answer"])
+        self.assertNotIn("12대", result["answer"])
+        self.assertIn("17대", result["answer"]); self.assertIn("11대", result["answer"])
+        self.assertEqual(result["calculation"]["basis"]["planned_input_qty"], 12)
+        self.assertEqual(result["calculation"]["material_requirements"]["rows"], before["material_requirements"]["rows"])
+        self.assertEqual(result["calculation"]["actual_delivery_feasibility"], "UNKNOWN")
+        self.assertEqual(result["meta"], before["meta"])
+        self.assertEqual(result["evidence_refs"][1]["payload_hash"], gate.bom.payload_hash)
+        self.assertIn("새 검토 초안", str(result["sections"]))
+        self.assertEqual(self.view, before)
+
+    def test_partial_application_preserves_calculated_items_and_all_remaining_rows(self):
+        before = deepcopy(self.view)
+        result = self.answer("자재 부족과 납기 가능성을 알려줘")
+        gate = QueryPrerequisite.model_validate(result["prerequisite"])
+        self.assertEqual((gate.status, gate.reason), ("PARTIAL", "APPLICATION_REVIEW_INCOMPLETE"))
+        self.assertEqual((gate.counts.source_rows, gate.counts.applicable_rows, gate.counts.unresolved_rows, gate.counts.calculation_items), (2, 1, 1, 1))
+        self.assertEqual(result["calculation"]["material_requirements"], before["material_requirements"])
+        self.assertIn("4.5", str(next(s for s in result["sections"] if s["id"] == "materials")))
+        self.assertEqual(gate.next_action.type, "REVIEW_BOM_APPLICATION")
+        self.assertEqual(result["ledger_mutations"], 0)
+
+    def test_selected_unmapped_item_does_not_make_the_whole_bom_unapplied(self):
+        self.view["entities"].append({"id": "unmapped-item", "type": "InternalItem", "display_id": "IM-SYNTHETIC", "attributes": {}})
+        result = self.answer("선택 품목 자재 소요와 부족은?", context_entity_id="unmapped-item")
+        gate = QueryPrerequisite.model_validate(result["prerequisite"])
+        self.assertEqual(gate.reason, "APPLICATION_REVIEW_INCOMPLETE")
+        self.assertEqual(gate.counts.calculation_items, 1)
+        self.assertEqual(gate.selected_calculation_items, 0)
+        self.assertEqual(gate.selected_item_ids, ["IM-SYNTHETIC"])
+        self.assertIn("선택 품목은", result["answer"])
+        self.assertNotIn("검토된 적용 행이 없어", result["answer"])
+
+    def test_all_reviewed_exclusions_are_not_an_absent_or_unreviewed_source(self):
+        for row, application in zip(self.view["bom"]["rows"], ("NOT_MOUNTED", "SETTING")):
+            row["decision"] = {"application_status": application, "review_basis": "SOURCE_VERIFIED"}
+        self.recalculate_bom()
+        result = self.answer("남은 17대 납기 안에 도착할 수 있어?")
+        gate = QueryPrerequisite.model_validate(result["prerequisite"])
+        self.assertEqual(gate.reason, "NO_APPLICABLE_COMPONENTS")
+        self.assertEqual(gate.counts.unresolved_rows, 0)
+        self.assertIsNotNone(gate.bom)
+        self.assertEqual(gate.next_action.type, "REVIEW_BOM_APPLICATION")
+        self.assertIn("비실장·설정 판단", result["answer"])
+        self.assertEqual(result["calculation"]["actual_delivery_feasibility"], "UNKNOWN")
+
+    def test_complete_source_application_is_not_manufacturing_approval(self):
+        self.view["bom"]["rows"][1]["decision"] = {"application_status": "SETTING", "review_basis": "SOURCE_VERIFIED"}
+        self.recalculate_bom()
+        result = self.answer("자재가 부족한지 알려줘")
+        self.assertEqual(result["prerequisite"]["reason"], "TECHNICAL_REVIEW_UNCONFIRMED")
+        self.assertIn("제조 기술검수는 확인되지 않았습니다", str(result["sections"]))
+        self.assertEqual(result["calculation"]["material_requirements"]["manufacturing_feasibility"], "UNKNOWN")
+
+    def test_explicit_production_or_what_if_keeps_exact_assumption_in_primary_answer(self):
+        for question in ("남은 17대 납기와 추가 생산 투입은?", "양품 19대가 목표면 수율 50%로 납기 가능해?"):
+            result = self.answer(question)
+            basis = result["calculation"]["basis"]
+            self.assertIn(f"{basis['planned_input_qty']}대", result["answer"])
+            self.assertIn("보장하지 않습니다", result["answer"])
+        normal = self.answer("남은 17대 납기 안에 도착할 수 있어?")
+        self.assertNotIn("94%", normal["answer"])
+        self.assertEqual(next(s for s in normal["sections"] if s["id"] == "production")["items"][1]["value"], "94%")
+
+    def test_known_material_query_keeps_its_numeric_detail_and_does_not_become_only_a_review_prompt(self):
+        result = self.answer("재고 빼면 어떤 자재가 얼마나 모자라?")
+        self.assertIn("조회한 1개 품목", result["answer"])
+        self.assertNotIn("먼저 검토해 주세요", result["answer"])
+        rows = next(s for s in result["sections"] if s["id"] == "materials")["items"]
+        self.assertIn("부족 4.5 / 6", rows[0]["value"])
+        self.assertEqual(result["prerequisite"]["counts"]["calculation_items"], 1)
+
+    def test_blocked_delivery_cards_stop_at_application_review_with_snapshot_quantities(self):
+        for row in self.view["bom"]["rows"]:
+            row["decision"] = {"application_status": "UNRESOLVED", "review_basis": "UNREVIEWED"}
+        self.recalculate_bom()
+        before = deepcopy(self.view)
+        result = self.answer("남은 17대 납기 안에 도착할 수 있어?")
+        blocks = [QueryAnswerBlock.model_validate(block) for block in result["answer_blocks"]]
+        self.assertEqual([block.id for block in blocks], ["delivery_balance", "bom_application", "bom_next_action"])
+        self.assertEqual([block.kind for block in blocks], ["normal", "normal", "attention"])
+        self.assertEqual({block.tool for block in blocks}, {"원장 조회"})
+        balance = " ".join(blocks[0].paragraphs)
+        for field in ("promise_remaining_qty", "production_remaining_qty", "already_produced_qty"):
+            self.assertIn(f"{self.view['summary'][field]}대", balance)
+        self.assertIn("합성 기초 원장", balance)
+        application = " ".join(blocks[1].paragraphs)
+        self.assertIn(self.view["summary"]["configuration_id"], application)
+        self.assertIn(self.view["summary"]["delivery_round_id"], application)
+        self.assertIn("등록 원문은 2행", application)
+        self.assertIn("검토된 적용 행이 없어", application)
+        self.assertIn("납기 판단을 보류", " ".join(blocks[2].paragraphs))
+        self.assertNotIn("94%", str(result["answer_blocks"]))
+        self.assertNotIn("계획 투입", str(result["answer_blocks"]))
+        self.assertEqual(result["calculation"]["material_requirements"], before["material_requirements"])
+        self.assertEqual(result["calculation"]["actual_delivery_feasibility"], "UNKNOWN")
+        self.assertEqual(result["meta"], before["meta"])
+        self.assertEqual(self.view, before)
+
+    def test_missing_source_card_requests_registration_without_claiming_registered_rows(self):
+        self.view = query_view(with_bom=False)
+        result = self.answer("남은 물량을 납기 안에 도착시킬 수 있어?")
+        blocks = result["answer_blocks"]
+        self.assertIn("반영된 BOM 원본이 없어", " ".join(blocks[1]["paragraphs"]))
+        self.assertEqual(blocks[2]["title"], "BOM 원본 등록 필요")
+        self.assertNotIn("등록 원문은", str(blocks))
+        self.assertEqual(len(blocks), 3)
+        self.assertIsNone(result["prerequisite"]["bom"])
+
+    def test_partial_delivery_cards_keep_exact_known_shortage_and_conditional_origin(self):
+        result = self.answer("자재 부족과 납기 가능성을 알려줘")
+        body = " ".join(result["answer_blocks"][1]["paragraphs"])
+        self.assertIn("소요 16.5 piece", body)
+        self.assertIn("가용 12 piece", body)
+        self.assertIn("부족 4.5 piece", body)
+        self.assertIn("시연 가정", body)
+        self.assertIn("합성 기초 원장", body)
+        self.assertNotIn("94%", str(result["answer_blocks"]))
+        self.assertEqual(result["calculation"]["material_requirements"]["items"][0]["planned_shortage_qty"], "6.0")
+        direct = self.answer("재고 빼면 어떤 자재가 얼마나 모자라?")
+        self.assertNotIn("answer_blocks", direct)
+        self.assertIn("부족 4.5 / 6", str(next(s for s in direct["sections"] if s["id"] == "materials")))
+
+    def test_explicit_delivery_what_if_cards_preserve_exact_yield_and_planned_comparison(self):
+        result = self.answer("양품 19대가 목표면 수율 50%로 납기 가능해?")
+        balance = " ".join(result["answer_blocks"][0]["paragraphs"])
+        self.assertIn("50%", balance); self.assertIn("38대", balance)
+        self.assertIn("양품을 보장하지 않습니다", balance)
+        materials = next(s for s in result["sections"] if s["id"] == "materials")["items"]
+        for row in materials:
+            self.assertIn(row["value"], " ".join(result["answer_blocks"][1]["paragraphs"]))
+        self.assertEqual(result["calculation"]["actual_delivery_feasibility"], "UNKNOWN")
 
 
 if __name__ == "__main__":

@@ -2808,5 +2808,28 @@
       "remaining_usd": "9.968886",
       "additional_cost_usd": "0.00042"
     }
+  },
+  "bom_prerequisite_20261110": {
+    "decision": "DEC-H45",
+    "record": "docs/handoff/SERVICE-BOM-PREREQUISITE-20261110.md",
+    "status": "IN_PROGRESS",
+    "parent_complete": false,
+    "scope": [
+      "T09.1",
+      "T12.1",
+      "T19.1",
+      "T22.1"
+    ],
+    "python_tests_pass": 440,
+    "python_skipped": 0,
+    "node_tests_pass": 181,
+    "browser_verification": "IN_PROGRESS",
+    "original_restart": "IN_PROGRESS",
+    "actual_model_calls": 0,
+    "budget_scope": "mks2-agent-20261108",
+    "business_writes": false,
+    "original_files_and_database_preserved": true,
+    "automatic_merge_authorized": false,
+    "reference_presentation": "workflow cards or graph trace then body; server-only facts; full evidence retained"
   }
 }

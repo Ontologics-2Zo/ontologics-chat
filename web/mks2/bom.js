@@ -149,6 +149,16 @@ export function createBomComparison({ api, onChange = () => {} }) {
   return { load, render, reset, result: () => result };
 }
 
+export function bomReferenceMatches(document, reference, configurationId) {
+  return !!document && !!reference && typeof reference.document_id === 'string'
+    && Number.isSafeInteger(reference.version) && reference.version > 0
+    && typeof reference.payload_hash === 'string' && /^[a-f0-9]{64}$/.test(reference.payload_hash)
+    && document.id === reference.document_id && document.version === reference.version
+    && document.payload_hash === reference.payload_hash
+    && typeof configurationId === 'string' && !!configurationId
+    && document.content?.configuration_id === configurationId;
+}
+
 export function createBomDrawer({ snapshot, api, getIdentity = () => null, onPosted = () => {}, onRefresh = () => {} }) {
   let wrap = null, focusBefore = null, step = 0, active = null, sources = [], documents = [], runner = null;
   let busy = false, operation = '', generation = 0, notice = '', failure = false, selectedRow = null;
@@ -222,10 +232,13 @@ export function createBomDrawer({ snapshot, api, getIdentity = () => null, onPos
     if (id) doc = await api(`/api/mks2/bom/documents/${encodeURIComponent(id)}`);
     return { rows, doc };
   }
-  async function reload(preferred, rowId = null) {
+  async function reload(preferred, rowId = null, expectedDocument = null) {
     await work(async current => {
       const [catalog, stored] = await Promise.all([api('/api/mks2/bom/sources'), fetchDocuments(preferred)]);
       if (!current()) return;
+      if (expectedDocument && !bomReferenceMatches(stored.doc, expectedDocument, snapshot.summary.configuration_id)) {
+        throw new Error('DOCUMENT_VERSION_CHANGED');
+      }
       sources = catalog.sources || []; runner = catalog.runner;
       documents = stored.rows; active = stored.doc; resetDrafts(); selectedRow = rowId;
       await loadFocus(current);
@@ -342,7 +355,8 @@ export function createBomDrawer({ snapshot, api, getIdentity = () => null, onPos
     return `<section class="mk-drawer-block" data-bom-section="2"><div class="mk-bom-report-header"><h3>추출·검증</h3><span class="mk-pill info">${content().source?.source_kind === 'actual_bom' ? '실제 원본' : '저장된 원본'}</span></div>${stats()}${validationChecks()}<p class="mk-bom-scope-note">전체 BOM 중 일부 품목 기준 · 시연 검토 ${count(focus.length)}행 · 원본 ${count(total)}행 보존${dirty ? ' · 미저장 선택 포함' : ''}</p><div class="mk-bom-filter" aria-label="추출 결과 표시"><button type="button" data-bom-filter="focus" aria-pressed="${rowFilter === 'focus'}">시연 대상 ${count(focus.length)}</button><button type="button" data-bom-filter="linked" aria-pressed="${rowFilter === 'linked'}">품목 연결 ${count(focus.filter(row => linked(decision(row))).length)}</button><button type="button" data-bom-action="show-original">원본 전체 ${count(total)}</button></div>${rows.length ? `<div class="mk-table-scroll mk-bom-review-table"><table class="mk-bom-source-table" data-bom-table="extraction"><thead><tr><th>행</th><th>부품 위치</th><th>원문 값</th><th>원문 수량</th><th>검토</th></tr></thead><tbody>${rows.map(row => `<tr><td><button type="button" class="mk-link" data-bom-edit="${esc(row.row_id)}">${esc(row.source_row)}</button></td><td>${esc((row.designators || []).join(', ') || '미확인')}</td><td>${esc(row.source_description)}</td><td>${esc(row.source_quantity_text || '미확인')}</td><td>${esc(applications[decision(row).application_status] || '미확인')}</td></tr>`).join('')}</tbody></table></div>` : '<p class="mk-small-note">표시할 시연 대상이 없습니다. 원본 전체에서 필요한 행을 확인하세요.</p>'}${focusResult?.basis === 'POSTED_SAME_SOURCE' ? '<p class="mk-small-note">같은 원본의 기존 검토 이력에서 대상 행만 불러왔습니다. 품목·수량·판단·승인은 복사하지 않습니다.</p>' : ''}${focusFailure ? '<p class="mk-small-note">이전 시연 대상 조회를 확인하지 못했습니다. 현재 문서에 연결된 행만 표시합니다.</p>' : ''}<p class="mk-small-note">원본 적용 판단 미확인 ${count(unresolved)}행 · 제조 기술검수는 별도입니다.</p>${content().source_conflicts?.length ? `<details class="mk-bom-source-details"><summary>원본 식별·검수 확인 필요 · ${count(content().source_conflicts.length)}항목</summary>${conflicts()}</details>` : ''}${rawTable()}</section>`;
   }
   function reviewPage() {
-    return `<div class="mk-bom-review-page">${documentHeader(true)}${extractionReport()}<div data-bom-comparison-slot>${comparison.render(active, documents)}</div><div data-bom-section="4">${mappingTable()}<div data-bom-section="editor">${rowEditor()}</div>${draftForm()}<div class="mk-bom-actions"><button type="button" class="mk-btn" data-bom-action="approval-view"${busy ? ' disabled' : ''}>검토·승인 단계 보기</button></div></div></div>`;
+    const postedNotice = active.status === 'POSTED' ? `<section class="mk-drawer-block"><h3>현재 원장 반영본 · 확인용</h3><p>이 반영본은 수정하지 않습니다. 적용 정보를 보완하려면 등록 문서에서 작성 중인 초안을 선택하거나, 보관된 원본으로 새 검수 초안을 접수하세요. 품목 연결·검토·정확 버전 승인·반영은 각각 확인하여 진행합니다.</p>${button('원본 접수로 이동', 'source-view', busy)}<p class="mk-small-note">이전 품목 판단과 승인은 자동 복사하지 않습니다.</p></section>` : '';
+    return `<div class="mk-bom-review-page">${documentHeader(true)}${extractionReport()}<div data-bom-comparison-slot>${comparison.render(active, documents)}</div><div data-bom-section="4">${postedNotice}${mappingTable()}<div data-bom-section="editor">${rowEditor()}</div>${draftForm()}<div class="mk-bom-actions"><button type="button" class="mk-btn" data-bom-action="approval-view"${busy ? ' disabled' : ''}>검토·승인 단계 보기</button></div></div></div>`;
   }
   function draftForm() {
     return `<section class="mk-drawer-block"><h3>검수 초안 ${dirty ? '· 미저장 선택 있음' : '· 서버 저장본'}</h3><label class="mk-bom-field">등록·검수 의견<select data-bom-field="review-preset"${!editable() || busy ? ' disabled' : ''}>${option('', reviewNote ? '현재 기록된 의견 유지' : '의견 선택', '')}${option('preserve','원문 전체 보존 · 선택 행만 조건부 시연 적용','')}${option('hold','미확인 항목은 보완 검토 대기로 유지','')}</select></label><details class="mk-bom-row-details"><summary>기록될 의견 확인 / 직접 수정</summary><label class="mk-bom-field">등록·검수 의견<textarea data-bom-field="review-note" rows="2" maxlength="3000"${!editable() || busy ? ' disabled' : ''}>${esc(reviewNote)}</textarea></label></details><p class="mk-small-note">저장하면 새 문서 버전이 생기고 기존 검토·승인은 해제됩니다. 미확인 행은 그대로 보존합니다.</p>${button('검수 초안 저장', 'revise', !editable() || busy, true)}</section>`;
@@ -422,6 +436,7 @@ export function createBomDrawer({ snapshot, api, getIdentity = () => null, onPos
     step = next; scrollTarget = next; render();
   }
   async function activate(action) {
+    if (action === 'source-view' && !busy) { selectStep(0); return; }
     if (action === 'choose-source' && !busy) { const picker = wrap?.querySelector('[data-bom-source-picker]'); if (picker) { picker.open = true; picker.querySelector('select')?.focus(); } return; }
     if (action === 'show-original' && !busy) { const original = wrap?.querySelector('[data-bom-original]'); if (original) { original.open = true; original.scrollIntoView({ block: 'start' }); } return; }
     if (action === 'compare' && active && !busy) { comparison.load(active, documents); return; }
@@ -470,7 +485,7 @@ export function createBomDrawer({ snapshot, api, getIdentity = () => null, onPos
       if (action === 'post') onPosted(active);
     }, action);
   }
-  function open(initialStep = 0, preferredId, preferredRow = null) {
+  function open(initialStep = 0, preferredId, preferredRow = null, expectedDocument = null) {
     close(); focusBefore = document.activeElement; step = initialStep;
     active = null; sources = []; documents = []; runner = null; selectedSource = ''; resetDrafts();
     wrap = document.createElement('div'); wrap.className = 'mk-drawer-wrap'; document.body.append(wrap);
@@ -517,7 +532,7 @@ export function createBomDrawer({ snapshot, api, getIdentity = () => null, onPos
       dirty = true; selectedRow = String(form.get('row_id')); setNotice('선택을 화면 초안에 담았습니다. 검수 초안 저장으로 서버에 반영해 주세요.'); render();
     });
     wrap.querySelector('.mk-drawer [data-close]').focus();
-    reload(preferredId, preferredRow);
+    reload(preferredId, preferredRow, expectedDocument);
   }
   document.addEventListener('keydown', event => {
     if (!wrap) return;

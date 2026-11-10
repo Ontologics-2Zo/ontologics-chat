@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { bomStageStates, decisionFromChoices, createBomComparison, preferredBomSource,
-  bomPresentation, reviewFocusRows } from '../web/mks2/bom.js';
+  bomPresentation, reviewFocusRows, bomReferenceMatches } from '../web/mks2/bom.js';
 
 const hash = digit => digit.repeat(64);
 function documentRecord(id = 'synthetic-current', version = 2, digest = hash('b')) {
@@ -15,6 +15,21 @@ function sourceRow(overrides = {}) {
     decision: { application_status: 'UNRESOLVED', review_basis: 'UNREVIEWED',
       item_id: null, quantity_per_unit: null, unit: null, evidence_note: '' }, ...overrides };
 }
+
+test('answer-linked BOM review requires the exact document version, hash and selected configuration', () => {
+  const document = documentRecord(); document.content.configuration_id = 'SYNTHETIC-CONFIG';
+  const reference = { document_id: document.id, version: document.version, payload_hash: document.payload_hash };
+  const before = JSON.stringify({ document, reference });
+  assert.equal(bomReferenceMatches(document, reference, 'SYNTHETIC-CONFIG'), true);
+  for (const changed of [{ ...reference, document_id: 'different-document' },
+    { ...reference, version: 3 }, { ...reference, version: '2' },
+    { ...reference, payload_hash: hash('c') }, { ...reference, payload_hash: '' }]) {
+    assert.equal(bomReferenceMatches(document, changed, 'SYNTHETIC-CONFIG'), false);
+  }
+  assert.equal(bomReferenceMatches(document, reference, 'OTHER-CONFIG'), false);
+  assert.equal(bomReferenceMatches(null, reference, 'SYNTHETIC-CONFIG'), false);
+  assert.equal(JSON.stringify({ document, reference }), before);
+});
 const applied = { application_status: 'APPLICABLE', item_id: 'SYNTHETIC-PART', quantity_per_unit: '2.5', unit: 'EA' };
 
 const catalogSource = (source_id = 'synthetic-source', sha256 = hash('c')) => ({ source_id, sha256, filename: `${source_id}.ods` });

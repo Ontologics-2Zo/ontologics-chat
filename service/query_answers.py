@@ -9,10 +9,12 @@ from copy import deepcopy
 from decimal import Decimal
 
 from service.materials import requirements_for_snapshot
+from service.query_contracts import (PrerequisiteCounts, QueryAnswerBlock, QueryBomReference,
+                                     QueryNextAction, QueryPrerequisite)
 from service.query_intents import interpret_question
 
 
-RULE_VERSION = "cq-read-analysis/1"
+RULE_VERSION = "cq-read-analysis/2"
 LABELS = {"fulfillment": "납품 이행", "production": "추가 생산·투입",
           "materials": "자재 소요·부족", "inventory": "가용 재고",
           "delivery": "고객 도착·납기 판단", "ontology": "전체 온톨로지"}
@@ -59,6 +61,124 @@ def inventory_origin(rows):
         else:
             origins.add(SYNTHETIC)
     return next(iter(origins)) if len(origins) == 1 else "mixed_sources" if origins else "unknown"
+
+
+def _prerequisite(view, req, selected):
+    """Locate the first unsupported BOM prerequisite, across the full BOM.
+
+    A selected item with no mapping is not a globally unreviewed BOM. Likewise,
+    reviewed exclusions do not mean that the preserved source is missing. The
+    current registration service cannot certify manufacturing technical review.
+    """
+    counts = PrerequisiteCounts(source_rows=req["row_count"], applicable_rows=req["applicable_count"],
+        unresolved_rows=req["unresolved_count"], calculation_items=len(req["items"]))
+    bom = None
+    if req["bom_id"] is None:
+        status, reason = "BLOCKED", "REGISTERED_BOM_MISSING"
+    else:
+        active = view["bom"]
+        bom = QueryBomReference(document_id=active["bom_id"], version=active["bom_version"],
+                                payload_hash=active["payload_hash"])
+        if req["applicable_count"] == 0 and req["unresolved_count"] > 0:
+            status, reason = "BLOCKED", "NO_REVIEWED_APPLICABLE_ROWS"
+        elif req["unresolved_count"] or any(row.get("issues") for row in req["rows"]) or any(
+                "ITEM_UNIT_CONFLICT" in row.get("issues", []) for row in req["items"]):
+            status, reason = "PARTIAL", "APPLICATION_REVIEW_INCOMPLETE"
+        elif req["applicable_count"] == 0:
+            status, reason = "UNKNOWN", "NO_APPLICABLE_COMPONENTS"
+        else:
+            status, reason = "UNKNOWN", "TECHNICAL_REVIEW_UNCONFIRMED"
+    action = "REGISTER_BOM" if bom is None else "REVIEW_BOM_APPLICATION"
+    return QueryPrerequisite(status=status, reason=reason, configuration_id=view["summary"]["configuration_id"],
+        bom=bom, counts=counts, selected_item_ids=list(selected),
+        selected_calculation_items=sum(row["item_id"] in selected for row in req["items"]) if selected else None,
+        next_action=QueryNextAction(type=action, label="BOM 원본 등록" if bom is None else "BOM 적용 검토"))
+
+
+def _prerequisite_text(prerequisite):
+    config = prerequisite.configuration_id
+    reason = prerequisite.reason
+    if reason == "REGISTERED_BOM_MISSING":
+        return (f"제품 구성 {config}에 반영된 BOM이 없어 자재 소요·부족은 미확인입니다.",
+                "BOM 원본을 등록하고 검토·승인·원장 반영을 마친 뒤 다시 조회해 주세요.")
+    if reason == "NO_REVIEWED_APPLICABLE_ROWS":
+        return (f"제품 구성 {config}의 BOM 원본은 등록됐지만, 검토된 적용 행이 없어 자재 소요·부족을 계산할 수 없습니다.",
+                "기존 BOM의 적용 대상·사내 품목 연결·수량·단위를 먼저 검토해 주세요.")
+    if reason == "APPLICATION_REVIEW_INCOMPLETE":
+        return (f"제품 구성 {config}의 BOM 적용 검토가 일부만 되어 전체 자재 소요·부족은 아직 미확인입니다.",
+                "기존 BOM의 남은 적용 판단·품목 연결·수량·단위를 먼저 검토해 주세요.")
+    if reason == "NO_APPLICABLE_COMPONENTS":
+        return (f"제품 구성 {config}의 BOM 원본은 등록됐지만, 현재 검토 결과에 생산 적용 행이 없습니다.",
+                "비실장·설정 판단과 이 구성의 실제 적용 대상을 확인해 주세요.")
+    return (f"제품 구성 {config}의 검토된 BOM으로 조건부 계산은 가능하지만 제조 기술검수는 확인되지 않았습니다.",
+            "등록 근거와 실제 제조 적용 조건을 먼저 확인해 주세요.")
+
+
+def _prerequisite_steps(view, prerequisite):
+    if prerequisite.bom is None:
+        next_step = "BOM 원본 접수·검토·승인·반영 후 소요를 다시 조회해야 합니다."
+    elif prerequisite.selected_item_ids and prerequisite.selected_calculation_items == 0:
+        next_step = "선택 품목이 적용 BOM과 연결되지 않아 해당 소요·부족 계산을 보류했습니다."
+    elif prerequisite.counts.calculation_items == 0:
+        next_step = "계산 가능한 적용 품목이 없어 자재 소요·부족 계산을 보류했습니다."
+    else:
+        next_step = "계산 가능한 적용 품목의 수량과 제조·납기 미확인 범위를 구분했습니다."
+    return [f"납품 회차 {view['summary']['delivery_round_id']}와 조회 버전을 확인했습니다.",
+            f"회차의 제품 구성 {prerequisite.configuration_id}를 확인했습니다.",
+            "연결된 반영 BOM이 없어 소요·부족 계산을 보류했습니다." if prerequisite.bom is None else
+            "BOM 원본 등록과 적용 행·품목 연결 검토 상태를 구분했습니다.",
+            next_step]
+
+
+def _delivery_blocks(view, plan, sections, prerequisite, requirements):
+    """Reference-style delivery presentation from already composed query facts.
+
+    All three cards belong to the same ledger.query. They do not claim extra
+    tool calls, completed manufacturing review, inventory or scheduling work.
+    """
+    by_id = {row["id"]: row for row in sections}
+    ledger = {row["label"]: row for row in by_id["ledger"]["items"]}
+    balance = [f"합성 기초 원장 기준 남은 고객 도착 약속은 {ledger['남은 고객 도착 약속']['value']}이고, 추가 양품 목표는 {ledger['추가 양품 목표']['value']}입니다.",
+               f"이미 생산됐으나 고객에게 도착하지 않은 물량은 {ledger['이미 생산됐으나 미도착']['value']}입니다. 남은 도착 약속 전체가 신규 생산량은 아닙니다."]
+    if plan.explicit_production or plan.is_what_if:
+        production = {row["label"]: row["value"] for row in by_id["production"]["items"]}
+        balance.append(f"계산 양품 목표 {production['계산 양품 목표']}에 수율 {production['계획 수율']}를 가정한 투입은 {production['계획 투입']}입니다. 가정 계산이며 양품을 보장하지 않습니다.")
+    application = [f"납품 회차 {view['summary']['delivery_round_id']} → 제품 구성 {prerequisite.configuration_id}."]
+    if prerequisite.bom is None:
+        application.append("이 구성에 반영된 BOM 원본이 없어 적용 품목과 소요·부족을 확인할 수 없습니다.")
+    else:
+        source = {row["label"]: row["value"] for row in by_id["source"]["items"]}
+        application.append(f"등록 원문은 {source['원본 전체 행']}이며, 적용 판단 / 미확인은 {source['적용 판단 / 미확인']}입니다. 원문 등록과 제조 적용 검수는 별개입니다.")
+        if prerequisite.reason == "NO_REVIEWED_APPLICABLE_ROWS":
+            application.append("검토된 적용 행이 없어 사내 품목별 소요·부족 계산을 보류했습니다.")
+        elif prerequisite.reason == "NO_APPLICABLE_COMPONENTS":
+            application.append("현재 검토 결과는 비실장·설정 등 생산 적용 행이 없는 상태입니다. 원본이 없다는 뜻은 아닙니다.")
+        selected_available = prerequisite.selected_calculation_items
+        if prerequisite.counts.calculation_items and selected_available != 0:
+            # Reuse exact Domain-rendered quantities and provenance; never
+            # recompute or replace partial values with a generic review card.
+            if plan.explicit_production or plan.is_what_if:
+                for row in by_id["materials"]["items"]:
+                    application.append(f"{row['label']}: {row['value']}. {row['detail']}")
+            else:
+                for row in requirements["items"]:
+                    if prerequisite.selected_item_ids and row["item_id"] not in prerequisite.selected_item_ids:
+                        continue
+                    stock_origin = inventory_origin([stock for stock in view["inventory"] if stock["item_id"] == row["item_id"]])
+                    stock_label = {SYNTHETIC: "합성 기초 원장", "development_workflow": "개발 입하·수입검사 원장",
+                                   "mixed_sources": "합성 기초 원장과 개발 입하·수입검사 원장", "unknown": "출처 미확인"}[stock_origin]
+                    application.append(f"{row['item_id']}: 소요 {number(row['required_qty'])} {row['unit']} · 가용 {number(row['available_qty'])} {row['unit']} · 부족 {number(row['shortage_qty'])} {row['unit']}. 적용 매핑·수량은 {'시연 가정' if row['conditional'] else '검토된 적용 판단'}, 재고는 {stock_label}입니다.")
+        elif prerequisite.selected_item_ids and selected_available == 0:
+            application.append("선택 품목은 현재 BOM의 계산 가능한 품목에 연결되지 않았습니다. 다른 적용 품목의 계산과 구분합니다.")
+    _, action = _prerequisite_text(prerequisite)
+    next_steps = [action, "적용 BOM·실재고·조달과 생산·검사·운송 근거가 갖춰지기 전에는 실제 납기 판단을 보류합니다."]
+    if prerequisite.bom:
+        next_steps.insert(1, "반영 문서는 보존합니다. 작성 중인 초안을 선택하거나 보관 원본으로 새 검토 초안을 접수한 뒤 검토·독립 승인·반영 절차로 진행해 주세요.")
+    return [block.model_dump(mode="json") for block in (
+        QueryAnswerBlock(id="delivery_balance", title="남은 약속과 추가 생산", paragraphs=balance, kind="normal"),
+        QueryAnswerBlock(id="bom_application", title="제품 구성과 적용 BOM 확인", paragraphs=application, kind="normal"),
+        QueryAnswerBlock(id="bom_next_action", title=prerequisite.next_action.label + " 필요", paragraphs=next_steps, kind="attention"),
+    )]
 
 
 def _result(view, plan, *, answer, status="ANSWERED", sections=(), kinds=(),
@@ -292,7 +412,8 @@ def answer_query(question, view, ontology, *, context_entity_id=None):
             if selected_lot:
                 sections[-1]["items"].insert(0, item("선택 LOT와 계산 범위", selected_lot,
                     "소요·부족은 선택 LOT가 속한 품목의 가용 재고 전체와 비교합니다. 아래 LOT 재고 조회와 범위를 구분합니다.", SYNTHETIC))
-            answers.append(f"등록된 실제 원문 {req['row_count']}행 중 조회한 {len(rows)}개 품목의 소요·부족을 아래에 구분했습니다. 전체 자재 확보 판정은 보류합니다.")
+            if rows:
+                answers.append(f"등록된 실제 원문 {req['row_count']}행 중 조회한 {len(rows)}개 품목의 소요·부족을 아래에 구분했습니다. 전체 자재 확보 판정은 보류합니다.")
             status = "PARTIAL"
         else:
             sections.append(section("source", "BOM 근거 부족", "unknown", [item("적용 BOM", "미등록", "원본 접수·검토·승인·반영 후 소요와 부족을 조회할 수 있습니다.")], "UNKNOWN"))
@@ -351,6 +472,38 @@ def answer_query(question, view, ontology, *, context_entity_id=None):
             item("클래스 / 관계 / SHACL shape", f"{counts['classes']} / {counts['relations']} / {counts['shapes']}", "전체 스키마를 보존하며 전체 CQ 인수와 구분합니다.")]))
         answers.append(f"전체 스키마는 클래스 {counts['classes']}개, 관계 {counts['relations']}개, SHACL shape {counts['shapes']}개입니다.")
 
+    prerequisite = _prerequisite(view, req, selected) if need_materials else None
+    if prerequisite:
+        first, action = _prerequisite_text(prerequisite)
+        blocked_calculation = prerequisite.counts.calculation_items == 0 or (
+            bool(selected) and prerequisite.selected_calculation_items == 0)
+        if "delivery" in intents or blocked_calculation:
+            answers = [first, action,
+                f"합성 기초 원장 기준 남은 고객 도착 약속은 {number(s['promise_remaining_qty'])}대이고, 추가 양품 목표는 {number(s['production_remaining_qty'])}대입니다."]
+        # A deadline question may acquire a production intent merely because
+        # it says 'remaining'. Show the yield assumption in prose only when
+        # actually requested; its exact calculation remains in sections/DTO.
+        if ("delivery" in intents or blocked_calculation) and (plan.explicit_production or plan.is_what_if):
+            answers.append(f"계산 양품 목표 {basis['production_remaining_qty']}대에 수율 {percentage(basis['plan_yield'])}%를 가정한 투입은 {basis['planned_input_qty']}대이며 양품을 보장하지 않습니다.")
+        if selected and prerequisite.selected_calculation_items == 0 and prerequisite.counts.calculation_items:
+            answers.append("선택 품목은 현재 BOM의 계산 가능한 품목에 연결되지 않았습니다. 다른 적용 품목의 계산과 구분합니다.")
+        if "delivery" in intents:
+            answers.append("실제 납기 판단은 보류합니다.")
+            if prerequisite.reason == "NO_REVIEWED_APPLICABLE_ROWS":
+                conclusion = "원본 등록 완료 · BOM 적용 검토 필요 · 납기 판단 보류"
+            elif prerequisite.reason == "NO_APPLICABLE_COMPONENTS":
+                conclusion = "원본 등록 완료 · 생산 적용 대상 확인 필요 · 납기 판단 보류"
+        if "ontology" in intents and ("delivery" in intents or blocked_calculation):
+            counts = ontology["counts"]
+            answers.append(f"전체 스키마는 클래스 {counts['classes']}개, 관계 {counts['relations']}개, SHACL shape {counts['shapes']}개입니다.")
+        sections.insert(0, section("prerequisite", "가장 먼저 필요한 확인", "unknown", [
+            item("회차 / 제품 구성", f"{s['delivery_round_id']} / {s['configuration_id']}"),
+            item("현재 선행 조건", first), item("다음 행동", prerequisite.next_action.label, action),
+            item("승인·반영 경계", "사용자 명시 절차 필요",
+                 "반영된 문서는 변경하지 않습니다. 적용 판단을 보완하려면 작성 중인 초안을 선택하거나 보관 원본으로 새 검토 초안을 접수한 뒤 검토·독립 승인·반영해야 합니다. 원문 등록 승인은 제조 기술검수가 아닙니다."
+                 if prerequisite.bom else "버튼은 원본 접수 화면만 엽니다. 등록·검토·독립 승인·반영은 별도 명시 절차입니다."),
+        ], "UNKNOWN"))
+
     result = _result(view, plan, answer=" ".join(answers), status=status, sections=sections, kinds=kinds,
                      include_bom=include_bom, selected_items=selected,
                      selected_lot=selected_lot if not need_materials else None, conclusion=conclusion)
@@ -358,4 +511,9 @@ def answer_query(question, view, ontology, *, context_entity_id=None):
                              "material_requirements": req if need_materials else None,
                              "actual_delivery_feasibility": "UNKNOWN" if "delivery" in intents else None,
                              "estimated_arrival": None, "delivery_probability": None}
+    if prerequisite:
+        result["prerequisite"] = prerequisite.model_dump(mode="json")
+        result["steps"] = _prerequisite_steps(view, prerequisite)
+        if "delivery" in intents:
+            result["answer_blocks"] = _delivery_blocks(view, plan, sections, prerequisite, req)
     return result

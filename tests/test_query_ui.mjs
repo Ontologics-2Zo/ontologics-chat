@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFile } from 'node:fs/promises';
 import { renderQueryAnswer } from '../web/mks2/query.js';
 
 class Element {
@@ -86,6 +87,101 @@ test('registered, partial, unknown and absent BOM calculations do not offer regi
       const data = response(); data.calculation = { material_requirements: requirements };
       renderQueryAnswer(message, data);
       assert.equal(descendants(message).filter(item => item.dataset.queryAction === 'bom-register').length, 0);
+    }
+  } finally { restore(); }
+});
+
+function bomReviewResponse() {
+  const answer = response(), documentId = '00000000-0000-4000-8000-000000000123', payloadHash = 'b'.repeat(64);
+  answer.prerequisite = { status: 'BLOCKED', stage: 'APPLICABLE_BOM', reason: 'NO_REVIEWED_APPLICABLE_ROWS',
+    configuration_id: 'synthetic-config', bom: { document_id: documentId, version: 3, payload_hash: payloadHash },
+    counts: { source_rows: 35, applicable_rows: 0, unresolved_rows: 35, calculation_items: 0 },
+    next_action: { type: 'REVIEW_BOM_APPLICATION', label: 'server label', read_only: true, requires_explicit_submission: true } };
+  answer.calculation = { material_requirements: { state: 'PARTIAL', bom_id: documentId, bom_version: 3 } };
+  answer.evidence_refs = [{ record_type: 'bom_registration', bom_id: documentId, bom_version: 3,
+    payload_hash: payloadHash, snapshot_id: answer.meta.snapshot_id }];
+  return answer;
+}
+
+test('typed applicable-BOM prerequisite offers a read-only exact document callback without copying decisions', () => {
+  const { message, restore } = setup();
+  try {
+    const answer = bomReviewResponse(), before = JSON.stringify(answer), opened = [];
+    renderQueryAnswer(message, answer, { onReviewBom: ref => opened.push(ref) });
+    const actions = descendants(message).filter(item => item.dataset.queryAction === 'bom-review');
+    assert.equal(actions.length, 1); assert.equal(actions[0].textContent, 'BOM 적용 검토');
+    assert.ok(descendants(withClass(message, 'query-supplement')[0]).includes(actions[0]));
+    assert.equal(descendants(message).filter(item => item.dataset.queryAction === 'bom-register').length, 0);
+    assert.deepEqual(opened, []); actions[0].click();
+    assert.deepEqual(opened, [answer.prerequisite.bom]); assert.equal(Object.isFrozen(opened[0]), true);
+    assert.equal(JSON.stringify(answer), before);
+    assert.deepEqual(Object.keys(opened[0]).sort(), ['document_id', 'payload_hash', 'version']);
+  } finally { restore(); }
+});
+
+test('mismatched, malformed or non-read-only BOM actions cannot open an inferred document', () => {
+  const { message, restore } = setup();
+  try {
+    const changes = [
+      answer => { delete answer.prerequisite; },
+      answer => { answer.prerequisite.stage = 'UNKNOWN'; },
+      answer => { answer.prerequisite.status = 'READY'; },
+      answer => { answer.prerequisite.reason = 'UNRECOGNIZED'; },
+      answer => { answer.prerequisite.next_action.type = 'REGISTER_BOM'; },
+      answer => { answer.prerequisite.next_action.read_only = false; },
+      answer => { answer.prerequisite.next_action.requires_explicit_submission = false; },
+      answer => { answer.prerequisite.bom.document_id = '../other'; },
+      answer => { answer.prerequisite.bom.version = '3'; },
+      answer => { answer.prerequisite.bom.payload_hash = 'invalid'; },
+      answer => { answer.calculation.material_requirements.bom_id = 'different'; },
+      answer => { answer.calculation.material_requirements.bom_version = 4; },
+      answer => { answer.evidence_refs[0].payload_hash = 'a'.repeat(64); },
+      answer => { answer.evidence_refs[0].snapshot_id = 'other-snapshot'; },
+      answer => { answer.evidence_refs.push({ ...answer.evidence_refs[0] }); },
+      answer => { answer.evidence_refs = []; },
+    ];
+    for (const change of changes) {
+      const answer = bomReviewResponse(); change(answer); renderQueryAnswer(message, answer);
+      assert.equal(descendants(message).filter(item => item.dataset.queryAction === 'bom-review').length, 0);
+    }
+  } finally { restore(); }
+});
+
+test('BOM prerequisite guidance does not repeat material placeholders while details preserve every exact quantity', () => {
+  const { message, restore } = setup();
+  try {
+    const answer = bomReviewResponse(); answer.answer = '연결된 구성의 적용 판단부터 확인해 주세요.';
+    answer.prerequisite.status = 'PARTIAL'; answer.prerequisite.reason = 'APPLICATION_REVIEW_INCOMPLETE';
+    answer.sections = [{ id: 'materials', origin: 'unknown', items: [{ label: '적용 검토 필요', value: '미확인' }] },
+      { id: 'inventory', origin: 'synthetic_opening_balance', items: [{ label: '별도 확인 재고', value: '0.000000001 EA' }] }];
+    renderQueryAnswer(message, answer);
+    assert.equal(withClass(message, 'query-prose')[0].textContent, answer.answer);
+    const details = withClass(message, 'query-details')[0];
+    assert.match(details.textContent, /적용 검토 필요.*미확인/); assert.ok(details.textContent.includes('0.000000001 EA'));
+    answer.prerequisite = { status: 'BLOCKED', stage: 'OTHER', reason: 'NO_REVIEWED_APPLICABLE_ROWS' };
+    renderQueryAnswer(message, answer);
+    assert.ok(withClass(message, 'query-prose')[0].textContent.includes('0.000000001 EA'));
+  } finally { restore(); }
+});
+
+test('calculable partial and technically unconfirmed BOMs keep exact material and inventory quantities in the main answer', () => {
+  const { message, restore } = setup();
+  try {
+    for (const reason of ['APPLICATION_REVIEW_INCOMPLETE', 'TECHNICAL_REVIEW_UNCONFIRMED']) {
+      const answer = bomReviewResponse();
+      Object.assign(answer.prerequisite, { status: 'PARTIAL', reason, selected_item_ids: ['synthetic-part'], selected_calculation_items: 1 });
+      answer.prerequisite.counts = { source_rows: 35, applicable_rows: 5, unresolved_rows: 30, calculation_items: 5 };
+      answer.sections = [{ id: 'materials', origin: 'conditional_demo', items: [{ label: '합성 품목',
+        value: '소요 20 / 23 EA · 부족 0.000000001 / 3.000000001 EA', detail: '조건부 수량' }] },
+        { id: 'inventory', origin: 'synthetic_opening_balance', items: [{ label: '합성 재고', value: '19.999999999 EA' }] }];
+      renderQueryAnswer(message, answer);
+      const prose = withClass(message, 'query-prose')[0].textContent;
+      assert.ok(prose.includes('소요 20 / 23 EA')); assert.ok(prose.includes('0.000000001 / 3.000000001 EA'));
+      assert.ok(prose.includes('19.999999999 EA')); assert.ok(prose.includes('시연 가정'));
+      answer.prerequisite.selected_calculation_items = 0;
+      renderQueryAnswer(message, answer);
+      assert.equal(withClass(message, 'query-prose')[0].textContent, answer.answer);
+      assert.ok(withClass(message, 'query-details')[0].textContent.includes('소요 20 / 23 EA'));
     }
   } finally { restore(); }
 });
@@ -290,7 +386,9 @@ test('delivery answer preserves server conclusion and distinct remaining-promise
     const details = withClass(message, 'query-details')[0];
     assert.notEqual(details.open, true);
     assert.ok(descendants(details).includes(withClass(message, 'query-delivery-metrics')[0]));
-    assert.ok(message.children.indexOf(withClass(message, 'query-verdict')[0]) < message.children.indexOf(details));
+    const supplement = withClass(message, 'query-supplement')[0];
+    assert.ok(message.children.indexOf(withClass(message, 'query-verdict')[0]) < message.children.indexOf(supplement));
+    assert.ok(supplement.children.includes(details));
     assert.ok(withClass(message, 'query-prose')[0].textContent.includes(data.answer));
     assert.ok(message.textContent.includes('납기 판단 보류'));
     assert.ok(message.textContent.includes('합성 초기 원장') && message.textContent.includes('질문에서 지정한 가정'));
@@ -421,10 +519,13 @@ test('reference order is confirmed steps, prose, every evidence chip, footer and
     const data = response(); renderQueryAnswer(message, data, { evidenceIds: ['one', 'two'] });
     assert.equal(message.children[0].className, 'trace-steps');
     assert.equal(withClass(message, 'done').length, data.steps.length);
-    const order = ['query-body', 'evidence-path', 'answer-footer', 'query-details'].map(name => message.children.indexOf(withClass(message, name)[0]));
+    const supplement = withClass(message, 'query-supplement')[0];
+    assert.ok(message.children.indexOf(withClass(message, 'query-body')[0]) < message.children.indexOf(supplement));
+    assert.equal(supplement.hidden, false);
+    const order = ['evidence-path', 'answer-footer', 'query-details'].map(name => supplement.children.indexOf(withClass(message, name)[0]));
     assert.ok(order.every((value, index) => value >= 0 && (!index || value > order[index - 1])));
     assert.notEqual(withClass(message, 'query-details')[0].open, true);
-    assert.match(withClass(message, 'query-body')[0].textContent, /합성 초기 원장.*실제 원문.*시연 가정/);
+    assert.match(supplement.textContent, /합성 초기 원장.*실제 원문.*시연 가정/);
   } finally { restore(); }
 });
 
@@ -438,9 +539,11 @@ test('lookup steps lead directly into prose while compact visible scope follows 
     assert.equal(verdict.children[0].className, 'query-prose');
     assert.equal(withClass(verdict, 'query-summary').length, 0);
     assert.equal(withClass(verdict, 'query-conclusion').length, 0);
-    assert.equal(withClass(verdict, 'query-scope-note').length, 1);
-    const scope = withClass(verdict, 'query-scope-note')[0];
-    assert.equal(verdict.children.at(-1), scope);
+    const supplement = withClass(message, 'query-supplement')[0];
+    assert.equal(withClass(verdict, 'query-scope-note').length, 0);
+    assert.equal(withClass(supplement, 'query-scope-note').length, 1);
+    const scope = withClass(supplement, 'query-scope-note')[0];
+    assert.equal(supplement.children[0], scope);
     for (const value of ['일부 확인', '납기 판단 보류', '합성 초기 원장', '실제 원문', '질문에서 지정한 가정', '미확인', '미확인은 부족 0이나 제조·납기 확정을 뜻하지 않습니다.']) {
       assert.ok(scope.textContent.includes(value), value);
     }
@@ -510,6 +613,171 @@ function animationSetup({ reduced = false } = {}) {
   } };
 }
 
+function workflowResponse() {
+  return { ...response(), sections: [], answer: '별도의 일반 본문은 카드와 중복 표시하지 않습니다.', answer_blocks: [
+    { id: 'synthetic-balance', title: '합성 원장 확인', tool: '원장 조회', kind: 'normal', paragraphs: ['합성 원장 17대 중 추가 목표는 9대입니다.'] },
+    { id: 'synthetic-material', title: '조건부 소요 확인', tool: '원장 조회', kind: 'normal', paragraphs: ['소요 20 EA · 가용 19.999999999 EA · 부족 0.000000001 EA입니다.', '이 수량은 시연 가정입니다.'] },
+    { id: 'synthetic-next', title: '다음 확인', tool: '원장 조회', kind: 'attention', paragraphs: ['제조·납기 판단은 미확인입니다.'] },
+  ] };
+}
+const flushPromises = async () => { for (let i = 0; i < 5; i++) await Promise.resolve(); };
+
+test('workflow cards reveal one confirmed result at a time before the single supplement', async () => {
+  const fixture = animationSetup();
+  try {
+    const data = workflowResponse(), before = JSON.stringify(data); let progress = 0, hooks = 0;
+    const view = renderQueryAnswer(fixture.message, data, { animate: true, mode: 'workflow', evidenceIds: ['node-one'],
+      beforeBody: () => { hooks++; }, onProgress: () => { progress++; } });
+    const prose = withClass(fixture.message, 'query-prose')[0], cards = withClass(prose, 'query-answer-card');
+    const supplement = withClass(fixture.message, 'query-supplement')[0];
+    assert.equal(cards.length, 3); assert.ok(cards.every(card => card.hidden));
+    assert.equal(fixture.message.dataset.answerLayout, 'workflow');
+    assert.notEqual(fixture.message.children[0].className, 'trace-steps');
+    assert.equal(withClass(withClass(fixture.message, 'query-details')[0], 'trace-steps').length, 1);
+    assert.equal(withClass(prose, 'answer').map(value => value.textContent).join(''), '');
+    fixture.advance(0); fixture.advance(500);
+    assert.equal(cards[0].hidden, false); assert.equal(cards[0].dataset.displayState, 'active');
+    assert.ok(cards.slice(1).every(card => card.hidden)); assert.equal(withClass(cards[0], 'answer')[0].textContent, '');
+    fixture.advance(1050);
+    assert.ok(withClass(cards[0], 'answer')[0].textContent.length > 0);
+    assert.notEqual(withClass(cards[0], 'answer')[0].textContent, data.answer_blocks[0].paragraphs[0]);
+    assert.ok(cards.slice(1).every(card => card.hidden)); assert.equal(supplement.hidden, true);
+    fixture.advance(1600);
+    assert.equal(cards[0].dataset.displayState, 'done'); assert.equal(cards[1].dataset.displayState, 'active');
+    assert.equal(cards[2].hidden, true); assert.equal(supplement.hidden, true);
+    fixture.advance(8000); assert.deepEqual(await view.finished, { completed: true });
+    assert.ok(cards.every(card => !card.hidden && card.dataset.displayState === 'done'));
+    assert.equal(supplement.hidden, false); assert.equal(fixture.frames.size, 0); assert.equal(hooks, 0);
+    assert.ok(progress > 0); assert.ok(!prose.textContent.includes(data.answer));
+    for (const [index, block] of data.answer_blocks.entries()) {
+      assert.deepEqual(withClass(cards[index], 'query-answer-tool').map(value => value.textContent), [block.tool]);
+      assert.equal(cards[index].dataset.blockId, block.id);
+      for (const paragraph of block.paragraphs) assert.equal(prose.textContent.split(paragraph).length - 1, 1);
+    }
+    assert.equal(withClass(prose, 'query-answer-attention').length, 1);
+    assert.equal(JSON.stringify(data), before);
+  } finally { fixture.restore(); }
+});
+
+test('workflow blocks are literal server text and invalid contracts fall back without partial card loss', () => {
+  const { message, restore } = setup();
+  try {
+    const attack = '<img src=x onerror="bad()">', data = workflowResponse();
+    data.answer_blocks[0].title = attack; data.answer_blocks[0].tool = attack; data.answer_blocks[0].paragraphs = [attack];
+    renderQueryAnswer(message, data, { mode: 'workflow' });
+    assert.equal(withClass(message, 'query-answer-heading')[0].textContent, `1${attack}${attack}`);
+    assert.equal(withClass(message, 'answer')[0].textContent, attack);
+    assert.equal(descendants(message).filter(value => value.tagName === 'IMG').length, 0);
+    for (const mutate of [value => { value.answer_blocks[1].kind = 'script'; }, value => { value.answer_blocks[1].paragraphs = ['']; },
+      value => { value.answer_blocks[1].id = value.answer_blocks[0].id; }, value => { delete value.answer_blocks[1].tool; }]) {
+      const invalid = workflowResponse(); mutate(invalid); renderQueryAnswer(message, invalid, { mode: 'workflow' });
+      assert.equal(withClass(message, 'query-answer-card').length, 0);
+      assert.equal(withClass(message, 'query-prose')[0].textContent, invalid.answer);
+    }
+    renderQueryAnswer(message, workflowResponse(), { mode: 'graph' });
+    assert.equal(message.dataset.answerLayout, 'graph');
+    assert.equal(withClass(message, 'query-answer-card').length, 0);
+    assert.equal(withClass(message, 'query-prose')[0].textContent, workflowResponse().answer);
+  } finally { restore(); }
+});
+
+test('graph replay hook waits after trace once and before text without running synchronously', async () => {
+  const fixture = animationSetup();
+  try {
+    const pending = deferred(); let calls = 0;
+    const data = { ...response(), sections: [] };
+    const view = renderQueryAnswer(fixture.message, data, { animate: true, mode: 'graph', beforeBody: () => { calls++; return pending.promise; } });
+    const prose = withClass(fixture.message, 'query-prose')[0], supplement = withClass(fixture.message, 'query-supplement')[0];
+    assert.equal(calls, 0); fixture.advance(0); fixture.advance(1199); await flushPromises(); assert.equal(calls, 0);
+    fixture.advance(1200); assert.equal(calls, 0); await flushPromises(); assert.equal(calls, 1);
+    assert.equal(fixture.message.dataset.answerDisplayState, 'graph'); assert.equal(prose.textContent, '');
+    assert.equal(withClass(fixture.message, 'query-typing-status')[0].textContent, '근거 경로 표시 중');
+    fixture.advance(9000); assert.equal(prose.textContent, ''); assert.equal(supplement.hidden, true);
+    pending.resolve(); await flushPromises(); fixture.advance(9000); fixture.advance(17000);
+    assert.deepEqual(await view.finished, { completed: true }); assert.equal(calls, 1);
+    assert.equal(prose.textContent, data.answer); assert.equal(supplement.hidden, false); assert.equal(fixture.frames.size, 0);
+  } finally { fixture.restore(); }
+});
+
+test('show all and disposal invalidate an awaited graph hook and late work cannot restart presentation', async () => {
+  for (const operation of ['finish', 'dispose']) {
+    const fixture = animationSetup();
+    try {
+      const pending = deferred(); let progress = 0;
+      const view = renderQueryAnswer(fixture.message, response(), { animate: true, beforeBody: () => pending.promise, onProgress: () => { progress++; } });
+      fixture.advance(0); fixture.advance(1200); await flushPromises();
+      assert.equal(fixture.message.dataset.answerDisplayState, 'graph');
+      view[operation](); const content = fixture.message.textContent, advances = progress;
+      pending.resolve(); await flushPromises(); fixture.advance(50000);
+      assert.equal(fixture.message.textContent, content); assert.equal(fixture.frames.size, 0); assert.equal(progress, advances);
+      assert.equal(withClass(fixture.message, 'query-supplement')[0].hidden, operation === 'dispose');
+      assert.deepEqual(await view.finished, operation === 'dispose' ? { completed: false, disposed: true } : { completed: true });
+    } finally { fixture.restore(); }
+  }
+});
+
+test('graph hook errors recover the confirmed answer and optional progress errors cannot interrupt it', async () => {
+  const fixture = animationSetup();
+  try {
+    const data = { ...response(), sections: [] };
+    const view = renderQueryAnswer(fixture.message, data, { animate: true, beforeBody: () => { throw Error('synthetic'); },
+      onProgress: () => { throw Error('optional scrolling failure'); } });
+    fixture.advance(0); fixture.advance(1200); await flushPromises(); fixture.advance(1500); fixture.advance(9500);
+    assert.deepEqual(await view.finished, { completed: true });
+    assert.equal(withClass(fixture.message, 'query-prose')[0].textContent, data.answer);
+    assert.equal(fixture.frames.size, 0);
+  } finally { fixture.restore(); }
+});
+
+test('a lost graph hook has a bounded local fallback and its late resolution cannot restart text', async () => {
+  const fixture = animationSetup(), previous = { setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout };
+  const timers = new Map(); let serial = 0;
+  globalThis.setTimeout = (callback, delay) => { assert.equal(delay, 30000); timers.set(++serial, callback); return serial; };
+  globalThis.clearTimeout = id => timers.delete(id);
+  try {
+    const pending = deferred(), data = { ...response(), sections: [] };
+    const view = renderQueryAnswer(fixture.message, data, { animate: true, beforeBody: () => pending.promise });
+    fixture.advance(0); fixture.advance(1200); await flushPromises(); assert.equal(timers.size, 1);
+    [...timers.values()][0](); assert.equal(timers.size, 0);
+    fixture.advance(31000); fixture.advance(39000); await view.finished;
+    assert.equal(withClass(fixture.message, 'query-prose')[0].textContent, data.answer);
+    const content = fixture.message.textContent; pending.resolve(); await flushPromises();
+    assert.equal(fixture.message.textContent, content); assert.equal(fixture.frames.size, 0);
+  } finally {
+    globalThis.setTimeout = previous.setTimeout; globalThis.clearTimeout = previous.clearTimeout; fixture.restore();
+  }
+});
+
+test('workflow show all, reduced motion and late disposal preserve cards without repeated body copies', async () => {
+  for (const operation of ['finish', 'dispose', 'reduced']) {
+    const fixture = animationSetup({ reduced: operation === 'reduced' });
+    try {
+      const data = workflowResponse(); let hooks = 0;
+      const view = renderQueryAnswer(fixture.message, data, { mode: 'workflow', animate: true, beforeBody: () => { hooks++; } });
+      const late = [...fixture.frames.values()][0];
+      if (operation !== 'reduced') view[operation]();
+      const content = fixture.message.textContent; late?.(8000); view.finish();
+      assert.equal(fixture.message.textContent, content); assert.equal(fixture.frames.size, 0); assert.equal(hooks, 0);
+      assert.equal(withClass(fixture.message, 'query-supplement')[0].hidden, operation === 'dispose');
+      if (operation !== 'dispose') for (const block of data.answer_blocks) for (const paragraph of block.paragraphs) {
+        assert.equal(withClass(fixture.message, 'query-prose')[0].textContent.split(paragraph).length - 1, 1);
+      }
+      assert.deepEqual(await view.finished, operation === 'dispose' ? { completed: false, disposed: true } : { completed: true });
+    } finally { fixture.restore(); }
+  }
+});
+
+test('static and reduced motion graph answers never invoke the automatic presentation hook', async () => {
+  for (const reduced of [false, true]) {
+    const fixture = animationSetup({ reduced });
+    try {
+      let hooks = 0;
+      const view = renderQueryAnswer(fixture.message, response(), { animate: reduced, beforeBody: () => { hooks++; } });
+      await view.finished; await flushPromises(); assert.equal(hooks, 0); assert.equal(fixture.frames.size, 0);
+    } finally { fixture.restore(); }
+  }
+});
+
 test('confirmed steps progress one at a time before prose without inventing Agent or model activity', async () => {
   const fixture = animationSetup();
   try {
@@ -555,20 +823,23 @@ test('no confirmed steps skips the step effect and many steps still finish withi
   }
 });
 
-test('explicit animation reveals whole graphemes with one accessible answer and completes within eight seconds', async () => {
+test('explicit animation reveals whole graphemes and releases its single accessible body within eight seconds', async () => {
   const fixture = animationSetup();
   try {
     const data = { ...response(), sections: [], answer: '가👨‍👩‍👧‍👦나 e\u0301 1️⃣ 수량 0.000000001대' };
     const view = renderQueryAnswer(fixture.message, data, { animate: true });
-    const prose = withClass(fixture.message, 'query-prose')[0], accessible = withClass(fixture.message, 'query-accessible-answer')[0];
-    assert.equal(prose.attributes['aria-hidden'], 'true'); assert.equal(accessible.textContent, data.answer);
+    const prose = withClass(fixture.message, 'query-prose')[0];
+    assert.equal(withClass(fixture.message, 'query-accessible-answer').length, 0);
+    assert.equal(prose.attributes['aria-hidden'], 'true'); assert.equal(prose.attributes['aria-busy'], 'true');
     assert.equal(fixture.message.dataset.answerDisplayState, 'steps'); assert.equal(prose.textContent, '');
     const characters = [...new Intl.Segmenter('ko', { granularity: 'grapheme' }).segment(data.answer)].map(item => item.segment);
     const validPrefixes = new Set(characters.map((_, index) => characters.slice(0, index + 1).join(''))); validPrefixes.add('');
-    for (const time of [0, 600, 1200, 1230, 1275, 1330, 1420]) { fixture.advance(time); assert.ok(validPrefixes.has(prose.textContent)); assert.equal(accessible.textContent, data.answer); }
+    for (const time of [0, 600, 1200, 1230, 1275, 1330, 1420]) { fixture.advance(time); assert.ok(validPrefixes.has(prose.textContent)); }
     fixture.advance(8000);
     assert.deepEqual(await view.finished, { completed: true });
     assert.equal(prose.textContent, data.answer); assert.equal(fixture.message.dataset.answerDisplayState, 'complete');
+    assert.equal(prose.attributes['aria-hidden'], 'false'); assert.equal(prose.attributes['aria-busy'], 'false');
+    assert.equal(fixture.message.textContent.split(data.answer).length - 1, 1, 'a copied/extracted message has one full body');
     assert.equal(fixture.frames.size, 0);
   } finally { fixture.restore(); }
 });
@@ -583,6 +854,70 @@ test('show all and finish are idempotent, preserve the complete answer and relea
     assert.deepEqual(await view.finished, { completed: true });
     assert.equal(withClass(fixture.message, 'answer')[0].textContent, data.answer);
     assert.equal(withClass(fixture.message, 'done').length, data.steps.length);
+  } finally { fixture.restore(); }
+});
+
+test('supplementary cautions, actions, evidence, versions and details appear together only after the body', async () => {
+  const fixture = animationSetup();
+  try {
+    const pending = deferred(), data = deliveryResponse();
+    data.calculation.material_requirements = { state: 'BLOCKED_BOM', bom_id: null };
+    data.answer = '합성 본문은 한 번만 표시합니다. ' + '긴 합성 안내입니다. '.repeat(20);
+    const view = renderQueryAnswer(fixture.message, data, { animate: true, evidenceIds: ['one', 'two'] });
+    const supplement = withClass(fixture.message, 'query-supplement')[0];
+    for (const name of ['query-scope-note', 'evidence-path', 'answer-footer', 'query-details']) {
+      assert.equal(withClass(supplement, name).length, 1, name);
+    }
+    assert.equal(descendants(supplement).filter(item => item.dataset.queryAction === 'bom-register').length, 1);
+    assert.equal(supplement.hidden, true);
+    const playback = view.play(() => pending.promise);
+    assert.equal(supplement.hidden, true, 'graph playback cannot prematurely reveal the footer');
+    fixture.advance(0); fixture.advance(1500);
+    assert.equal(fixture.message.dataset.answerDisplayState, 'typing');
+    assert.equal(supplement.hidden, true);
+    pending.resolve({ completed: true }); await playback;
+    assert.equal(supplement.hidden, true, 'an early replay completion is still hidden');
+    fixture.advance(8000); await view.finished;
+    assert.equal(supplement.hidden, false);
+    assert.notEqual(withClass(supplement, 'query-details')[0].open, true);
+    assert.equal(withClass(supplement, 'chip').length, 2);
+    assert.match(withClass(supplement, 'query-replay-status')[0].textContent, /근거 경로 재생 완료/);
+    assert.equal(fixture.message.textContent.split('합성 본문은 한 번만 표시합니다.').length - 1, 1);
+  } finally { fixture.restore(); }
+});
+
+test('show all exposes the supplement once while dispose never lets late work expose it', async () => {
+  for (const mode of ['finish', 'dispose']) {
+    const fixture = animationSetup();
+    try {
+      const pending = deferred(), view = renderQueryAnswer(fixture.message, response(), { animate: true, evidenceIds: ['one'] });
+      const supplement = withClass(fixture.message, 'query-supplement')[0], playback = view.play(() => pending.promise);
+      const late = [...fixture.frames.values()][0];
+      assert.equal(supplement.hidden, true);
+      if (mode === 'finish') descendants(fixture.message).find(item => item.textContent === '모두 보기').click();
+      else view.dispose();
+      const content = fixture.message.textContent;
+      late(8000); pending.resolve({ completed: true }); await playback; view.finish();
+      assert.equal(supplement.hidden, mode === 'dispose');
+      if (mode === 'dispose') assert.equal(fixture.message.textContent, content);
+      assert.equal(fixture.frames.size, 0);
+      assert.deepEqual(await view.finished, mode === 'dispose' ? { completed: false, disposed: true } : { completed: true });
+    } finally { fixture.restore(); }
+  }
+});
+
+test('the graph action has its navigation label and hidden supplements cannot be displayed by other CSS', async () => {
+  const fixture = setup();
+  try {
+    let navigations = 0;
+    renderQueryAnswer(fixture.message, response(), { evidenceIds: ['one'], onReplay: () => { navigations++; } });
+    const footer = withClass(fixture.message, 'answer-footer')[0];
+    assert.equal(footer.children.filter(item => item.tagName === 'BUTTON' && item.textContent === '근거 다시 보기').length, 0);
+    footer.children.find(item => item.tagName === 'BUTTON' && item.textContent === '그래프에서 보기').click();
+    assert.equal(navigations, 1);
+    const css = await readFile(new URL('../web/mks2/styles.css', import.meta.url), 'utf8');
+    assert.match(css, /\.query-supplement\[hidden\]\s*\{\s*display\s*:\s*none\s*!important\s*;/);
+    assert.ok(!css.includes('.query-accessible-answer'));
   } finally { fixture.restore(); }
 });
 
@@ -610,6 +945,7 @@ test('reduced motion and default rendering show the full confirmed answer withou
       assert.equal(fixture.frames.size, 0); assert.equal(fixture.message.dataset.answerDisplayState, 'complete');
       assert.equal(withClass(fixture.message, 'answer')[0].textContent, data.answer);
       assert.equal(withClass(fixture.message, 'query-accessible-answer').length, 0);
+      assert.equal(withClass(fixture.message, 'query-supplement')[0].hidden, false);
       assert.deepEqual(await view.finished, { completed: true });
     } finally { fixture.restore(); }
   }

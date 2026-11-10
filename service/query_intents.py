@@ -39,6 +39,7 @@ class QueryPlan:
     clarification: str | None = None
     unsupported: bool = False
     is_what_if: bool = False
+    explicit_production: bool = False
     quantity_mentions: tuple[QuantityMention, ...] = ()
 
 
@@ -75,6 +76,10 @@ def _has(text: str, words: tuple[str, ...]) -> bool:
     return any(word in text for word in words)
 
 
+def _production_requested(compact: str) -> bool:
+    return _has(compact, ("생산", "양품", "수율", "투입", "만들", "만드", "제작", "제조", "찍어", "몇개넣", "몇대넣"))
+
+
 def _write_requested(compact: str, text: str) -> bool:
     # A read of an approval state is allowed; an approval instruction is not.
     return bool(re.search(
@@ -91,7 +96,7 @@ def _intents(compact: str) -> tuple[QueryIntent, ...]:
     intents: set[QueryIntent] = set()
     material = _has(compact, ("bom", "소요", "부족", "모자", "모잘", "자재", "부품", "재료", "딸리", "딸려", "병목"))
     inventory = _has(compact, ("재고", "예약", "가용", "보류", "창고", "보유")) or bool(re.search(r"\blot\b", compact))
-    production = _has(compact, ("생산", "양품", "수율", "투입", "만들", "만드", "제작", "제조", "찍어", "몇개넣", "몇대넣"))
+    production = _production_requested(compact)
     delivery_terms = _has(compact, ("납품", "도착", "출하", "이행", "약속", "배송", "고객", "보내", "보낼", "수주", "주문"))
     deadline = _has(compact, ("납기", "기한", "마감"))
     timing = _has(compact, ("언제", "일정", "내일", "모레", "이번주", "다음주", "주말", "월말", "며칠", "몇일", "몇시간", "몇분", "몇주", "몇달", "기간안에", "기간내", "완료날짜", "도착날짜", "출하날짜", "배송날짜", "생산날짜"))
@@ -298,5 +303,6 @@ def interpret_question(question: str) -> QueryPlan:
         clarification=clarification,
         unsupported=not bool(intents),
         is_what_if=yield_rate is not None or target is not None,
+        explicit_production=_production_requested(compact),
         quantity_mentions=tuple(mentions),
     )
