@@ -96,7 +96,13 @@ export function supplyProgress(documents, snapshot, identity, editor = null) {
       notes.push('승인됐지만 아직 원장에 반영되지 않았습니다.');
     } else if (mine) {
       next = [{ label: '승인', disabled: true }, { label: '반려', disabled: true }];
-      notes.push('작성자 본인은 승인할 수 없습니다. 상단에서 역할을 검토자로 바꾸세요.');
+      // The approver role wrote it: no other account can approve this draft.
+      notes.push(can('document.approve')
+        ? '승인 권한이 있는 계정으로 작성한 요청이라 승인할 다른 계정이 없습니다. 상단에서 작성자 계정으로 바꿔 반려한 뒤, 작성자 계정으로 다시 요청하세요.'
+        : '작성자 본인은 승인할 수 없습니다. 상단에서 역할을 검토자로 바꾸세요.');
+    } else if (!can('document.approve')) {
+      next = [{ label: '승인', disabled: true }, { label: '반려', action: 'reject', disabled: !can('document.review') }];
+      notes.push('이 계정에는 승인 권한이 없습니다. 승인은 요청을 작성하지 않은 검토자 계정이 합니다.');
     } else {
       next = [{ label: '승인', action: focus.status === 'DRAFT' ? 'review-approve' : 'approve', primary: true, disabled: !can('document.approve') || (focus.status === 'DRAFT' && !can('document.review')) },
               { label: '반려', action: 'reject', disabled: !can('document.review') }];

@@ -89,3 +89,13 @@ test('after inspection the card continues to production, shipment and arrival', 
   const fgDraft = supplyProgress([...chain, { id: 'fg-1', kind: 'FG_RECEIPT', status: 'DRAFT', parent_id: 'prod-1', created_by: 'actor-a', content: {} }], view, reviewer);
   assert.equal(fgDraft.focusLabel, '완성품 입고'); assert.deepEqual(actions(fgDraft), ['review-approve', 'reject']);
 });
+
+test('a request written by the approver says how to continue, and the author can reject it', () => {
+  const byReviewer = pr('DRAFT', { created_by: 'actor-b' });
+  const own = supplyProgress([byReviewer], snapshot(23), reviewer);
+  assert.deepEqual(actions(own), ['(승인)', '(반려)']);
+  assert.match(own.notes[0], /승인할 다른 계정이 없습니다/);
+  const asAuthor = supplyProgress([byReviewer], snapshot(23), { ...author, permitted_actions: [...author.permitted_actions, 'document.review'] });
+  assert.deepEqual(actions(asAuthor), ['(승인)', 'reject']);
+  assert.match(asAuthor.notes[0], /승인 권한이 없습니다/);
+});
