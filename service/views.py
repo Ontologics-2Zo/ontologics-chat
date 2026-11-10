@@ -38,7 +38,7 @@ def snapshot_view(payload):
     version = source["server_ledger_version"]
     ready = projection.get("state") == "READY" and projection.get("projection_version") == version
     balance = payload["opening_balance"]
-    round_ = balance["delivery_round"]
+    round_ = payload.get("current_delivery_round") or balance["delivery_round"]
     inventories = payload.get("current_inventory", balance["inventory"])
     lots = [row for row in inventories if row["scope"] == "LOT"]
     # Primary inventory is identified by its actual LOT records, never a fixed
@@ -50,7 +50,7 @@ def snapshot_view(payload):
     bom = payload.get("bom")
     procurement = payload.get("procurement", {})
     receipts = procurement.get("receipts", [])
-    inventory_origin = "mixed_sources" if receipts else "synthetic_opening_balance"
+    inventory_origin = "mixed_sources" if receipts or payload.get("reservations") else "synthetic_opening_balance"
     summary = {
         "promise_qty": round_["promised_qty"], "promised_qty": round_["promised_qty"],
         "good_qty": round_["good_qty"], "fg_received_qty": round_["fg_received_qty"],
@@ -103,6 +103,15 @@ def snapshot_view(payload):
     if source.get("opening_effective_at"):
         meta.update(opening_effective_at=source["opening_effective_at"],
                     inventory_effective_at=source.get("current_inventory_effective_at"))
+    from service.reservations import reservation_impacts
+    impacts = reservation_impacts(requirements, payload.get("reservations", []))
+    suggestions = []
+    from decimal import Decimal
+    first = next((row for row in impacts if row["item_id"] == impacts[-1]["item_id"]), None) if impacts else None
+    if first and Decimal(impacts[-1]["planned_shortage_after"]) > Decimal(first["planned_shortage_before"]):
+        # Selecting a suggestion only fills the question draft (no model call).
+        suggestions = [f"왜 부족이 {impacts[-1]['planned_shortage_after']}개로 늘었어?",
+                       f"기존 {first['planned_shortage_before']}개 안이면 충분해? 어떤 안을 다시 검토할까?"]
     return {
         "mode": "ledger-service", "serviceConnected": True, "meta": meta, "summary": summary,
         "entities": payload["entities"], "relationships": payload["relationships"],
@@ -115,8 +124,11 @@ def snapshot_view(payload):
         "mapping_candidates": balance["mapping_candidates"],
         "bom": deepcopy(bom), "material_requirements": requirements,
         "procurement": deepcopy(payload.get("procurement", {})),
+        "reservations": deepcopy(payload.get("reservations", [])),
+        "fulfillment": deepcopy(payload.get("fulfillment", {})),
         "capabilities": {"bom_upload": "RUNNER_UNAVAILABLE", "purchase_write": "NOT_IMPLEMENTED", "agent": "NOT_IMPLEMENTED", "model": "NOT_RUN"},
-        "suggested_questions": ["남은 약속은 몇 대고, 얼마나 더 만들어야 해?", "수율을 적용하면 몇 대 투입하고 어떤 자재가 부족해?", f"남은 {summary['promise_remaining_qty']}대, 납기 안에 고객에게 도착할 수 있어?", "현재 가용 재고와 예약 근거를 보여줘", "전체 온톨로지의 클래스와 관계 범위를 보여줘"],
+        "reservation_impacts": impacts,
+        "suggested_questions": suggestions + ["남은 약속은 몇 대고, 얼마나 더 만들어야 해?", "수율을 적용하면 몇 대 투입하고 어떤 자재가 부족해?", f"남은 {summary['promise_remaining_qty']}대, 납기 안에 고객에게 도착할 수 있어?", "현재 가용 재고와 예약 근거를 보여줘", "전체 온톨로지의 클래스와 관계 범위를 보여줘"],
     }
 
 

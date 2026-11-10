@@ -51,11 +51,11 @@ select,.btn { border:1px solid var(--line); background:var(--surface); border-ra
 .pill.mute { color:var(--fg2); background:var(--line2); }
 .chip { border:1px solid var(--line); border-radius:5px; background:var(--raised); color:var(--fg); font:11.5px var(--mono); padding:2px 6px; }
 .chip:hover { color:var(--accent); border-color:var(--accent); }
-#workspace,.screen,#graph-stage,#dashboard-stage { min-height:0; min-width:0; }
+#workspace,.screen,#graph-stage,#network-stage,#dashboard-stage { min-height:0; min-width:0; }
 .screen { height:100%; display:grid; }
 .graph-screen { grid-template-columns:minmax(0,1fr) 400px; }
 .dashboard-screen { grid-template-columns:minmax(0,1fr) 440px; }
-#graph-stage { height:100%; position:relative; }
+#graph-stage,#network-stage { height:100%; position:relative; }
 #dashboard-stage { overflow-y:auto; }
 .assistant-panel { display:flex; flex-direction:column; min-height:0; background:var(--surface); border-left:1px solid var(--line); }
 .panel-heading { display:flex; align-items:center; gap:8px; padding:12px 14px; border-bottom:1px solid var(--line); }
@@ -180,7 +180,7 @@ select,.btn { border:1px solid var(--line); background:var(--surface); border-ra
 @media(max-width:980px) {
   .application { height:auto; min-height:100%; }
   .screen { grid-template-columns:1fr; height:auto; }
-  #graph-stage { height:60vh; min-height:420px; }
+  #graph-stage,#network-stage { height:60vh; min-height:420px; }
   .assistant-panel { min-height:520px; border-left:0; border-top:1px solid var(--line); }
   .messages { min-height:220px; max-height:55vh; }
 }

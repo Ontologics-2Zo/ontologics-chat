@@ -50,7 +50,8 @@ async function setup({ animated = false, reduced = false } = {}) {
   const context = vm.createContext({
     document: { getElementById: get, createElement: tag => new Element(tag),
       createTextNode: text => { const value = new Element('#text'); value.textContent = text; return value; },
-      documentElement: new Element('html'), addEventListener: (name, callback) => { documentEvents[name] = callback; } },
+      documentElement: new Element('html'), addEventListener: (name, callback) => { documentEvents[name] = callback; },
+      querySelector: () => null },
     window: { addEventListener() {}, frameElement: null }, location: { hash: '#dashboard' },
     AbortController, crypto: { randomUUID: () => `synthetic-key-${++serial}` },
     setTimeout: () => 1, clearTimeout() {}, setInterval: () => 1, clearInterval() {},
@@ -58,6 +59,8 @@ async function setup({ animated = false, reduced = false } = {}) {
     ...(animated ? { cancelAnimationFrame() {}, matchMedia: () => ({ matches: reduced }) } : {}),
     mountDashboard: () => ({ destroy() {}, select() {}, openBom(step, id, reference) { bomOpens.push(step); bomOpenArguments.push({ step, id, reference }); } }),
     mountGraph: () => ({ destroy() {}, cancelReplay() {}, resize() {}, reset() {}, focus() {}, replay() {} }),
+    // DEC-H47 relationship graph (#graph); the existing project graph is mountGraph (#network).
+    mountLaneGraph: () => ({ destroy() {}, cancelReplay() {}, resize() {}, reset() {}, focus() {}, replay() {}, setLag() {} }),
     mountTwin: (stage, options) => {
       const instance = { options, highlights: [], active: [], destroyed: false, resets: 0,
         destroy() { this.destroyed = true; }, setActive(value) { this.active.push(value); },
@@ -97,7 +100,8 @@ async function setup({ animated = false, reduced = false } = {}) {
       askTwin: question => runQuery('twin', question), askGraph: question => runQuery('graph', question), panel: () => panels.dashboard,
       twinPanel: () => panels.twin, graphPanel: () => panels.graph, generation: () => generation,
       route: name => { location.hash = '#' + name; route(); }, invalidate: invalidateView,
-      load: loadSnapshot, setContext, setTwinContext, twinActive: updateTwinActivity };`, context);
+      load: loadSnapshot, setContext, setTwinContext, twinActive: updateTwinActivity,
+      poll: pollChanges, panels: () => panels, current: () => snapshot, setLive: value => { liveEnabled = value; } };`, context);
   return { requests, app: context.app, twins, answers, bomOpens, bomOpenArguments, document: context.document, window: context.window, location: context.location,
     documentEvents, element: get, setHandler(value) { handler = value; },
     snapshot: () => data, setNextSnapshot(value) { data = value; } };
@@ -443,4 +447,150 @@ test('BOM application review opens the exact current document and old or changed
   h.setNextSnapshot(snapshotAt(8)); await h.app.refresh(); shown.options.onReviewBom(ref);
   assert.equal(h.bomOpens.length, 1); assert.match(h.element('notice').textContent, /과거 원장 버전/);
   h.app.invalidate(); shown.options.onReviewBom(ref); assert.equal(h.bomOpens.length, 1);
+});
+
+
+// DEC-H47: a committed reservation refreshes quantities from a new server
+// snapshot and marks only conversations that depend on the reserved item.
+function reservationChanges(state = 'READY') {
+  return { current_ledger_version: 8, snapshot_ledger_version: state === 'READY' ? 8 : 7, projection_state: state,
+    identity_revision: principal.identity_revision, company_id: principal.company_id,
+    events: [{ event_id: 'synthetic-event-8', ledger_version: 8, event_type: 'InventoryReserved', document_kind: 'RESERVATION',
+      summary: '재고 예약 반영 · 다른 수요 합성-주문 · item-a 5개', recorded_at: '2026-01-01T00:00:00+00:00',
+      reservation: { reservation_id: 'synthetic-reservation', item_id: 'item-a' } }] };
+}
+function reservedSnapshot() {
+  const next = snapshotAt(8);
+  next.material_requirements = { items: [{ item_id: 'item-a' }] };
+  next.reservation_impacts = [{ reservation_id: 'synthetic-reservation', item_id: 'item-a', unit: 'EA', demand_ref: '합성-주문',
+    quantity: 5, available_before: '20', available_after: '15', planned_shortage_before: '23', planned_shortage_after: '28',
+    ledger_version: 8, entity_id: 'synthetic-reservation-node' }];
+  return next;
+}
+
+test('a relevant committed reservation auto-refreshes and adds one status line without model calls', async () => {
+  const h = await setup();
+  h.snapshot().material_requirements = { items: [{ item_id: 'item-a' }] };
+  h.app.panels().dashboard.topics.add('item-a');
+  h.setHandler(request => request.path.startsWith('/api/mks2/events') ? reservationChanges('READY') : undefined);
+  h.setNextSnapshot(reservedSnapshot());
+  await h.app.poll();
+  assert.equal(h.app.current().meta.ledger_version, 8);
+  assert.match(h.app.panels().dashboard.status.textContent, /가용 20→15 · 계획 부족 23→28개 · 기존 확보안 재검토 필요/);
+  assert.equal(h.app.panels().graph.status.textContent, '');
+  assert.equal(h.requests.filter(request => request.path.startsWith('/api/mks2/agent/') || request.path === '/api/mks2/query').length, 0);
+  await h.app.poll();
+  assert.equal(h.app.panels().dashboard.status.children.length, 1);
+});
+
+test('a reservation whose graph projection is pending keeps the old snapshot and says the graph is updating', async () => {
+  const h = await setup();
+  h.snapshot().material_requirements = { items: [{ item_id: 'item-a' }] };
+  h.app.panels().dashboard.topics.add('item-a');
+  h.setHandler(request => request.path.startsWith('/api/mks2/events') ? reservationChanges('PENDING') : undefined);
+  h.setNextSnapshot(reservedSnapshot());
+  await h.app.poll();
+  assert.equal(h.app.current().meta.ledger_version, 7);
+  assert.match(h.app.panels().dashboard.status.textContent, /수량·그래프 갱신 중/);
+  assert.equal(h.requests.filter(request => request.path === '/api/mks2/snapshot').length, 0);
+});
+
+test('a posted customer arrival marks only conversations about that round, quoting server quantities', async () => {
+  const h = await setup();
+  h.snapshot().summary = { delivery_round_id: 'R-1', arrived_qty: 32, promise_remaining_qty: 68 };
+  h.app.panels().dashboard.topics.add('round:R-1');
+  h.setHandler(request => request.path.startsWith('/api/mks2/events') ? {
+    current_ledger_version: 8, snapshot_ledger_version: 8, projection_state: 'READY',
+    identity_revision: principal.identity_revision, company_id: principal.company_id,
+    events: [{ event_id: 'synthetic-arrival', ledger_version: 8, event_type: 'ProcurementPosted', document_kind: 'ARRIVAL',
+      summary: '고객 도착 기록 반영', recorded_at: '2026-01-01T00:00:00+00:00' }] } : undefined);
+  const next = snapshotAt(8); next.summary = { delivery_round_id: 'R-1', arrived_qty: 33, promise_remaining_qty: 67 };
+  h.setNextSnapshot(next);
+  await h.app.poll();
+  assert.match(h.app.panels().dashboard.status.textContent, /고객 도착 1대 반영 · 누적 도착 32→33대 · 남은 약속 68→67대/);
+  assert.equal(h.app.panels().graph.status.textContent, '');
+  assert.equal(h.requests.filter(request => request.path === '/api/mks2/query').length, 0);
+});
+
+// T5: delivery edge cases of committed-event reflection (DEC-H47/H49).
+function relevantSetup(h) {
+  h.snapshot().material_requirements = { items: [{ item_id: 'item-a' }] };
+  h.app.panels().dashboard.topics.add('item-a');
+}
+
+test('a failed poll changes nothing and the next poll recovers the missed event', async () => {
+  const h = await setup(); relevantSetup(h);
+  let calls = 0;
+  h.setHandler(request => request.path.startsWith('/api/mks2/events')
+    ? (++calls === 1 ? { httpStatus: 503, code: 'SERVICE_UNAVAILABLE' } : reservationChanges('READY')) : undefined);
+  h.setNextSnapshot(reservedSnapshot());
+  await h.app.poll();
+  assert.equal(h.app.current().meta.ledger_version, 7);
+  assert.equal(h.app.panels().dashboard.status.textContent, '');
+  await h.app.poll();
+  assert.equal(h.app.current().meta.ledger_version, 8);
+  assert.match(h.app.panels().dashboard.status.textContent, /23→28/);
+});
+
+test('an older or equal ledger version never moves the screen backwards', async () => {
+  const h = await setup(); relevantSetup(h);
+  h.setHandler(request => request.path.startsWith('/api/mks2/events')
+    ? { ...reservationChanges('READY'), current_ledger_version: 6, snapshot_ledger_version: 6 } : undefined);
+  h.setNextSnapshot(snapshotAt(6));
+  await h.app.poll();
+  assert.equal(h.app.current().meta.ledger_version, 7);
+  assert.equal(h.requests.filter(request => request.path === '/api/mks2/snapshot').length, 0);
+});
+
+test('the same event delivered twice adds one status line and one refresh', async () => {
+  const h = await setup(); relevantSetup(h);
+  h.setHandler(request => request.path.startsWith('/api/mks2/events') ? reservationChanges('READY') : undefined);
+  h.setNextSnapshot(reservedSnapshot());
+  await h.app.poll(); await h.app.poll(); await h.app.poll();
+  assert.equal(h.requests.filter(request => request.path === '/api/mks2/snapshot').length, 1);
+  assert.equal(h.app.panels().dashboard.status.children.length, 1);
+});
+
+test('a commit during an in-flight question is deferred, then applied after the answer', async () => {
+  const h = await setup(); relevantSetup(h);
+  h.setHandler(request => request.path.startsWith('/api/mks2/events') ? reservationChanges('READY') : undefined);
+  h.setNextSnapshot(reservedSnapshot());
+  h.app.panels().dashboard.submit.disabled = true;
+  await h.app.poll();
+  assert.equal(h.app.current().meta.ledger_version, 7);
+  assert.match(h.app.panels().dashboard.status.textContent, /근거 변경 대기/);
+  h.app.panels().dashboard.submit.disabled = false;
+  await h.app.poll();
+  assert.equal(h.app.current().meta.ledger_version, 8);
+  assert.match(h.app.panels().dashboard.status.textContent, /가용 20→15/);
+});
+
+test('a changed identity revision in the event feed ends the session view instead of applying', async () => {
+  const h = await setup(); relevantSetup(h);
+  h.setHandler(request => request.path.startsWith('/api/mks2/events')
+    ? { ...reservationChanges('READY'), identity_revision: 'another-session' } : undefined);
+  h.setNextSnapshot(reservedSnapshot());
+  await h.app.poll();
+  assert.equal(h.app.current(), null);
+  assert.equal(h.requests.filter(request => request.path === '/api/mks2/snapshot').length, 0);
+});
+
+test('turning live reflection off keeps the snapshot and offers an explicit refresh', async () => {
+  const h = await setup(); relevantSetup(h);
+  h.setHandler(request => request.path.startsWith('/api/mks2/events') ? reservationChanges('READY') : undefined);
+  h.setNextSnapshot(reservedSnapshot());
+  h.app.setLive(false);
+  await h.app.poll();
+  assert.equal(h.app.current().meta.ledger_version, 7);
+  assert.match(h.app.panels().dashboard.status.textContent, /최신 기준으로 보기/);
+});
+
+test('an answer still typing out does not block applying a committed event', async () => {
+  const h = await setup(); relevantSetup(h);
+  h.app.panels().dashboard.presentation = { finish() {}, dispose() {} };
+  h.setHandler(request => request.path.startsWith('/api/mks2/events') ? reservationChanges('READY') : undefined);
+  h.setNextSnapshot(reservedSnapshot());
+  await h.app.poll();
+  assert.equal(h.app.current().meta.ledger_version, 8);
+  assert.match(h.app.panels().dashboard.status.textContent, /23→28/);
 });

@@ -26,11 +26,12 @@ class _EventDocumentReference(Contract):
     payload_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
-_EVENT_COLUMNS = "event_id,company_id,ledger_version,event_type,recorded_at,document_id,bom_document_id,procurement_document_id,payload"
+_EVENT_COLUMNS = "event_id,company_id,ledger_version,event_type,recorded_at,document_id,bom_document_id,procurement_document_id,reservation_id,payload"
 _PROCUREMENT_EVENT_LABELS = {
     "QUOTE": "견적 기록", "PR": "구매 요청", "PO": "발주 기록",
     "SUPPLY_CONFIRMATION": "공급 확인 기록", "RECEIPT": "입하 기록",
     "IQC": "수입검사 기록", "CANCEL": "취소 기록",
+    "PRODUCTION": "생산 실적 기록", "FG_RECEIPT": "완성품 입고 기록", "SHIPMENT": "출하 기록", "ARRIVAL": "고객 도착 기록",
 }
 
 
@@ -51,7 +52,7 @@ def ledger_event_view(event, company_id):
         payload = event["payload"]
         if not isinstance(payload, dict):
             return result
-        reference_keys = ("document_id", "bom_document_id", "procurement_document_id")
+        reference_keys = ("document_id", "bom_document_id", "procurement_document_id", "reservation_id")
         if event["event_type"] == "OPENING_BALANCE_IMPORTED":
             if (event["ledger_version"] == 1 and payload.get("record_type") == "opening_balance"
                     and payload.get("opening_balance") is True and payload.get("run_id") == "INITIAL"
@@ -64,6 +65,25 @@ def ledger_event_view(event, company_id):
             return result
         content = payload["content"]
         if not isinstance(content, dict) or content_hash(content) != payload.get("payload_hash"):
+            return result
+        if event["event_type"] == "InventoryReserved":
+            # A reservation has no document; its typed row reference and exact
+            # content hash are the evidence. Notes and actor stay private.
+            if (content.get("kind") != "inventory_reservation" or str(event.get("reservation_id")) != payload.get("reservation_id")
+                    or any(event.get(key) is not None for key in reference_keys if key != "reservation_id")
+                    or type(content.get("quantity")) is not int):
+                return result
+            before, after = content["before"], content["after"]
+            result.update(summary=(f"재고 예약 반영 · 다른 수요 {content['demand_ref']} · {content['item_id']} {content['quantity']}개"
+                                   f" · LOT {content['lot_id']} 가용 {before['available_qty']}→{after['available_qty']}"),
+                          document_kind="RESERVATION", origin="internal_development",
+                          reservation={"reservation_id": payload["reservation_id"], "item_id": content["item_id"],
+                                       "lot_id": content["lot_id"], "quantity": content["quantity"],
+                                       "demand_ref": content["demand_ref"], "available_before": before["available_qty"],
+                                       "available_after": after["available_qty"],
+                                       "reserved_other_before": before["reserved_other_qty"],
+                                       "reserved_other_after": after["reserved_other_qty"],
+                                       "payload_hash": payload["payload_hash"]})
             return result
         if (event["event_type"] == "BomRegistered" and content.get("kind") == "bom_registration"
                 and isinstance(content.get("source"), dict) and content["source"].get("source_kind") == "actual_bom"):
@@ -326,7 +346,11 @@ class LedgerReader:
 
     def pending(self):
         with self.db.connect() as conn:
-            return conn.execute("SELECT company_id,run_id,ledger_version,payload FROM service_snapshots WHERE projection IS NULL ORDER BY company_id,ledger_version").fetchall()
+            # Retry versions never projected and those that failed on the graph
+            # store (infrastructure). A SHACL violation is content: not retried.
+            return conn.execute("SELECT company_id,run_id,ledger_version,payload FROM service_snapshots WHERE projection IS NULL "
+                                "OR (projection->>'state' = 'NOT_READY' AND COALESCE(projection->'neo4j'->>'state','') <> 'READY' "
+                                "AND COALESCE(projection->'validation'->>'state','') <> 'VIOLATIONS') ORDER BY company_id,ledger_version").fetchall()
 
     def advance_documents(self):
         """Apply supported committed documents to immutable read snapshots.
@@ -348,7 +372,7 @@ class LedgerReader:
                     (company, run),
                 ).fetchone()
                 events = conn.execute(
-                    "SELECT event_id,ledger_version,event_type,payload,document_id,bom_document_id,procurement_document_id,recorded_at FROM ledger_events WHERE company_id=%s AND ledger_version>%s ORDER BY ledger_version",
+                    "SELECT event_id,ledger_version,event_type,payload,document_id,bom_document_id,procurement_document_id,reservation_id,recorded_at FROM ledger_events WHERE company_id=%s AND ledger_version>%s ORDER BY ledger_version",
                     (company, previous["ledger_version"]),
                 ).fetchall()
                 expected = previous["ledger_version"] + 1
@@ -361,6 +385,9 @@ class LedgerReader:
                     elif event["event_type"] == "ProcurementPosted" and event["procurement_document_id"] is not None:
                         from service.procurement_state import apply_procurement_event
                         snapshot = apply_procurement_event(previous["payload"], event)
+                    elif event["event_type"] == "InventoryReserved" and event["reservation_id"] is not None:
+                        from service.reservations import apply_reservation_event
+                        snapshot = apply_reservation_event(previous["payload"], event)
                     elif event["event_type"] == "EvidenceDocumentPosted" and event["document_id"] is not None:
                         event_payload = event["payload"]
                         if (event_payload.get("event_type") != "EvidenceDocumentPosted" or event_payload.get("company_id") != company

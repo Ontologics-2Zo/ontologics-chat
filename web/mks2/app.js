@@ -1,5 +1,6 @@
 import { mountDashboard } from './dashboard.js';
 import { mountGraph } from './graph.js';
+import { mountLaneGraph } from './lanegraph.js';
 import { renderQueryAnswer } from './query.js';
 import { mountTwin } from './twin.js';
 
@@ -15,7 +16,10 @@ function button(text, action, className = 'btn sm') {
   const node = element('button', className, text);
   node.type = 'button'; node.addEventListener('click', action); return node;
 }
-let snapshot, ontology, graph, dashboard, twin, identity, csrfToken;
+// graph = project ontology graph tab (#network); lane = MK-S2 relationship graph (#graph).
+let snapshot, ontology, graph, lane, dashboard, twin, identity, csrfToken;
+let liveEnabled = true;
+const handledEvents = new Set();
 let contextId, twinContextId, noticeTimer, generation = 0, replayGeneration = 0, schemaMode = false;
 let requests = new AbortController();
 let polling = false, latestVersion = null;
@@ -24,14 +28,14 @@ const refreshButton = button('최신 원장 조회', refreshSnapshot);
 refreshButton.id = 'refresh-ledger'; refreshButton.hidden = true;
 $('reset').before(refreshButton);
 const panels = {};
-const SCREENS = ['graph', 'dashboard', 'twin'];
+const SCREENS = ['graph', 'dashboard', 'network', 'twin'];
 const currentScreen = () => SCREENS.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'graph';
 const labelFor = id => snapshot?.graph?.data?.nodes?.find(node => (node.node_id || node.id) === id)?.display_id || id;
 function notify(text) {
   $('notice').textContent = text; $('notice').hidden = false;
   clearTimeout(noticeTimer); noticeTimer = setTimeout(() => { $('notice').hidden = true; }, 4500);
 }
-function cancelPendingReplay() { replayGeneration++; graph?.cancelReplay(); }
+function cancelPendingReplay() { replayGeneration++; graph?.cancelReplay(); lane?.cancelReplay(); }
 // A completed server answer has its own presentation lifetime. Graph playback
 // must never cancel its text, and old answers keep their original full content.
 function settleAnswer(panel, discard = false) {
@@ -85,7 +89,8 @@ function route() {
     $(`${name}-view`).hidden = currentScreen() !== name;
     $(`tab-${name}`).setAttribute('aria-current', currentScreen() === name ? 'page' : 'false');
   }
-  if (currentScreen() === 'graph') requestAnimationFrame(() => graph?.resize());
+  if (currentScreen() === 'graph') requestAnimationFrame(() => lane?.resize());
+  if (currentScreen() === 'network') requestAnimationFrame(() => graph?.resize());
   updateTwinActivity();
 }
 function updateTwinActivity() {
@@ -96,7 +101,7 @@ function updateTwinActivity() {
 function setContext(value) {
   contextId = typeof value === 'string' ? value : value?.node_id ?? value?.id;
   if (!contextId) return;
-  for (const name of ['graph', 'dashboard']) {
+  for (const name of ['graph', 'dashboard', 'network']) {
     const panel = panels[name];
     panel.context.replaceChildren(document.createTextNode('맥락 '), button(labelFor(contextId), () => focusEvidence(contextId), 'chip'),
       document.createTextNode(` 원장 v${snapshot.meta.ledger_version}`));
@@ -111,11 +116,39 @@ function setTwinContext(value) {
 }
 function focusEvidence(id) {
   cancelPendingReplay();
-  if (schemaMode) { schemaMode = false; mountCurrentGraph(); }
   location.hash = '#graph';
-  graph?.focus(id);
+  lane?.focus(id);
 }
 function fillQuestion(text, name = currentScreen()) { panels[name].input.value = text; panels[name].input.focus(); }
+// After an explicit BOM post, offer to resend the last question; it only fills the draft.
+function offerRerun(kind) {
+  for (const name of ['dashboard', 'graph']) {
+    const panel = panels[name], question = panel?.lastQuestion;
+    if (!question) continue;
+    const message = element('div', 'message assistant');
+    message.append(element('p', '', `${kind}이 원장에 반영됐습니다. 그래프 준비 후 같은 질문을 최신 기준으로 다시 보낼 수 있습니다. 이전 답변은 당시 버전으로 남습니다.`),
+      button('같은 질문 다시 실행', () => fillQuestion(question, name), 'btn sm'));
+    panel.messages.append(message);
+  }
+}
+async function showBomGraph() {
+  // Open the graph only after the posted version's projection is ready; never
+  // show the newer ledger with an older graph.
+  location.hash = '#graph';
+  for (let attempt = 0; attempt < 90 && identity; attempt++) {
+    try {
+      const changes = await api(`/api/mks2/events?after=${encodeURIComponent(snapshot.meta.ledger_version)}`);
+      if (changes.current_ledger_version === snapshot.meta.ledger_version) break;
+      if (changes.projection_state === 'READY' && changes.snapshot_ledger_version === changes.current_ledger_version) { await refreshSnapshot(); break; }
+      lane?.setLag(`원장 v${changes.current_ledger_version} 반영 · 그래프 갱신 중 (표시 v${snapshot.meta.projection_version})`);
+    } catch (error) { if (error.status === 401) return; }
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+  lane?.setLag(null);
+  const configuration = (snapshot?.entities || []).find(entity => entity.type === 'ProductConfiguration' && entity.display_id === snapshot.summary?.configuration_id);
+  location.hash = '#graph';
+  if (configuration) requestAnimationFrame(() => lane?.focus(configuration.id));
+}
 function updateSuggestions(container, name) {
   container.replaceChildren();
   const questions = snapshot.suggested_questions || snapshot.suggestions || [];
@@ -145,7 +178,7 @@ function createPanel(name) {
   clearAgentWaiting(panels[name]);
   const root = $(`${name}-panel`); root.replaceChildren();
   const heading = element('div', 'panel-heading');
-  heading.append(element('h2', '', name === 'dashboard' ? '업무 에이전트' : '업무 AI 질의'), element('span', 'tag', '원장 근거 조회'));
+  heading.append(element('h2', '', name === 'dashboard' ? '업무 에이전트' : name === 'network' ? '프로젝트 그래프 질의' : '업무 AI 질의'), element('span', 'tag', '원장 근거 조회'));
   const context = element('div', 'panel-context', `원장 v${snapshot.meta.ledger_version}`);
   const messages = element('div', 'messages');
   messages.setAttribute('aria-live', 'polite'); messages.setAttribute('aria-relevant', 'additions');
@@ -165,9 +198,10 @@ function createPanel(name) {
     if (!question || submit.disabled) return;
     input.value = ''; runQuery(name, question);
   });
-  root.append(heading, context, messages, suggestions, form,
+  const status = element('div', 'panel-status'); status.setAttribute('role', 'status');
+  root.append(heading, context, status, messages, suggestions, form,
     element('div', 'disclosure', `${snapshot.material_requirements?.bom_id ? '실제 BOM 원문 · 합성 초기 재고' : '합성 초기 이관 원장'}${snapshot.meta.data_origins?.inventory === 'mixed_sources' ? ' · 개발 입하·검사 반영' : ''} · 결정적 업무 조회. 실제 모델 호출·구매·승인 실행은 구분합니다.`));
-  panels[name] = { root, context, messages, suggestions, input, submit, pending: null, waiting: null, presentation: null };
+  panels[name] = { root, context, messages, suggestions, input, submit, status, topics: new Set(), pending: null, waiting: null, presentation: null };
 }
 function productInput() {
   const bom = snapshot.bom;
@@ -273,7 +307,7 @@ async function agentQuery(panel, question, message, requestGeneration) {
 async function runQuery(name, question) {
   const panel = panels[name], requestGeneration = generation;
   settleAnswer(panel);
-  panel.messages.append(element('div', 'message user', question)); panel.submit.disabled = true;
+  panel.messages.append(element('div', 'message user', question)); panel.submit.disabled = true; panel.lastQuestion = question;
   const message = element('div', 'message assistant', '원장과 근거를 조회하고 있습니다.'); panel.messages.append(message);
   let followAnswer = true, presentationOwnsScroll = false;
   const trackScroll = () => {
@@ -301,6 +335,16 @@ async function runQuery(name, question) {
       const error = new Error('SNAPSHOT_MISMATCH'); error.status = 409; throw error;
     }
     const hops = answer.graph_path || [], ids = [...new Set([...hops.flat(), ...(answer.evidence_node_ids || [])])];
+    // Dependency of this conversation on calculated items; used only to decide
+    // whether a later committed event is relevant here (no model call).
+    if ((answer.intent || []).some(intent => ['materials', 'delivery', 'change', 'sourcing', 'inventory'].includes(intent))) {
+      const scoped = answer.calculation?.scope_item_ids?.length ? answer.calculation.scope_item_ids
+        : (answer.calculation?.material_requirements?.items || snapshot.material_requirements?.items || []).map(item => item.item_id);
+      for (const item of scoped) panel.topics.add(item);
+    }
+    if ((answer.intent || []).some(intent => ['delivery', 'fulfillment', 'trace'].includes(intent)) && snapshot.summary?.delivery_round_id) {
+      panel.topics.add(`round:${snapshot.summary.delivery_round_id}`);
+    }
     twin?.highlight({ nodeIds: ids, edgeIds: answer.evidence_edge_ids || [],
       ledgerVersion: answer.meta.ledger_version, projectionVersion: answer.meta.projection_version,
       snapshotId: answer.meta.snapshot_id ?? answer.meta.read_snapshot_id,
@@ -312,15 +356,17 @@ async function runQuery(name, question) {
     let activeReplay = null;
     const replayEvidence = (navigate = false) => evidenceAtVersion(() => {
       cancelPendingReplay();
-      if (schemaMode) { schemaMode = false; mountCurrentGraph(); }
-      if (navigate) location.hash = '#graph';
+      const network = name === 'network';
+      if (network && schemaMode) { schemaMode = false; mountCurrentGraph(); }
+      if (navigate) location.hash = network ? '#network' : '#graph';
       const replay = ++replayGeneration, playGeneration = generation;
       activeReplay = replay;
-      return presentation.play(() => graph.replay({ hops, nodeIds: ids, edgeIds: answer.evidence_edge_ids || [] }),
+      const target = network ? graph : lane;
+      return presentation.play(() => target.replay({ hops, nodeIds: ids, edgeIds: answer.evidence_edge_ids || [] }),
         () => generation === playGeneration && replay === replayGeneration);
     });
     const animateAnswer = answerVisible(name);
-    const waitForGraph = name === 'graph' && ids.length > 0 && animateAnswer
+    const waitForGraph = (name === 'graph' || name === 'network') && ids.length > 0 && animateAnswer
       && !globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches
       && typeof Intl.Segmenter === 'function' && typeof requestAnimationFrame === 'function'
       && typeof cancelAnimationFrame === 'function';
@@ -380,9 +426,9 @@ function answerSnapshotMatches(answer) {
 function mountCurrentGraph() {
   cancelPendingReplay(); graph?.destroy();
   const selected = schemaMode ? ontology.graph : snapshot.graph;
-  graph = mountGraph($('graph-stage'), { bundle: { graph: selected }, onSelect: setContext,
+  graph = mountGraph($('network-stage'), { bundle: { graph: selected }, onSelect: setContext,
     onAsk: fillQuestion, onBom: () => dashboard.openBom() });
-  const controls = $('graph-stage').querySelector('.mks-graph-tools');
+  const controls = $('network-stage').querySelector('.mks-graph-tools');
   const switcher = button(schemaMode ? '업무 원장 보기' : '전체 온톨로지', () => { schemaMode = !schemaMode; mountCurrentGraph(); }, 'mks-graph-button');
   switcher.dataset.action = 'schema'; switcher.setAttribute('aria-pressed', String(schemaMode));
   controls.prepend(switcher);
@@ -390,7 +436,8 @@ function mountCurrentGraph() {
 function invalidateView() {
   for (const panel of Object.values(panels)) { settleAnswer(panel, true); clearAgentWaiting(panel); }
   generation++; requests.abort(); requests = new AbortController(); cancelPendingReplay();
-  graph?.destroy(); dashboard?.destroy(); twin?.destroy(); graph = null; dashboard = null; twin = null; snapshot = null; ontology = null; twinContextId = null;
+  graph?.destroy(); lane?.destroy(); dashboard?.destroy(); twin?.destroy(); graph = null; lane = null; dashboard = null; twin = null; snapshot = null; ontology = null; twinContextId = null;
+  handledEvents.clear();
   for (const name of SCREENS) { $(`${name}-view`).hidden = true; $(`${name}-panel`).replaceChildren(); }
   $('load-state').hidden = false; $('load-state').textContent = '서버의 개발 계정을 선택해 원장을 조회하세요.';
   $('versions').textContent = '계정 확인 필요'; latestVersion = null; refreshButton.hidden = true;
@@ -428,7 +475,14 @@ async function loadSnapshot({ preserveMessages = false } = {}) {
   dashboard?.destroy();
   dashboard = mountDashboard($('dashboard-stage'), { snapshot, onSelect: setContext,
     onAsk: text => fillQuestion(text, 'dashboard'), onGraph: focusEvidence, api, getIdentity: () => identity,
-    onPosted: () => { refreshButton.textContent = '업무 반영 · 최신 원장 조회'; notify('업무 사건이 반영됐습니다. 그래프 준비 후 최신 원장을 조회해 주세요.'); }, onRefresh: refreshSnapshot });
+    onShowBomGraph: showBomGraph,
+    onPosted: posted => { if (posted?.status === 'POSTED' && posted?.content?.rows) offerRerun('BOM'); refreshButton.textContent = '업무 반영 · 최신 원장 조회'; notify(liveEnabled ? '업무 사건이 원장에 반영됐습니다. 그래프 투영 후 화면이 자동으로 갱신됩니다.' : '업무 사건이 반영됐습니다. 그래프 준비 후 최신 원장을 조회해 주세요.'); pollChanges(); },
+    onRefresh: refreshSnapshot, live: { get: () => liveEnabled, set: value => { liveEnabled = !!value; notify(liveEnabled ? '확정 원장 사건을 자동으로 반영합니다.' : '자동 반영을 끕니다. 새 원장은 버튼으로 조회합니다.'); } } });
+  lane?.destroy();
+  lane = mountLaneGraph($('graph-stage'), { data: { meta: data.meta, nodes: data.entities || [], edges: data.relationships || [] },
+    summary: data.summary || {}, itemOrder: (data.material_requirements?.items || []).map(item => item.item_id),
+    activeBom: data.bom ? { bom_id: data.bom.bom_id, bom_version: data.bom.bom_version } : null,
+    onSelect: setContext, onBom: () => dashboard.openBom() });
   mountCurrentGraph();
   twin?.destroy();
   twin = mountTwin($('twin-stage'), { snapshot, ontology, labelFor, onSelect: setTwinContext,
@@ -449,6 +503,67 @@ async function refreshSnapshot() {
   catch (error) { if (error.name !== 'AbortError') { $('load-state').textContent = errorText(error); $('load-state').hidden = false; $('workspace').setAttribute('aria-busy', 'false'); } }
   finally { refreshButton.disabled = false; }
 }
+// Realtime reflection of committed ledger events (DEC-H47). Quantities come
+// only from a newly read server snapshot of the same version as its graph;
+// relevance uses each conversation's calculated items. No model call is made.
+function canAutoApply() {
+  const active = document.activeElement;
+  if (document.querySelector('.mk-drawer-wrap') || document.querySelector('[data-purchase-form]')) return false;
+  if (active?.closest?.('#dashboard-stage') && active.matches?.('input,select,textarea')) return false;
+  // A finished answer still being typed out is not user input; refreshSnapshot
+  // completes its text first. Only an in-flight question defers the refresh.
+  return !Object.values(panels).some(panel => panel.submit?.disabled);
+}
+function relevantPanels(items) {
+  return Object.entries(panels).filter(([, panel]) => items.some(item => panel.topics.has(item))).map(([name]) => name);
+}
+function setStatus(names, parts) {
+  for (const name of names) {
+    const panel = panels[name];
+    if (!panel) continue;
+    const line = element('div', 'mk-status-line');
+    for (const part of parts) line.append(typeof part === 'string' ? document.createTextNode(part) : part);
+    panel.status.replaceChildren(line);
+  }
+}
+function reservationEvents(events) {
+  return (events || []).filter(event => event.document_kind === 'RESERVATION' && event.reservation && typeof event.event_id === 'string');
+}
+function announceApplied(events, startedAt) {
+  const impacts = snapshot.reservation_impacts || [];
+  const byReservation = new Map(impacts.map(row => [row.reservation_id, row]));
+  for (const event of events) {
+    const impact = byReservation.get(event.reservation.reservation_id);
+    if (!impact) continue;
+    const names = relevantPanels([impact.item_id]);
+    const unit = impact.unit === 'EA' ? '개' : ` ${impact.unit}`;
+    const question = `왜 부족이 ${impact.planned_shortage_after}개로 늘었어?`;
+    const grew = Number(impact.planned_shortage_after) > Number(impact.planned_shortage_before);
+    const latency = Date.parse(event.recorded_at) ? Date.now() - Date.parse(event.recorded_at) : null;
+    setStatus(names, [element('b', '', '근거 변경'),
+      ` 관련 재고 변경 · 다른 주문 ${impact.demand_ref} 예약 +${impact.quantity}${unit} · 가용 ${impact.available_before}→${impact.available_after} · `
+        + (grew ? `계획 부족 ${impact.planned_shortage_before}→${impact.planned_shortage_after}${unit} · 기존 확보안 재검토 필요` : `계획 부족 ${impact.planned_shortage_after}${unit} 유지`)
+        + ` · 원장 v${impact.ledger_version} `,
+      button('원장 사건 보기', () => focusEvidence(impact.entity_id), 'btn sm'),
+      ...(grew ? names.map(name => button(question, () => fillQuestion(question, name), 'suggestion')) : [])].filter(Boolean));
+    for (const name of names) {
+      panels[name].status.dataset.eventId = event.event_id;
+      if (latency !== null) panels[name].status.dataset.latencyMs = String(latency);
+      panels[name].status.dataset.applyMs = String(Date.now() - startedAt);
+    }
+  }
+}
+// Arrival: the round's own quantities changed; quote server summaries only.
+function announceArrival(before, topic, event) {
+  const after = snapshot.summary || {};
+  const names = relevantPanels([topic]);
+  if (!names.length || after.arrived_qty === before.arrived_qty) return;
+  const n = after.arrived_qty - before.arrived_qty;
+  setStatus(names, [element('b', '', '현재 대화의 근거 변경'),
+    ` 고객 도착 ${n}대 반영 · 누적 도착 ${before.arrived_qty}→${after.arrived_qty}대 · 남은 약속 ${before.promise_remaining_qty}→${after.promise_remaining_qty}대 · 원장 v${snapshot.meta.ledger_version} `,
+    button('원장 사건 보기', () => { location.hash = '#dashboard'; document.querySelector(`[data-ledger-event-id="${event.event_id}"] details`)?.setAttribute('open', ''); }, 'btn sm'),
+    ...names.map(name => button('최신 기준으로 재분석', () => fillQuestion(panels[name].lastQuestion || `남은 ${after.promise_remaining_qty}대, 납기 안에 고객에게 도착할 수 있어?`, name), 'suggestion'))]);
+}
 async function pollChanges() {
   updateTwinActivity();
   if (polling || !snapshot || !identity || document.hidden || (window.frameElement && !window.frameElement.getBoundingClientRect().height)) return;
@@ -460,14 +575,43 @@ async function pollChanges() {
       identity = null; csrfToken = null; invalidateView();
       $('load-state').textContent = '계정 권한이 변경되었습니다. 계정을 다시 선택해 주세요.'; return;
     }
-    if (changes.current_ledger_version > snapshot.meta.ledger_version) {
-      latestVersion = changes.current_ledger_version; refreshButton.textContent = `새 원장 v${latestVersion} 조회`; refreshButton.hidden = false;
+    if (!(changes.current_ledger_version > snapshot.meta.ledger_version)) return;
+    latestVersion = changes.current_ledger_version; refreshButton.textContent = `새 원장 v${latestVersion} 조회`; refreshButton.hidden = false;
+    const reserved = reservationEvents(changes.events).filter(event => !handledEvents.has(event.event_id));
+    const arrivals = (changes.events || []).filter(event => event.document_kind === 'ARRIVAL' && !handledEvents.has(event.event_id));
+    const roundTopic = `round:${snapshot.summary?.delivery_round_id}`;
+    const calculated = new Set((snapshot.material_requirements?.items || []).map(item => item.item_id));
+    const relevant = reserved.filter(event => calculated.has(event.reservation.item_id));
+    const ready = changes.projection_state === 'READY' && changes.snapshot_ledger_version === changes.current_ledger_version;
+    if (!ready) {
+      // Do not mix the newer ledger quantity with the older graph.
+      lane?.setLag(`원장 v${changes.current_ledger_version} 반영 · 그래프 갱신 중 (표시 v${snapshot.meta.projection_version})`);
+      for (const event of relevant) setStatus(relevantPanels([event.reservation.item_id]), [element('b', '', '원장 사건 확인'),
+        ` ${event.summary} · 수량·그래프 갱신 중 · 현재 표시 원장 v${snapshot.meta.ledger_version}`]);
+      for (const event of arrivals) setStatus(relevantPanels([roundTopic]), [element('b', '', '원장 사건 확인'),
+        ` ${event.summary} · 수량 갱신 완료 전 · 그래프 갱신 중`]);
+      return;
+    }
+    if (!liveEnabled || !canAutoApply()) {
+      for (const event of arrivals) setStatus(relevantPanels([roundTopic]), [element('b', '', '근거 변경 대기'),
+        ` ${event.summary} · 작성·답변 중이라 자동 갱신을 미뤘습니다 `, button('최신 기준으로 보기', refreshSnapshot, 'btn sm')]);
+      for (const event of relevant) setStatus(relevantPanels([event.reservation.item_id]), [element('b', '', '근거 변경 대기'),
+        ` ${event.summary} · 작성·답변 중이라 자동 갱신을 미뤘습니다 `, button('최신 기준으로 보기', refreshSnapshot, 'btn sm')]);
+      return;
+    }
+    const startedAt = Date.now(), before = { ...snapshot.summary };
+    await refreshSnapshot();
+    if (generation === requestGeneration + 1 && snapshot?.meta.ledger_version === changes.current_ledger_version) {
+      lane?.setLag(null);
+      for (const event of [...reserved, ...arrivals]) handledEvents.add(event.event_id);
+      announceApplied(relevant, startedAt);
+      if (arrivals.length) announceArrival(before, roundTopic, arrivals.at(-1));
     }
   } catch (error) {
     if (error.status === 401) { identity = null; csrfToken = null; invalidateView(); }
   } finally { polling = false; }
 }
-setInterval(pollChanges, 5000);
+setInterval(pollChanges, 3000);
 async function selectIdentity(profileId) {
   invalidateView(); $('actor').disabled = true;
   try {
@@ -521,7 +665,7 @@ $('theme').addEventListener('click', () => {
 $('reset').addEventListener('click', () => {
   if (!snapshot) return;
   generation++; requests.abort(); requests = new AbortController();
-  cancelPendingReplay(); graph.reset(); dashboard.select(null); twin?.reset(); twinContextId = null;
+  cancelPendingReplay(); graph.reset(); lane?.reset(); dashboard.select(null); twin?.reset(); twinContextId = null;
   for (const name of SCREENS) createPanel(name);
   notify('화면 선택과 대화를 초기화했습니다. 원장은 유지됩니다.');
 });

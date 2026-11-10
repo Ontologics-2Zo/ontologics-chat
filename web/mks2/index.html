@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="./styles.css">
   <link rel="stylesheet" href="./dashboard.css">
   <link rel="stylesheet" href="./graph.css">
+  <link rel="stylesheet" href="./lanegraph.css">
   <link rel="stylesheet" href="./twin.css">
   <script type="module" src="./app.js"></script>
 </head>
@@ -17,6 +18,7 @@
       <nav class="tabs" aria-label="화면">
         <a href="#graph" id="tab-graph">온톨로지 · 질의</a>
         <a href="#dashboard" id="tab-dashboard">운영 대시보드</a>
+        <a href="#network" id="tab-network">프로젝트 그래프</a>
         <a href="#twin" id="tab-twin">디지털 트윈</a>
       </nav>
       <span class="sp"></span>
@@ -29,6 +31,9 @@
       <div id="load-state" class="load-state" role="status">서버 연결과 현재 계정을 확인하고 있습니다.</div>
       <section id="graph-view" class="screen graph-screen" aria-label="온톨로지와 질의" hidden>
         <div id="graph-stage"></div><aside id="graph-panel" class="assistant-panel" aria-label="업무 AI 질의"></aside>
+      </section>
+      <section id="network-view" class="screen graph-screen" aria-label="프로젝트 온톨로지 그래프" hidden>
+        <div id="network-stage"></div><aside id="network-panel" class="assistant-panel" aria-label="프로젝트 그래프 질의"></aside>
       </section>
       <section id="dashboard-view" class="screen dashboard-screen" aria-label="운영 대시보드" hidden>
         <div id="dashboard-stage"></div><aside id="dashboard-panel" class="assistant-panel" aria-label="업무 에이전트"></aside>

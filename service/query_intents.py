@@ -13,7 +13,7 @@ from typing import Literal
 import unicodedata
 
 
-QueryIntent = Literal["fulfillment", "production", "materials", "inventory", "delivery", "ontology"]
+QueryIntent = Literal["trace", "change", "sourcing", "fulfillment", "production", "materials", "inventory", "delivery", "ontology"]
 QuantityRole = Literal["target_good", "planned_input", "delivery", "unspecified"]
 QuantityReference = Literal[
     "remaining_promise", "good_qty", "arrived_qty", "promised_qty",
@@ -49,7 +49,7 @@ _QUANTITY = re.compile(
     rf"(?<![a-z0-9_.])({_NUMBER})\s*(대|개|품목|행|kg|mg|g|ml|l|ea|pcs|pieces?)?",
     re.IGNORECASE,
 )
-_IDENTIFIER = re.compile(r"(?<![a-z0-9])(?:IM|ORD|JOB|CFG)\s*-\s*[a-z0-9]+(?:\s*-\s*[a-z0-9]+)*", re.IGNORECASE)
+_IDENTIFIER = re.compile(r"(?<![a-z0-9])(?:IM|ORD|JOB|CFG|LOT)\s*-\s*[a-z0-9]+(?:\s*-\s*[a-z0-9]+)*", re.IGNORECASE)
 _DATES = re.compile(
     r"\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/]\d{1,2}(?!\d)|"
     r"(?:\d{4}\s*년\s*)?\d{1,2}\s*월(?:\s*\d{1,2}\s*일)?|"
@@ -122,6 +122,19 @@ def _intents(compact: str) -> tuple[QueryIntent, ...]:
         intents.add("inventory")
     if _has(compact, ("온톨로지", "클래스", "스키마", "t-box", "tbox", "관계정의", "타입정의")):
         intents.add("ontology")
+    # DEC-H47: why a recorded quantity changed, and re-comparing sourcing
+    # options. Both remain read-only; they never select or order anything.
+    why = _has(compact, ("왜", "원인", "이유", "무엇때문", "뭐때문", "어째서"))
+    changed = _has(compact, ("늘었", "늘어", "증가", "바뀌", "바뀐", "변경", "달라", "줄었", "줄어", "감소"))
+    if why and changed and (material or inventory):
+        intents.update(("change", "materials"))
+    sourcing = _has(compact, ("확보안", "공급사", "견적", "대안", "충분해", "충분한", "충분할", "다시비교", "비교해",
+                              "재검토", "다시검토", "어떤안", "발주안", "구매안"))
+    if sourcing and (material or _has(compact, ("확보", "공급", "견적", "안이면", "개안"))):
+        intents.update(("sourcing", "materials"))
+    # DEC-H49: where a received LOT went (boards, job, shipment, round).
+    if re.search(r"lot-[a-z0-9][a-z0-9-]*", compact) and _has(compact, ("보드", "추적", "어디까지", "연결", "출하", "도착", "사용", "장착", "어디에", "어느")):
+        intents.add("trace")
     remaining = _has(compact, ("남았", "남은", "남아", "잔여", "현황"))
     if remaining and not (material or inventory or production):
         intents.update(("fulfillment", "production"))
@@ -129,7 +142,7 @@ def _intents(compact: str) -> tuple[QueryIntent, ...]:
     if not intents and _has(compact, ("왜", "차이", "다른", "다르")) and len(re.findall(_NUMBER, compact)) >= 2:
         intents.update(("fulfillment", "production"))
     # A deadline cannot be answered by falling through to a materials-only branch.
-    order: tuple[QueryIntent, ...] = ("delivery", "fulfillment", "production", "materials", "inventory", "ontology")
+    order: tuple[QueryIntent, ...] = ("trace", "change", "sourcing", "delivery", "fulfillment", "production", "materials", "inventory", "ontology")
     return tuple(intent for intent in order if intent in intents)
 
 
@@ -284,7 +297,7 @@ def interpret_question(question: str) -> QueryPlan:
         clarification = clarification or "가정 계산에 적용할 양품 생산 목표 한 가지를 명시해 주세요."
     target = targets[0] if len(targets) == 1 else None
     if target is not None and "production" not in intents:
-        intents = tuple(intent for intent in ("delivery", "fulfillment", "production", "materials", "inventory", "ontology") if intent == "production" or intent in intents)
+        intents = tuple(intent for intent in ("trace", "change", "sourcing", "delivery", "fulfillment", "production", "materials", "inventory", "ontology") if intent == "production" or intent in intents)
 
     # These questions introduce other unapproved assumptions; never ignore them
     # while calculating against the current stock/BOM or a guessed target.

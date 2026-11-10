@@ -15,7 +15,7 @@ from service.contracts import CANONICAL_VERSION, DocumentAction, canonical_bytes
 from service.domain import DomainService, _public
 from service.errors import ServiceError
 from service.materials import requirements_for_snapshot
-from service.procurement_contracts import CONTENT_TYPES, ProcurementCreate, ProcurementReject, ProcurementRevise
+from service.procurement_contracts import CONTENT_TYPES, FULFILLMENT_KINDS, ProcurementCreate, ProcurementReject, ProcurementRevise
 
 
 def quote_calculation(quote, shortage):
@@ -30,7 +30,17 @@ def quote_calculation(quote, shortage):
         quantity = ((max(needed, quote["moq"]) + multiple - 1) // multiple) * multiple if needed else 0
         subtotal = Decimal(quote["unit_price"]) * quantity
         total = subtotal + Decimal(quote["freight"]) if quote["freight"] is not None else None
+    limit = quote.get("supply_limit_qty")
+    if limit is None:
+        condition, reason = "UNKNOWN", "SUPPLY_LIMIT_UNKNOWN"
+    elif quantity > limit:
+        condition, reason = "NOT_MET", "ORDER_EXCEEDS_SUPPLY_LIMIT"
+    else:
+        condition, reason = "MET", None
     return {"shortage_qty": format(shortage, "f"), "recommended_qty": quantity,
+            "required_qty": needed, "margin_qty": quantity - needed,
+            "supply_limit_qty": limit, "quantity_condition": condition, "quantity_condition_reason": reason,
+            "limit_shortfall_qty": max(needed - limit, 0) if limit is not None else None,
             "subtotal": format(subtotal, "f"), "freight": quote["freight"],
             "total": format(total, "f") if total is not None else None,
             "currency": quote["currency"], "freight_status": "KNOWN" if total is not None else "UNKNOWN"}
@@ -147,6 +157,8 @@ class ProcurementService(DomainService):
             calculation = quote_calculation(quote, matches[0][key])
             if not calculation["recommended_qty"] or content.quantity != calculation["recommended_qty"]:
                 raise ServiceError("PROCUREMENT_QUANTITY_CHANGED", 409)
+            if calculation["quantity_condition"] == "NOT_MET":
+                raise ServiceError("PROCUREMENT_SUPPLY_LIMIT_EXCEEDED", 409)
             # Two active requests must not procure the same selected demand twice.
             active = conn.execute("SELECT * FROM procurement_documents WHERE company_id=%s AND kind='PR' AND status='POSTED'", (company,)).fetchall()
             for old in active:
@@ -179,6 +191,8 @@ class ProcurementService(DomainService):
             if quote["freight"] is None and not content.acknowledge_unknown_freight:
                 raise ServiceError("PROCUREMENT_FREIGHT_ACK_REQUIRED", 409)
             calculation = quote_calculation(quote, content.quantity)
+            if calculation["quantity_condition"] == "NOT_MET":
+                raise ServiceError("PROCUREMENT_SUPPLY_LIMIT_EXCEEDED", 409)
             return {**resolved, "parent": self._reference(parent), "remaining_before": remaining,
                     "calculation": calculation, "supplier_confirmation": False, "transmission_status": "NOT_SENT"}
         if kind == "SUPPLY_CONFIRMATION":
@@ -210,6 +224,8 @@ class ProcurementService(DomainService):
             return {**parent["content"]["resolved"], "parent": self._reference(parent),
                     "remaining_before": remaining, "receipt_qty": parent["quantity"],
                     "lot_code": parent["lot_code"], "available_delta": content.passed_qty}
+        if kind in FULFILLMENT_KINDS:
+            return self._resolve_fulfillment(conn, company, payload, content)
         target = self._document(conn, company, content.target_id, lock=True)
         if target["kind"] not in {"PR", "PO"}:
             raise ServiceError("PROCUREMENT_CANCELLATION_KIND_FORBIDDEN", 409)
@@ -220,6 +236,65 @@ class ProcurementService(DomainService):
         return {"parent": self._reference(target), "cancelled_remaining_qty": remaining,
                 "inventory_delta": 0, "supplier_transmission": "NOT_SENT"}
 
+    def _resolve_fulfillment(self, conn, company, payload, content):
+        """Production → finished-goods receipt → shipment → arrival of named boards.
+
+        Each step names boards that the previous posted step produced, received
+        or shipped. Quantities change only when the step is posted; nothing is
+        inferred from a plan, a reservation or a future scenario.
+        """
+        kind, serials = content.kind, list(content.board_serials)
+        boards = payload.get("fulfillment", {}).get("boards", {})
+        round_ = payload.get("current_delivery_round", payload["opening_balance"]["delivery_round"])
+        entities = payload["entities"]
+        def entity(type_, display):
+            rows = [row for row in entities if row["type"] == type_ and row["display_id"] == display]
+            if len(rows) != 1:
+                raise ServiceError("FULFILLMENT_ENTITY_UNCONFIRMED", 409)
+            return rows[0]
+        round_entity = entity("DeliveryRound", round_["round_id"])
+        customers = [row["target"] for row in payload["relationships"] if row["source"] == round_entity["id"] and row["predicate"] == "deliverToCustomer"]
+        common = {"round_id": round_["round_id"], "round_entity_id": round_entity["id"], "board_serials": serials, "quantity": len(serials),
+                  "configuration_entity_id": entity("ProductConfiguration", round_["configuration_id"])["id"],
+                  "customer_entity_id": customers[0] if len(customers) == 1 else None}
+        if kind == "PRODUCTION":
+            parent = self._parent(conn, company, content.iqc_id, "IQC")
+            lot_code, item_id, unit = parent["content"]["resolved"]["lot_code"], parent["content"]["resolved"]["item_id"], parent["content"]["resolved"]["unit"]
+            if any(serial in boards for serial in serials):
+                raise ServiceError("FULFILLMENT_BOARD_ALREADY_RECORDED", 409)
+            if len(serials) > round_["remaining_good_target_qty"]:
+                raise ServiceError("FULFILLMENT_EXCEEDS_REMAINING_TARGET", 409)
+            requirements = requirements_for_snapshot(payload)
+            items = [row for row in requirements["items"] if row["item_id"] == item_id and row["unit"] == unit and row["state"] == "CALCULATED"]
+            if len(items) != 1:
+                raise ServiceError("FULFILLMENT_BOM_APPLICATION_REQUIRED", 409)
+            per_board = Decimal(items[0]["quantity_per_unit"])
+            if per_board != per_board.to_integral_value():
+                raise ServiceError("FULFILLMENT_QUANTITY_PER_BOARD_NOT_INTEGER", 409)
+            consumed = int(per_board) * len(serials)
+            inventory = payload.get("current_inventory", payload["opening_balance"]["inventory"])
+            lots = [row for row in inventory if row.get("scope") == "LOT" and row.get("lot_id") == lot_code and row.get("item_id") == item_id]
+            if len(lots) != 1 or lots[0]["available_qty"] < consumed:
+                raise ServiceError("FULFILLMENT_LOT_NOT_AVAILABLE", 409)
+            active = payload.get("bom") or {}
+            lines = [row for row in entities if row["type"] == "BOMLine" and row.get("attributes", {}).get("source_row_id") in items[0]["row_ids"]
+                     and row.get("evidence", {}).get("bom_id") == active.get("bom_id") and row.get("evidence", {}).get("bom_version") == active.get("bom_version")]
+            if not lines:
+                raise ServiceError("FULFILLMENT_BOM_LINE_UNCONFIRMED", 409)
+            job = entity("ProductionJob", round_["job_id"])
+            return {**common, "parent": self._reference(parent), "item_id": item_id, "unit": unit, "lot_code": lot_code,
+                    "lot_entity_id": entity("PartLot", lot_code)["id"], "quantity_per_board": format(per_board, "f"),
+                    "consumed_qty": consumed, "bom_line_entity_id": sorted(row["id"] for row in lines)[0],
+                    "job_entity_id": job["id"], "conditional_application": items[0]["conditional"]}
+        parent_kind, field, state = {"FG_RECEIPT": ("PRODUCTION", "production_id", "PRODUCED"),
+                                     "SHIPMENT": ("FG_RECEIPT", "fg_receipt_id", "RECEIVED"),
+                                     "ARRIVAL": ("SHIPMENT", "shipment_id", "SHIPPED")}[kind]
+        parent = self._parent(conn, company, getattr(content, field), parent_kind)
+        link = {"PRODUCTION": "production_id", "FG_RECEIPT": "fg_receipt_id", "SHIPMENT": "shipment_id"}[parent_kind]
+        if any(boards.get(serial, {}).get("status") != state or boards[serial].get(link) != str(parent["id"]) for serial in serials):
+            raise ServiceError("FULFILLMENT_BOARD_STATE_INVALID", 409)
+        return {**common, "parent": self._reference(parent)}
+
     @staticmethod
     def _columns(content, resolved):
         quantity = getattr(content, "quantity", 0)
@@ -227,7 +302,8 @@ class ProcurementService(DomainService):
             quantity = content.passed_qty + content.failed_qty
         elif content.kind == "SUPPLY_CONFIRMATION":
             quantity = content.confirmed_qty
-        key = next((getattr(content, name) for name in ("quote_ref", "confirmation_ref", "receipt_ref", "inspection_ref") if hasattr(content, name)), None)
+        key = next((getattr(content, name) for name in ("quote_ref", "confirmation_ref", "receipt_ref", "inspection_ref",
+                                                        "production_ref", "shipment_ref", "arrival_ref") if hasattr(content, name)), None)
         return (resolved.get("parent", {}).get("id"), key, getattr(content, "lot_code", None), quantity,
                 getattr(content, "passed_qty", 0), getattr(content, "failed_qty", 0))
 
@@ -390,6 +466,11 @@ class ProcurementService(DomainService):
                 for basis, key in (("base", "shortage_qty"), ("planned", "planned_shortage_qty")):
                     calculation = quote_calculation(quote, item[key]) if item and item[key] is not None else None
                     choices.append({"quote_id": str(row["id"]), "quote_ref": quote["quote_ref"], "item_id": quote["resolved"]["item_id"],
+                        "supplier_id": quote["resolved"]["supplier_id"], "unit_price": quote["unit_price"],
+                        "currency": quote["currency"], "moq": quote["moq"], "order_multiple": quote["order_multiple"],
+                        "freight": quote["freight"], "valid_until": quote["valid_until"],
+                        "lead_business_days": quote.get("lead_business_days"), "supply_limit_qty": quote.get("supply_limit_qty"),
+                        "schedule_status": "UNCONFIRMED", "cost_status": "KNOWN" if quote["freight"] is not None else "FREIGHT_UNKNOWN",
                         "unit": quote["unit"], "material_basis": basis, "calculation": calculation,
                         "expired": date.fromisoformat(quote["valid_until"]) < datetime.now(timezone.utc).date(),
                         "partial_bom": not requirements["full_coverage"], "provenance": "DEMO_ASSUMPTION",

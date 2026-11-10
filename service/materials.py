@@ -78,7 +78,9 @@ def _inventory_for_item(inventories, item_id, unit):
 def requirements_for_snapshot(payload, *, plan_yield="0.94"):
     """Compute full registered-row coverage; only reviewed facts drive totals."""
     balance = payload["opening_balance"]
-    target = _decimal(balance["delivery_round"].get("remaining_good_target_qty"))
+    # Posted production records (DEC-H49) reduce the remaining good target.
+    round_ = payload.get("current_delivery_round") or balance["delivery_round"]
+    target = _decimal(round_.get("remaining_good_target_qty"))
     yield_fraction = _decimal(plan_yield, positive=True)
     if target is None or yield_fraction is None or yield_fraction > 1:
         raise ValueError("MATERIAL_BASIS_INVALID")

@@ -17,7 +17,7 @@ from uuid import UUID, uuid4
 
 from psycopg.types.json import Jsonb
 
-from service.bom_contracts import BomCompare, BomCreate, BomDecision, BomReview, BomReviewFocus, BomRevise
+from service.bom_contracts import BomReviewerOutcome, BomCompare, BomCreate, BomDecision, BomReview, BomReviewFocus, BomRevise
 from service.bom_compare import compare_bom_documents
 from service.bom_focus import mapped_row_ids, review_focus
 from service.contracts import CANONICAL_VERSION, DocumentAction, canonical_bytes, content_hash
@@ -269,6 +269,8 @@ class BomService(DomainService):
             self._exact(document, body.expected_version, body.payload_hash)
             if document["status"] == "POSTED":
                 raise ServiceError("POSTED_DOCUMENT_IMMUTABLE", 409)
+            if document["status"] == "REJECTED":
+                raise ServiceError("BOM_DOCUMENT_REJECTED", 409)
             if document["created_by"] != principal.actor_id:
                 raise ServiceError("DOCUMENT_AUTHOR_REQUIRED", 403)
             payload = self._snapshot(conn, company_id, body.expected_ledger_version, document["configuration_id"])
@@ -284,7 +286,7 @@ class BomService(DomainService):
             for row in content["rows"]:
                 row["decision"] = decisions[row["row_id"]].model_dump(exclude={"row_id"})
             raw = canonical_bytes(content)
-            document = conn.execute("UPDATE bom_documents SET content=%s,canonical_bytes=%s,payload_hash=%s,version=version+1,status='DRAFT',reviewed_by=NULL,approved_by=NULL,approved_version=NULL,approved_hash=NULL,approval_policy_version=NULL,review_record=NULL,updated_at=now() WHERE id=%s RETURNING *",
+            document = conn.execute("UPDATE bom_documents SET content=%s,canonical_bytes=%s,payload_hash=%s,version=version+1,status='DRAFT',reviewed_by=NULL,approved_by=NULL,approved_version=NULL,approved_hash=NULL,approval_policy_version=NULL,review_record=NULL,change_request=NULL,updated_at=now() WHERE id=%s RETURNING *",
                                     (Jsonb(content), raw, sha256(raw).hexdigest(), document["id"])).fetchone()
             self._revision(conn, principal, document)
             self._audit(conn, principal, document, "bom.revise")
@@ -301,6 +303,9 @@ class BomService(DomainService):
                 raise ServiceError("SELF_REVIEW_FORBIDDEN", 403)
             if document["status"] != "DRAFT":
                 raise ServiceError("DOCUMENT_STATE_CHANGED", 409)
+            if document.get("change_request"):
+                # A returned version must be revised by its author first.
+                raise ServiceError("BOM_CHANGES_REQUESTED", 409)
             # Physical technical approval is unavailable in this source-registration
             # slice. Every reviewer must acknowledge that persistent limitation.
             if not body.acknowledge_unresolved:
@@ -333,6 +338,35 @@ class BomService(DomainService):
             return self._view(document)
         return self._run(principal, company_id, "document.approve", body.idempotency_key,
                          {"bom_action": "approve", "bom_id": document_id, **body.model_dump()}, work)
+
+    def _reviewer_outcome(self, principal, company_id, document_id, body, outcome):
+        """A reviewer other than the author returns or rejects one exact version."""
+        body = BomReviewerOutcome.model_validate(body)
+        def work(conn):
+            document = self._document(conn, company_id, document_id, lock=True)
+            self._exact(document, body.expected_version, body.payload_hash)
+            if document["created_by"] == principal.actor_id:
+                raise ServiceError("SELF_REVIEW_FORBIDDEN", 403)
+            if document["status"] not in {"DRAFT", "REVIEWED", "APPROVED"}:
+                raise ServiceError("DOCUMENT_STATE_CHANGED", 409)
+            record = {"reason": body.reason, "by": principal.actor_id, "version": document["version"],
+                      "payload_hash": document["payload_hash"], "previous_status": document["status"]}
+            if outcome == "request_changes":
+                document = conn.execute("UPDATE bom_documents SET status='DRAFT',reviewed_by=NULL,approved_by=NULL,approved_version=NULL,approved_hash=NULL,approval_policy_version=NULL,review_record=NULL,change_request=%s,updated_at=now() WHERE id=%s RETURNING *",
+                                        (Jsonb(record), document["id"])).fetchone()
+            else:
+                document = conn.execute("UPDATE bom_documents SET status='REJECTED',approved_by=NULL,approved_version=NULL,approved_hash=NULL,approval_policy_version=NULL,rejection=%s,updated_at=now() WHERE id=%s RETURNING *",
+                                        (Jsonb(record), document["id"])).fetchone()
+            self._audit(conn, principal, document, "bom." + outcome, record)
+            return self._view(document)
+        return self._run(principal, company_id, "document.review", body.idempotency_key,
+                         {"bom_action": outcome, "bom_id": document_id, **body.model_dump()}, work)
+
+    def request_changes(self, principal, company_id, document_id, body):
+        return self._reviewer_outcome(principal, company_id, document_id, body, "request_changes")
+
+    def reject(self, principal, company_id, document_id, body):
+        return self._reviewer_outcome(principal, company_id, document_id, body, "reject")
 
     def post(self, principal, company_id, document_id, body: DocumentAction):
         body = DocumentAction.model_validate(body)

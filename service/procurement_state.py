@@ -47,7 +47,8 @@ def apply_procurement_event(previous, event):
         if (not parent or any(parent[key] != parent_ref[ref] for key, ref in
                 (("kind", "kind"), ("version", "version"), ("payload_hash", "payload_hash"), ("ledger_version", "ledger_version")))):
             raise ServiceError("PROCUREMENT_EVENT_PARENT_INVALID", 409)
-        expected_kind = {"PR": "QUOTE", "PO": "PR", "SUPPLY_CONFIRMATION": "PO", "RECEIPT": "PO", "IQC": "RECEIPT"}.get(kind)
+        expected_kind = {"PR": "QUOTE", "PO": "PR", "SUPPLY_CONFIRMATION": "PO", "RECEIPT": "PO", "IQC": "RECEIPT",
+                         "PRODUCTION": "IQC", "FG_RECEIPT": "PRODUCTION", "SHIPMENT": "FG_RECEIPT", "ARRIVAL": "SHIPMENT"}.get(kind)
         if expected_kind and (parent["kind"] != expected_kind or parent.get("cancelled_by")):
             raise ServiceError("PROCUREMENT_EVENT_PARENT_INVALID", 409)
         if kind in {"PO", "RECEIPT"}:
@@ -138,6 +139,55 @@ def apply_procurement_event(previous, event):
         parent["cancelled_by"] = identifier
         if parent["kind"] == "PO":
             parent["confirmed_remaining_qty"] = 0
+    fulfillment = None
+    if kind in {"PRODUCTION", "FG_RECEIPT", "SHIPMENT", "ARRIVAL"}:
+        fulfillment = snapshot.setdefault("fulfillment", {"boards": {}, "scope": "INTERNAL_DEVELOPMENT_ONLY"})
+        round_ = snapshot.setdefault("current_delivery_round", deepcopy(snapshot["opening_balance"]["delivery_round"]))
+        serials, n = resolved["board_serials"], len(resolved["board_serials"])
+        if serials != typed.board_serials or resolved["round_id"] != round_["round_id"]:
+            raise ServiceError("FULFILLMENT_EVENT_CONTRACT_INVALID", 409)
+        boards = fulfillment["boards"]
+        if kind == "PRODUCTION":
+            lots = [x for x in inventory if x.get("scope") == "LOT" and x.get("lot_id") == resolved["lot_code"] and x.get("item_id") == resolved["item_id"]]
+            consumed = resolved["consumed_qty"]
+            if (len(lots) != 1 or lots[0]["available_qty"] < consumed or any(serial in boards for serial in serials)
+                    or n > round_["remaining_good_target_qty"]):
+                raise ServiceError("FULFILLMENT_EVENT_BASIS_INVALID", 409)
+            lot_row = lots[0]
+            lot_row["on_hand_qty"] -= consumed
+            lot_row["available_qty"] -= consumed
+            if "unreserved_qty" in lot_row:
+                lot_row["unreserved_qty"] -= consumed
+            lot_row["consumed_qty"] = lot_row.get("consumed_qty", 0) + consumed
+            lot_entity = next((x for x in snapshot["entities"] if x["id"] == resolved["lot_entity_id"]), None)
+            if lot_entity is not None:
+                lot_entity.setdefault("attributes", {}).update(on_hand_qty=lot_row["on_hand_qty"], available_qty=lot_row["available_qty"],
+                                                               consumed_qty=lot_row["consumed_qty"])
+            round_["good_qty"] += n
+            round_["good_not_received_qty"] += n
+            round_["remaining_good_target_qty"] -= n
+            for serial in serials:
+                boards[serial] = {"status": "PRODUCED", "production_id": identifier, "lot_code": resolved["lot_code"]}
+        else:
+            state, link, next_state, next_link = {"FG_RECEIPT": ("PRODUCED", "production_id", "RECEIVED", "fg_receipt_id"),
+                                                  "SHIPMENT": ("RECEIVED", "fg_receipt_id", "SHIPPED", "shipment_id"),
+                                                  "ARRIVAL": ("SHIPPED", "shipment_id", "ARRIVED", "arrival_id")}[kind]
+            if any(boards.get(serial, {}).get("status") != state or boards[serial].get(link) != parent["id"] for serial in serials):
+                raise ServiceError("FULFILLMENT_EVENT_BASIS_INVALID", 409)
+            for serial in serials:
+                boards[serial].update(status=next_state, **{next_link: identifier})
+            if kind == "FG_RECEIPT":
+                round_["fg_received_qty"] += n; round_["good_not_received_qty"] -= n; round_["warehouse_qty"] += n
+            elif kind == "SHIPMENT":
+                round_["shipped_qty"] += n; round_["warehouse_qty"] -= n; round_["in_transit_qty"] += n
+            else:
+                round_["arrived_qty"] += n; round_["in_transit_qty"] -= n; round_["remaining_promise_qty"] -= n
+        if min(round_[key] for key in ("good_not_received_qty", "warehouse_qty", "in_transit_qty", "remaining_promise_qty", "remaining_good_target_qty")) < 0:
+            raise ServiceError("FULFILLMENT_EVENT_BASIS_INVALID", 409)
+        round_entity = next(x for x in snapshot["entities"] if x["id"] == resolved["round_entity_id"])
+        for key in ("good_qty", "fg_received_qty", "shipped_qty", "arrived_qty", "good_not_received_qty", "warehouse_qty",
+                    "in_transit_qty", "remaining_promise_qty", "remaining_good_target_qty"):
+            round_entity.setdefault("attributes", {})[key] = round_[key]
     if receipt and receipt["quantity"] != receipt["passed_qty"] + receipt["failed_qty"] + receipt["pending_qty"]:
         raise ServiceError("PROCUREMENT_INSPECTION_BALANCE_INVALID", 409)
 
@@ -159,7 +209,8 @@ def apply_procurement_event(previous, event):
         snapshot["relationships"].append({"id": node_id(identifier, [start, predicate, end]),
             "source": start, "predicate": predicate, "target": end, "evidence": deepcopy(evidence)})
     type_ = {"QUOTE": "SupplierOffer", "PR": "PurchaseRequest", "PO": "PurchaseOrder", "SUPPLY_CONFIRMATION": "SourceDocument",
-             "RECEIPT": "PartsReceiptLine", "IQC": "InspectionResult", "CANCEL": "SourceDocument"}[kind]
+             "RECEIPT": "PartsReceiptLine", "IQC": "InspectionResult", "CANCEL": "SourceDocument",
+             "PRODUCTION": "ProductionReport", "FG_RECEIPT": "FinishedGoodsReceipt", "SHIPMENT": "Shipment", "ARRIVAL": "ArrivalRecord"}[kind]
     attributes = {"document_id": identifier, "kind": kind, "status": "POSTED", "quantity": getattr(typed, "quantity", 0),
                   "supplier_confirmation": False, "transmission_status": "NOT_SENT"}
     if kind == "IQC":
@@ -172,6 +223,11 @@ def apply_procurement_event(previous, event):
         attributes.update(cancelled_remaining_qty=resolved["cancelled_remaining_qty"])
     elif kind == "QUOTE":
         attributes.update({key: content[key] for key in ("unit_price", "currency", "moq", "order_multiple", "freight", "valid_until")})
+    elif fulfillment is not None:
+        attributes.update(board_serials=list(resolved["board_serials"]), round_id=resolved["round_id"])
+        if kind == "PRODUCTION":
+            attributes.update(lot_code=resolved["lot_code"], item_id=resolved["item_id"], consumed_qty=resolved["consumed_qty"],
+                              quantity_per_board=resolved["quantity_per_board"], conditional_application=resolved["conditional_application"])
     document_node = node("document", type_, attributes, kind + " " + identifier[:8])
     revision = node("version", "DocumentVersion", {"version": value["document_version"], "payload_hash": value["payload_hash"]}, kind + " version")
     grant = node("approval", "ApprovalGrant", approval, kind + " approval")
@@ -200,6 +256,47 @@ def apply_procurement_event(previous, event):
         lot = node("lot", "PartLot", {"item_id": resolved["item_id"], "on_hand_qty": typed.quantity,
                     "available_qty": 0, "held_qty": typed.quantity, "unit": resolved["unit"]}, typed.lot_code)
         edge(lot, "lotOf", resolved["item_entity_id"])
+    elif fulfillment is not None:
+        board_id = lambda serial: node_id(fulfillment["boards"][serial]["production_id"], ["board", serial])
+        if kind == "PRODUCTION":
+            consumption = node("consumption", "ConsumptionEvent", {"lot_code": resolved["lot_code"], "item_id": resolved["item_id"],
+                               "quantity": resolved["consumed_qty"], "unit": resolved["unit"]}, "CONSUME " + resolved["lot_code"])
+            edge(consumption, "consumesLot", resolved["lot_entity_id"])
+            edge(consumption, "consumedForJob", resolved["job_entity_id"])
+            edge(document_node, "productionAttributedToRound", resolved["round_entity_id"])
+            edge(document_node, "reportForJob", resolved["job_entity_id"])
+            for serial in resolved["board_serials"]:
+                board = node(["board", serial], "BoardUnit", {"serial": serial, "status": "PRODUCED", "round_id": resolved["round_id"],
+                             "lot_code": resolved["lot_code"]}, serial)
+                install = node(["install", serial], "InstallationEvent", {"serial": serial, "item_id": resolved["item_id"],
+                               "quantity": resolved["quantity_per_board"], "lot_code": resolved["lot_code"]}, "INSTALL " + serial)
+                edge(board, "boardForRound", resolved["round_entity_id"])
+                edge(board, "manufacturingConfiguration", resolved["configuration_entity_id"])
+                edge(document_node, "reportedBoard", board)
+                edge(install, "installedOn", board)
+                edge(install, "installationForLine", resolved["bom_line_entity_id"])
+                edge(install, "usesLot", resolved["lot_entity_id"])
+                edge(install, "supportedByConsumption", consumption)
+        elif kind == "FG_RECEIPT":
+            allocation = node("allocation", "Allocation", {"quantity": len(resolved["board_serials"]), "round_id": resolved["round_id"],
+                              "board_serials": list(resolved["board_serials"])}, "ALLOC " + identifier[:8])
+            edge(allocation, "allocationFromReceipt", document_node)
+            edge(allocation, "allocatedToRound", resolved["round_entity_id"])
+            edge(document_node, "fgReceiptFromReport", node_id(parent["id"]))
+        elif kind == "SHIPMENT":
+            edge(document_node, "shipmentForRound", resolved["round_entity_id"])
+            for serial in resolved["board_serials"]:
+                edge(document_node, "shipsBoard", board_id(serial))
+        else:
+            edge(document_node, "arrivalOfShipment", node_id(parent["id"]))
+            if resolved.get("customer_entity_id"):
+                edge(document_node, "receivedByCustomer", resolved["customer_entity_id"])
+            for serial in resolved["board_serials"]:
+                edge(document_node, "arrivedBoard", board_id(serial))
+        status = {"PRODUCTION": "PRODUCED", "FG_RECEIPT": "RECEIVED", "SHIPMENT": "SHIPPED", "ARRIVAL": "ARRIVED"}[kind]
+        for serial in resolved["board_serials"]:
+            entity_ = next(x for x in snapshot["entities"] if x["id"] == board_id(serial))
+            entity_["attributes"]["status"] = status
     elif kind == "IQC":
         edge(document_node, "inspectionOfReceiptLine", node_id(parent["id"]))
         lot_id = node_id(parent["id"], "lot")
