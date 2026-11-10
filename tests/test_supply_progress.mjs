@@ -21,11 +21,11 @@ test('before any request the card says there is no order yet', () => {
   assert.match(empty.text, /아직 item-x 구매 요청·발주가 없습니다/);
 });
 
-test('an open request form is the 초안 step; its button submits the same form', () => {
+test('an open request form is the 초안 step; the form itself is the 승인 요청 action', () => {
   const editor = { kind: 'PR', values: { quote_id: 'quote-1', quantity: 23 } };
   const draft = supplyProgress([quote], snapshot(23), author, editor);
   assert.equal(states(draft), 'current,pending,pending,pending');
-  assert.deepEqual(actions(draft), ['submit-draft']);
+  assert.deepEqual(actions(draft), []);
   assert.deepEqual(draft.rows[1], ['내부 발주', '미작성 · 견적 sup-d']);
 });
 
@@ -71,4 +71,21 @@ test('rejected or cancelled requests and other items are ignored', () => {
   assert.equal(supplyProgress([pr('DRAFT', { cancelled_by: 'c' })], snapshot(23), author).empty, true);
   const other = pr('DRAFT'); other.content.resolved.item_id = 'item-y';
   assert.equal(supplyProgress([other], snapshot(23), author).empty, true);
+});
+
+test('after inspection the card continues to production, shipment and arrival', () => {
+  const chain = [pr('POSTED'), po('POSTED', { confirmed_qty: 23 }),
+    { id: 'rc-1', kind: 'RECEIPT', status: 'POSTED', parent_id: 'po-00000002-x', quantity: 23, remaining_qty: 0, lot_code: 'LOT-N', content: {} },
+    { id: 'iqc-1', kind: 'IQC', status: 'POSTED', parent_id: 'rc-1', passed_qty: 23, quantity: 23, content: {} },
+    { id: 'prod-1', kind: 'PRODUCTION', status: 'POSTED', parent_id: 'iqc-1', quantity: 3, content: {} }];
+  const view = { ...snapshot(0), summary: { item_id: 'item-x', production_remaining_qty: 37 },
+    fulfillment: { boards: { 'B-1': { status: 'PRODUCED', production_id: 'prod-1' }, 'B-2': { status: 'PRODUCED', production_id: 'prod-1' } } } };
+  const produced = supplyProgress(chain, view, author);
+  assert.equal(produced.status, '생산 진행');
+  assert.deepEqual(actions(produced), ['new-production', 'new-next']);
+  assert.match(produced.next[1].label, /완성품 입고 기록 · 2대/);
+  assert.ok(produced.rows.some(([label, value]) => label === '입하 · 검사' && value === 'LOT-N · 입하 23개 · 합격 23개'));
+  assert.ok(produced.rows.some(([label, value]) => label === '보드 이행' && value === '생산 2 · 출하 0 · 도착 0대'));
+  const fgDraft = supplyProgress([...chain, { id: 'fg-1', kind: 'FG_RECEIPT', status: 'DRAFT', parent_id: 'prod-1', created_by: 'actor-a', content: {} }], view, reviewer);
+  assert.equal(fgDraft.focusLabel, '완성품 입고'); assert.deepEqual(actions(fgDraft), ['review-approve', 'reject']);
 });
