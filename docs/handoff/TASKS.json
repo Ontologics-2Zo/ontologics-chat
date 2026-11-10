@@ -2812,7 +2812,7 @@
   "bom_prerequisite_20261110": {
     "decision": "DEC-H45",
     "record": "docs/handoff/SERVICE-BOM-PREREQUISITE-20261110.md",
-    "status": "IN_PROGRESS",
+    "status": "VERIFIED",
     "parent_complete": false,
     "scope": [
       "T09.1",
@@ -2823,10 +2823,20 @@
     "python_tests_pass": 440,
     "python_skipped": 0,
     "node_tests_pass": 181,
-    "browser_verification": "IN_PROGRESS",
-    "original_restart": "IN_PROGRESS",
+    "browser_verification": "VERIFIED",
+    "browser_checks_pass": 25,
+    "original_restart": "VERIFIED",
+    "implementation_commit": "19a8ad72aab8dc5186798b34c9a0bafca33643e8",
+    "preservation_evidence_sha256": "b7eccc8bbbc71050a620cf0f5726fc315856c09ba934e1e3e70c80ea67af6fd3",
     "actual_model_calls": 0,
     "budget_scope": "mks2-agent-20261108",
+    "budget_observed": {
+      "live_calls": 39,
+      "separate_concurrent_calls": 2,
+      "known_cost_usd": "0.01618",
+      "held_usd": "0.016414",
+      "remaining_usd": "9.967406"
+    },
     "business_writes": false,
     "original_files_and_database_preserved": true,
     "automatic_merge_authorized": false,
