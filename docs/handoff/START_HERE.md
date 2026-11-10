@@ -1,5 +1,7 @@
 # MK-S2 개발 인계 안내
 
+> 최신 DEC-H46: 사용자는 인계 전 [PR #6](https://github.com/Ontologics-2Zo/ontologics-chat/pull/6)의 main 병합을 명시적으로 승인했다. [최종 검토 기록](SERVICE-PR6-REVIEW-20261110.md)을 우선 읽고 확정 병합 상태·SHA는 GitHub에서 확인한다. 아래 PR #6 Draft/병합 제외 표기는 당시 기록이다. 검증된 서비스 코드와 실행본이 같으면 기존 앱을 유지하며 DB를 초기화하지 않는다. BOM 첫 등록의 5품목 표시 등 남은 UI 작업과 전체 1차 인수는 별도다.
+
 > 최신 후속 DEC-H45: [답변 완료·적용 BOM·원형 카드 구성](SERVICE-BOM-PREREQUISITE-20261110.md). 원본 등록과 적용 검토를 구분하며 현재 반영본·과거 5품목 판단·DB·예산을 보존한다. 본문 완료 후 보조 정보를 공개하고, 공유 화면의 업무 카드와 그래프 질의 흐름을 각각 따른다. Python 440·Node 181·브라우저 25건과 Mac 적용·보존을 확인했다. 이번 검증 실제 모델 호출 0, 기존 세션의 별도 실행을 포함한 같은 예산 잔여 US$9.967406. PR #6 후속이며 새 main 병합은 포함하지 않는다.
 
 > 최신 후속: DEC-H44 [진행 표시·LangSmith·남은 1차 작업](SERVICE-PHASE1-PROGRESS-20261110.md). PR #5는 main `3a6079e`에 병합됐다. 후속은 [Draft PR #6](https://github.com/Ontologics-2Zo/ontologics-chat/pull/6)에 올렸고 Mac에 적용했다. 기존 원장/예산 보존, 429 Python·161 Node·25 브라우저 검사와 실제 두 관측 수신을 확인했다. 전체 1차 완료와 main 병합은 구분한다.
