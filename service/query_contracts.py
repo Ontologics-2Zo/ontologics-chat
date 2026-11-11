@@ -72,7 +72,7 @@ class QueryQuoteCard(Contract):
 # Labels name what produced each card inside this one deterministic query.
 # They are not separate agent tool executions.
 BlockSource = Literal["원장 조회", "원장 계산 · 생산실적", "원장 계산 · BOM 전개", "시연 가정 · 일정",
-                      "원장 조회 · 일정 · 견적", "원장 조회 · 견적 → 공급사", "판정"]
+                      "원장 조회 · 일정 · 견적", "원장 조회 · 견적 → 공급사", "원장 계산 · 가정 비교", "판정"]
 
 
 class QueryAnswerBlock(Contract):
