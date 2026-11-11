@@ -192,9 +192,24 @@ function laneButtons(entries, busy, focusId = null, fulfill = false) {
 // Who the row is waiting for when this account has nothing to press.
 export function laneWaiting(entries) {
   if (!entries?.length || entries.some(entry => entry.action && !entry.disabled)) return null;
-  return entries.some(entry => entry.label === '승인') ? 'review' : 'author';
+  if (entries.every(entry => entry.locked)) return 'locked';
+  if (entries.some(entry => entry.label === '승인')) return 'review';
+  return entries.every(entry => entry.optional) ? 'optional' : 'author';
 }
-const WAITING_TEXT = { review: '검토자 승인 대기', author: '작성자 차례' };
+const WAITING_TEXT = { review: '검토자 승인 대기', author: '작성자 차례', locked: '다른 문서 확정 후 진행', optional: '선택 항목 · 필요할 때 작성자 계정에서' };
+// Buttons that write a new draft. While any document waits for approval they
+// are locked, so one document moves at a time: posting one would otherwise
+// leave every other draft on an old ledger version that cannot be approved.
+const CREATE_ACTIONS = new Set(['new-po', 'new-confirmation', 'new-receipt', 'new-iqc', 'new-production', 'new-next',
+  'cohort', 'lot-production', 'board-next', 'new-scenario', 'new-substitution']);
+export function waitingDocuments(documents) {
+  return (documents || []).filter(row => row.kind !== 'QUOTE' && row.status !== 'POSTED' && !row.cancelled_by && !row.rejection_reason);
+}
+export function lockCreates(entries, documents, reason = null) {
+  const why = waitingDocuments(documents).length ? '다른 문서 확정 후 진행' : reason;
+  if (!why) return entries;
+  return (entries || []).map(entry => CREATE_ACTIONS.has(entry.action) ? { ...entry, disabled: true, locked: true, lockedText: why } : entry);
+}
 function lane({ key, title, status, tone, summary, entries, busy, focusId, fulfill, warnings = [], steps = '', rows = [], notes = [], fixed = '', extra = '' }) {
   const waiting = laneWaiting(entries);
   const detail = steps || rows.length || notes.length || fixed;
@@ -202,7 +217,7 @@ function lane({ key, title, status, tone, summary, entries, busy, focusId, fulfi
     <div class="mk-flow-head"><strong>${esc(title)}</strong><span class="mk-pill ${toneClass[tone] || 'mute'}">${esc(status)}</span></div>
     ${summary ? `<p class="mk-flow-summary">${esc(summary)}</p>` : ''}
     ${warnings.map(text => `<div class="mk-supply-warn">${text}</div>`).join('')}
-    <div class="mk-supply-actions">${laneButtons(entries, busy, focusId, fulfill)}${waiting ? `<span class="mk-flow-wait">${WAITING_TEXT[waiting]}</span>` : ''}</div>
+    <div class="mk-supply-actions">${laneButtons(entries, busy, focusId, fulfill)}${waiting ? `<span class="mk-flow-wait">${esc(waiting === 'locked' ? entries[0].lockedText || WAITING_TEXT.locked : WAITING_TEXT[waiting])}</span>` : ''}</div>
     ${extra}
     ${detail ? `<details class="mk-flow-detail"><summary>상세</summary>${steps}${rows.length ? `<dl class="mk-supply-rows">${rows.map(([label, value]) => `<dt>${esc(label)}</dt><dd>${esc(value)}</dd>`).join('')}</dl>` : ''}${[...notes, fixed].filter(Boolean).map(note => `<p class="mk-small-note">${esc(note)}</p>`).join('')}</details>` : ''}
   </section>`;
@@ -361,7 +376,7 @@ export function flowBanner(lanes, identity, auto = false, optional = []) {
   const approver = (identity?.permitted_actions || []).includes('document.approve');
   const waits = lanes.map(entries => [laneWaiting(entries), optional.includes(entries)]).filter(([wait]) => wait);
   const review = waits.filter(([wait]) => wait === 'review').length;
-  const author = waits.filter(([wait, skip]) => wait === 'author' && !skip).length;
+  const author = waits.filter(([wait, skip]) => wait === 'author' && !skip).length;  // 'locked' never counts
   if (!approver && review) return { text: `검토자 승인 대기 ${review}건`, role: 'review', action: '검토자로 전환' };
   // With auto drafts on, the author account's next press is done by the agent.
   if (approver && author) return auto ? { text: '작성자 차례 · 전환하면 Agent가 다음 초안을 작성합니다', role: 'author', action: '작성자로 전환' }
@@ -386,12 +401,15 @@ function setAutoDraft(on) { try { globalThis.localStorage?.setItem(AUTO_KEY, on 
 //   current version (same content; approvals of the old version are gone);
 // - otherwise the next one-click draft. Material steps come first; board
 //   moves start only after the purchased LOT has passed inspection.
+// Flow documents the agent may re-save when stale. Substitutions, schedule
+// assumptions and purchase requests are a person's decision and are left alone.
+const FLOW_KINDS = new Set(['PO', 'SUPPLY_CONFIRMATION', 'RECEIPT', 'IQC', 'PRODUCTION', 'FG_RECEIPT', 'SHIPMENT', 'ARRIVAL', 'COHORT']);
 export function autoCandidate({ supply, fulfillment, documents, identity, ledgerVersion = null, enabled = true }) {
   const can = permission => (identity?.permitted_actions || []).includes(permission);
   if (!enabled || !can('document.create') || can('document.approve')) return null;
   const waiting = (documents || []).filter(row => row.kind !== 'QUOTE' && row.status !== 'POSTED' && !row.cancelled_by && !row.rejection_reason);
   if (waiting.length) {
-    const own = waiting.find(row => row.created_by === identity?.actor_id && /^(Agent )?자동 작성/.test(String(row.content?.note || ''))
+    const own = waiting.find(row => FLOW_KINDS.has(row.kind) && row.created_by === identity?.actor_id && /^(Agent )?자동 작성/.test(String(row.content?.note || ''))
       && Number.isInteger(row.content?.basis_ledger_version) && Number.isInteger(ledgerVersion) && row.content.basis_ledger_version < ledgerVersion);
     return own && can('document.update') ? { revise: own } : null;
   }
@@ -600,10 +618,20 @@ export function mountProcurementFlow(container, { snapshot, api, getIdentity = (
     const scenario = scenarioState(documents, getIdentity());
     if (scenarioEditing) scenario.next = [];
     fulfillment = fulfillmentState(snapshot, documents, getIdentity());
+    if (progress && !progress.empty) progress.next = lockCreates(progress.next, documents);
+    // Substitution and schedule assumptions are optional: never "the author's turn".
+    const optional = entries => entries.map(entry => CREATE_ACTIONS.has(entry.action) ? { ...entry, optional: true } : entry);
+    if (substitute) substitute.next = lockCreates(optional(substitute.next), documents);
+    scenario.next = lockCreates(optional(scenario.next), documents);
+    // Board moves follow the story: after the purchased LOT has passed inspection.
+    fulfillment.next = lockCreates(fulfillment.next, documents, progress?.inspected ? null : '구매 LOT 수입검사 후 진행');
     const blocked = busy || needsRefresh;
     const supplyNext = progress && !progress.empty ? progress.next : [], substituteNext = substitute?.next || [];
+    // On the reviewer account the author's buttons are disabled; what matters is
+    // whether the author's next step is one the agent writes.
+    const agentNext = [...supplyNext, ...(progress?.inspected ? fulfillment.next : [])].some(entry => AUTO_ACTIONS.has(entry.action) && !entry.locked);
     const banner = flowBanner([supplyNext, substituteNext, scenario.next, fulfillment.next], getIdentity(),
-      autoDraftEnabled() && Boolean(autoCandidate({ supply: progress, fulfillment, documents, identity: { ...getIdentity(), permitted_actions: ['document.create', 'document.update'] }, ledgerVersion })),
+      autoDraftEnabled() && agentNext,
       [substituteNext, scenario.next, ...(progress?.inspected ? [] : [fulfillment.next])]);
     const autoOn = autoDraftEnabled();
     const toggle = `<button type="button" class="mk-btn mk-auto-toggle${autoOn ? ' on' : ''}" data-auto-draft aria-pressed="${autoOn}" title="작성자 계정에서 앞 단계가 원장에 반영되면 Agent가 다음 초안을 작성합니다. 승인·확정은 사람이 합니다.">Agent 자동 초안 ${autoOn ? '켜짐' : '꺼짐'}</button>`;
@@ -728,6 +756,7 @@ export function mountProcurementFlow(container, { snapshot, api, getIdentity = (
     await loaded;
     if (destroyed || busy || needsRefresh || !can('document.create')) return false;
     if (can('document.approve')) return 'APPROVER_CANNOT_AUTHOR';
+    if (waitingDocuments(documents).length) return 'DOCUMENT_WAITING';
     const choice = choices.find(row => row.quote_id === quoteId && row.material_basis === basis);
     if (!choice || choice.expired || !choice.calculation?.recommended_qty || choice.calculation.quantity_condition === 'NOT_MET') return false;
     start('PR', { quote_id: choice.quote_id, quantity: choice.calculation.recommended_qty, material_basis: choice.material_basis, acknowledge_partial_bom: false });

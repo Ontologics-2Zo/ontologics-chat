@@ -45,3 +45,32 @@ test('one draft at a time; its own stale draft is re-saved on the current versio
   assert.equal(autoCandidate(args([rejected])).entry.action, 'new-po'); // a returned draft is set aside
   assert.equal(autoCandidate({ ...args([staleAgent]), identity: reviewer }), null);
 });
+
+test('while a document waits, every new-draft button is locked and the banner ignores it', async () => {
+  const { lockCreates, laneWaiting, flowBanner } = await import('../web/mks2/procurement.js');
+  const pending = [{ kind: 'SCENARIO', status: 'DRAFT' }];
+  const entries = [{ label: '내부 발주 초안', action: 'new-po', target: 'pr-1' }, { label: '승인', action: 'review-approve' }];
+  const locked = lockCreates(entries, pending);
+  assert.deepEqual(locked.map(entry => [entry.action, Boolean(entry.disabled), Boolean(entry.locked)]),
+    [['new-po', true, true], ['review-approve', false, false]]);
+  assert.equal(lockCreates(entries, [{ kind: 'QUOTE', status: 'DRAFT' }, { kind: 'PO', status: 'POSTED' }]), entries);
+  assert.equal(lockCreates(entries, [{ kind: 'PO', status: 'DRAFT', rejection_reason: '수량 확인' }]), entries);
+  const scenarioLocked = lockCreates([{ label: '새 시연 가정 작성', action: 'new-scenario' }], pending);
+  assert.equal(laneWaiting(scenarioLocked), 'locked');
+  assert.equal(flowBanner([scenarioLocked], reviewer), null);
+  const later = lockCreates([{ label: '기초 보드 입고 · 10대', action: 'cohort' }], [], '구매 LOT 수입검사 후 진행');
+  assert.deepEqual([later[0].disabled, later[0].lockedText, laneWaiting(later)], [true, '구매 LOT 수입검사 후 진행', 'locked']);
+  const choice = [{ label: '새 시연 가정 작성', action: 'new-scenario', disabled: true, optional: true }];
+  assert.equal(laneWaiting(choice), 'optional');
+  assert.equal(flowBanner([choice], reviewer), null);
+});
+
+test('a stale substitution or schedule draft is never re-saved by the agent', () => {
+  const next = [{ label: '내부 발주 초안', action: 'new-po', target: 'pr-1' }];
+  for (const kind of ['SUBSTITUTION', 'SCENARIO', 'PR']) {
+    const stale = { kind, status: 'DRAFT', created_by: 'actor-a', content: { note: '자동 작성 · 사람이 누른 항목', basis_ledger_version: 8 } };
+    assert.equal(autoCandidate({ supply: supply(next), fulfillment: { next: [] }, documents: [stale], identity: author, ledgerVersion: 11 }), null, kind);
+  }
+  const receipt = { kind: 'RECEIPT', status: 'DRAFT', created_by: 'actor-a', content: { note: '자동 작성 · 입하', basis_ledger_version: 8 } };
+  assert.equal(autoCandidate({ supply: supply(next), fulfillment: { next: [] }, documents: [receipt], identity: author, ledgerVersion: 11 }).revise, receipt);
+});
