@@ -337,7 +337,7 @@
 .mk-event-step-text{font-size:12.5px}
 /* 진행 현황: one card, a row per workflow */
 .mk-flow-board>h3{margin:0 0 8px;font-size:14px}
-.mk-flow-banner{margin:0 0 10px;padding:7px 10px;border-radius:8px;background:var(--accent-soft,#eef0fe);color:var(--accent,#4f46e5);font-size:12.5px;font-weight:600}
+.mk-flow-banner{display:flex;align-items:center;gap:10px;margin:0 0 10px;padding:6px 6px 6px 10px;border-radius:8px;background:var(--accent-soft,#eef0fe);color:var(--accent,#4f46e5);font-size:12.5px;font-weight:600}
 .mk-flow-lane{padding:10px 0;border-top:1px solid var(--line2,#e7ecf2)}
 .mk-flow-lane:first-of-type{border-top:0;padding-top:2px}
 .mk-flow-head{display:flex;align-items:center;gap:8px;font-size:13.5px}
@@ -350,3 +350,4 @@
 .mk-flow-detail[open]>summary{margin-bottom:4px}
 .mk-flow-detail .mk-supply-steps{margin:4px 0 6px}
 .mk-flow-detail .mk-small-note{margin:4px 0 0}
+.mk-flow-banner .mk-btn{margin-left:auto;flex:none}

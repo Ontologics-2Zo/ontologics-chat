@@ -136,8 +136,17 @@ export function supplyProgress(documents, snapshot, identity, editor = null) {
       status = { PRODUCTION: '생산 진행', FG_RECEIPT: '출하 대기', SHIPMENT: '운송 중', ARRIVAL: '고객 도착' }[last?.kind] || '가용';
       tone = status === '가용' || status === '고객 도착' ? 'ok' : 'info';
       if (!last) notes.push('가용 재고 반영 완료');
-      if ((iqc.passed_qty || iqc.content?.passed_qty || 0) > 0 && Number(snapshot?.summary?.production_remaining_qty) > 0)
-        stages.push({ label: '생산 실적 기록', action: 'new-production', target: iqc.id, disabled: create });
+      // Boards this inspected LOT can still build: the remaining good-board target,
+      // capped by the LOT's available stock (the server checks both again).
+      const target = Number(snapshot?.summary?.production_remaining_qty) || 0;
+      if ((iqc.passed_qty || iqc.content?.passed_qty || 0) > 0 && target > 0) {
+        const lotCode = iqc.content?.resolved?.lot_code || receipt.lot_code;
+        const perBoard = Number(requirement?.quantity_per_unit || requirement?.per_unit_qty || 1) || 1;
+        const lotRow = (snapshot?.inventory || []).find(row => row.lot_id === lotCode && row.item_id === item);
+        const boards = Math.min(target, lotRow ? Math.floor(Number(lotRow.available_qty) / perBoard) : 0);
+        if (boards > 0) stages.push({ label: `생산 실적 기록 · ${boards}대`, action: 'new-production', target: iqc.id, quantity: boards, lot: lotCode, disabled: create });
+        else notes.push(`${lotCode || '입하 LOT'} 가용 수량이 없어 생산 실적을 기록할 수 없습니다.`);
+      }
       for (const doc of fulfilled) {
         const step = nextStep[doc.kind];
         if (step && pendingBoards(doc, step)) stages.push({ label: `${step[3]} · ${pendingBoards(doc, step)}대`, action: 'new-next', target: doc.id, disabled: create });
@@ -301,14 +310,14 @@ export function flowBanner(lanes, identity) {
   const approver = (identity?.permitted_actions || []).includes('document.approve');
   const waits = lanes.map(laneWaiting).filter(Boolean);
   const review = waits.filter(wait => wait === 'review').length, author = waits.filter(wait => wait === 'author').length;
-  if (!approver && review) return `검토자 승인 대기 ${review}건 · 상단 역할을 검토자로 바꾸면 승인할 수 있습니다.`;
-  if (approver && author) return `작성자 차례 ${author}건 · 상단 역할을 작성자로 바꾸면 이어서 작성할 수 있습니다.`;
-  return '';
+  if (!approver && review) return { text: `검토자 승인 대기 ${review}건`, role: 'review', action: '검토자로 전환' };
+  if (approver && author) return { text: `작성자 차례 ${author}건`, role: 'author', action: '작성자로 전환' };
+  return null;
 }
 
 export function mountProcurementFlow(container, { snapshot, api, getIdentity = () => null, onPosted = () => {}, onRefresh = () => {}, onActivity = () => {} }) {
   const abort = new AbortController(), pending = new Map();
-  let documents = [], choices = [], activeId = null, editor = null, busy = false, destroyed = false, fulfillment = null;
+  let documents = [], choices = [], activeId = null, editor = null, busy = false, destroyed = false, fulfillment = null, supply = null;
   let notice = '', failed = false, needsRefresh = false;
   const ledgerVersion = snapshot.meta?.ledger_version;
   const active = () => documents.find(row => row.id === activeId);
@@ -386,6 +395,11 @@ export function mountProcurementFlow(container, { snapshot, api, getIdentity = (
     const choice = choices.find(row => row.quote_id === values.quote_id && row.material_basis === values.material_basis);
     return choice && !choice.expired && choice.calculation?.recommended_qty && choice.calculation.quantity_condition !== 'NOT_MET' ? choice : null;
   }
+  // Demo board serials continue the round's numbering: <round>-B###-<stamp>.
+  function boardSerials(count, stamp) {
+    const first = Object.keys(snapshot.fulfillment?.boards || {}).length + 1, round = snapshot.summary?.delivery_round_id;
+    return Array.from({ length: count }, (_, i) => `${round}-B${String(first + i).padStart(3, '0')}-${stamp.slice(-3)}`);
+  }
   function boardsFor(doc, [, link, state]) {
     return Object.entries(snapshot.fulfillment?.boards || {}).filter(([, value]) => value.status === state && value[link] === doc.id).map(([serial]) => serial).sort();
   }
@@ -394,19 +408,21 @@ export function mountProcurementFlow(container, { snapshot, api, getIdentity = (
     const status = notice && (failed || editor || needsRefresh) ? `<p role="status" aria-live="polite" class="mk-supply-notice${failed ? ' mk-bom-warning' : ''}">${esc(notice)}</p>` : `<p role="status" aria-live="polite" class="mk-supply-notice"></p>`;
     const refresh = needsRefresh ? `<p class="mk-supply-notice">원장에 새 사건이 반영되었습니다. 최신 원장 조회 후 다음 업무를 진행해 주세요. ${button('최신 원장 조회', 'refresh', busy)}</p>` : '';
     const scenarioEditing = editor?.kind === 'SCENARIO' || (editor?.kind === 'REJECT' && active()?.kind === 'SCENARIO');
-    const progress = supplyProgress(documents, snapshot, getIdentity(), scenarioEditing ? null : editor);
+    const progress = supply = supplyProgress(documents, snapshot, getIdentity(), scenarioEditing ? null : editor);
     if (progress && editor && !scenarioEditing) progress.next = [];
     const scenario = scenarioState(documents, getIdentity());
     if (scenarioEditing) scenario.next = [];
     fulfillment = fulfillmentState(snapshot, documents, getIdentity());
     const blocked = busy || needsRefresh;
     const banner = flowBanner([progress && !progress.empty ? progress.next : [], scenario.next, fulfillment.next], getIdentity());
-    container.innerHTML = `<div class="mk-flow-board"><h3>진행 현황</h3>${banner ? `<p class="mk-flow-banner">${esc(banner)}</p>` : ''}${status}${refresh}`
+    container.innerHTML = `<div class="mk-flow-board"><h3>진행 현황</h3>${banner ? `<p class="mk-flow-banner"><span>${esc(banner.text)}</span><button type="button" class="mk-btn primary" data-switch-role="${banner.role}"${busy ? ' disabled' : ''}>${esc(banner.action)}</button></p>` : ''}${status}${refresh}`
       + supplyLane(progress, blocked, scenarioEditing ? '' : form())
       + scenarioLane(scenario, blocked, scenarioEditing ? form() : '')
       + fulfillmentLane(fulfillment, blocked) + '</div>';
   }
   container.addEventListener('click', event => {
+    const switcher = event.target.closest('[data-switch-role]');
+    if (switcher && !switcher.disabled) { container.dispatchEvent(new CustomEvent('mks2:switch-role', { bubbles: true, detail: { role: switcher.dataset.switchRole } })); return; }
     const target = event.target.closest('[data-purchase-action]');
     if (!target || target.disabled || busy) return;
     if (target.dataset.doc && documents.some(row => row.id === target.dataset.doc)) activeId = target.dataset.doc;
@@ -427,8 +443,7 @@ export function mountProcurementFlow(container, { snapshot, api, getIdentity = (
       if (action === 'cohort') content = { kind: 'COHORT', cohort_ref: `CH-${entry.stage}-${stamp}`, round_id: round, stage: entry.stage, quantity: entry.quantity,
         note: `자동 작성 · 기초 보드 ${entry.quantity}대 ${entry.stage} 기록 (serial 없음)` };
       else if (action === 'lot-production') {
-        const start = Object.keys(snapshot.fulfillment?.boards || {}).length + 1;
-        const serials = Array.from({ length: entry.quantity }, (_, i) => `${round}-B${String(start + i).padStart(3, '0')}-${stamp.slice(-3)}`);
+        const serials = boardSerials(entry.quantity, stamp);
         content = { kind: 'PRODUCTION', lot_code: entry.lot, production_ref: `PRD-${stamp}`, board_serials: serials,
           note: `자동 작성 · ${entry.lot}로 양품 ${entry.quantity}대 생산 실적 (serial 자동 생성)` };
       } else {
@@ -466,7 +481,23 @@ export function mountProcurementFlow(container, { snapshot, api, getIdentity = (
       });
       return;
     }
-    if (action === 'new-production') { start('PRODUCTION', { iqc_id: doc.id, production_ref: '', board_serials: '' }); return; }
+    if (action === 'new-production') {
+      // One click: the record number and board serials are generated, the
+      // quantity is what the inspected LOT can still build. Another account
+      // approves and posts it (nothing is posted here).
+      const entry = supply?.next?.find(row => row.action === 'new-production' && row.target === doc.id);
+      if (!entry || entry.disabled) return;
+      const stamp = Date.now().toString(36).toUpperCase();
+      const content = { kind: 'PRODUCTION', iqc_id: doc.id, production_ref: `PRD-${stamp}`, board_serials: boardSerials(entry.quantity, stamp),
+        note: `자동 작성 · ${entry.lot || '입하 LOT'}로 양품 ${entry.quantity}대 생산 실적 (serial 자동 생성)` };
+      work(async () => {
+        const result = await command('/api/mks2/procurement/documents', { expected_ledger_version: ledgerVersion, content });
+        if (destroyed) return;
+        await reload(result.id);
+        message('생산 실적 초안을 저장했습니다. 작성자와 다른 계정에서 승인·확정해 주세요.');
+      });
+      return;
+    }
     if (action === 'new-next') {
       const [kind, link] = nextStep[doc.kind], refs = { FG_RECEIPT: 'receipt_ref', SHIPMENT: 'shipment_ref', ARRIVAL: 'arrival_ref' };
       start(kind, { [{ FG_RECEIPT: 'production_id', SHIPMENT: 'fg_receipt_id', ARRIVAL: 'shipment_id' }[kind]]: doc.id, [refs[kind]]: '', board_serials: boardsFor(doc, nextStep[doc.kind]).join(', ') });
