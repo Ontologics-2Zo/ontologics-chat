@@ -258,6 +258,8 @@ export function substituteState(snapshot, documents, identity) {
   const doc = rows.at(-1) || null, approver = can('document.approve'), mine = doc && doc.created_by === identity?.actor_id;
   const requirement = (snapshot?.material_requirements?.items || []).find(row => row.item_id === item);
   const shortage = Number(requirement?.planned_shortage_qty), counted = Number(candidate.counted_qty_for_selected_demand) || 0;
+  // Before a BOM is posted there is no shortage to cover: nothing to show yet.
+  if (requirement?.planned_shortage_qty == null && !doc && !counted) return null;
   const left = (Number(candidate.candidate_on_hand_qty) || 0) - counted, unit = unitWord(candidate.unit);
   const next = [], notes = [];
   if (!doc || doc.status === 'POSTED') {
