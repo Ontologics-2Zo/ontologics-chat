@@ -401,13 +401,22 @@ class QueryAnswerTests(unittest.TestCase):
         self.assertEqual(table.alert_cells, [[0, 4]])
         self.assertIn("부족 0으로 보지 않습니다", " ".join(blocks[2].paragraphs))
         schedule = blocks[3]
-        self.assertEqual((schedule.kind, schedule.tool), ("assumption", "시연 가정 · 일정"))
-        # One row per stage backward from the due date; durations stay without evidence.
-        self.assertEqual([row[0] for row in schedule.table.rows][1:], ["운송", "출하 준비", f"생산 {number(result['calculation']['basis']['planned_input_qty'])}대", "수입검사", "부품 입하 필요일"])
-        self.assertEqual([row[2] for row in schedule.table.rows][1:], ["근거 없음"] * 4 + ["계산 불가"])
+        self.assertEqual((schedule.kind, schedule.tool), ("assumption", "원장 조회 · 일정 · 견적"))
+        # One row per stage backward from the due date, filled from the ledger where it can be.
+        rows = schedule.table.rows
+        self.assertEqual([row[0] for row in rows][1:6], ["운송", "출하 준비", f"생산 {number(result['calculation']['basis']['planned_input_qty'])}대", "수입검사", "부품 입하 필요일"])
+        self.assertEqual([row[2] for row in rows][1:6], ["근거 없음"] * 4 + ["계산 불가"])
         self.assertTrue(all(cell[1] == 2 for cell in schedule.table.alert_cells))
-        cells = " ".join(" ".join(row) for row in schedule.table.rows) + " ".join(schedule.paragraphs)
-        self.assertNotRegex(cells, r"\d+일")  # no invented durations
+        # Durations for stages without evidence are never filled in.
+        self.assertNotRegex(" ".join(" ".join(row) for row in rows[1:6]), r"\d+\s*(영업)?일")
+        # Parts arrival comes from a quote's lead time; the gap is calendar days to the due date.
+        parts = rows[6]
+        self.assertTrue(parts[0].startswith("부품 입하 예상"))
+        if parts[2] == "시연 견적 가정":
+            self.assertRegex(parts[1], r"견적 \d+영업일 → \d{4}-\d{2}-\d{2}$")
+            self.assertTrue(any("공급사 확약이 아닙니다" in note for note in schedule.paragraphs))
+        else:
+            self.assertEqual(parts[1:], ["수량을 충족하는 견적 없음", "미확인"])
         self.assertEqual(blocks[-1].title, "자재 부족 6개 · 납기 판단 보류")
         self.assertEqual(item["planned_shortage_qty"], "6.0")
         direct = self.answer("재고 빼면 어떤 자재가 얼마나 모자라?")
@@ -420,6 +429,15 @@ class QueryAnswerTests(unittest.TestCase):
         self.assertIn("50%", defect); self.assertIn("38대", defect)
         self.assertIn("양품을 보장하지 않습니다", defect)
         self.assertEqual(result["calculation"]["actual_delivery_feasibility"], "UNKNOWN")
+
+
+class BusinessDayTests(unittest.TestCase):
+    def test_weekends_are_skipped_like_the_ledger_quote_dates(self):
+        from datetime import date
+        from service.query_answers import _add_business_days
+        start = date(2026, 11, 6)  # Friday
+        self.assertEqual([_add_business_days(start, days).isoformat() for days in (3, 5, 10)],
+                         ["2026-11-11", "2026-11-13", "2026-11-20"])
 
 
 if __name__ == "__main__":

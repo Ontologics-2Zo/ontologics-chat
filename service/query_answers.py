@@ -6,6 +6,7 @@ from the same authorized snapshot and the shared material calculation tool.
 """
 
 from copy import deepcopy
+from datetime import date, timedelta
 from decimal import Decimal
 
 from service.materials import requirements_for_snapshot
@@ -171,6 +172,32 @@ def _quote_cards(view, item, planned_shortage):
     return cards
 
 
+def _add_business_days(start, days):
+    current = start
+    while days > 0:
+        current += timedelta(days=1)
+        if current.weekday() < 5:
+            days -= 1
+    return current
+
+
+def _earliest_parts_arrival(view, focus):
+    """Earliest expected arrival among quotes that meet the quantity (demo quotes, not commitments)."""
+    as_of = (view["summary"].get("effective_at") or "")[:10]
+    try:
+        start = date.fromisoformat(as_of)
+    except ValueError:
+        return None
+    options = []
+    for card in _quote_cards(view, focus, focus["planned_shortage_qty"]):
+        if card.quantity_condition != "MET" or not isinstance(card.lead_business_days, int):
+            continue
+        arrival = _add_business_days(start, card.lead_business_days)
+        options.append({"date": arrival.isoformat(), "lead": card.lead_business_days, "supplier_id": card.supplier_id,
+                        "quote_ref": card.quote_ref, "as_of": start.isoformat()})
+    return min(options, key=lambda row: (row["date"], row["quote_ref"])) if options else None
+
+
 def _delivery_blocks(view, plan, sections, prerequisite, requirements):
     """Delivery answer in the shared MK-S2 order, filled only from this query.
 
@@ -238,16 +265,32 @@ def _delivery_blocks(view, plan, sections, prerequisite, requirements):
             notes.append(f"자재 조건 변경: {event['value']} 이후 {available['label']} {available['value']}, 계획 투입 기준 부족 {entries['계획 투입 기준 부족']['value']}입니다. 기존 확보안은 재검토가 필요하며 공급사·초안은 자동으로 바뀌지 않습니다.")
         blocks.append(QueryAnswerBlock(id="material_shortage", title="부품 부족 예측", tool="원장 계산 · BOM 전개", kind="normal",
             paragraphs=notes, table={"columns": ["위치", "품목", "필요", "가용", "부족"], "rows": rows, "alert_cells": alerts}))
-        # Backward from the due date, one row per stage. Durations without
-        # ledger evidence stay "근거 없음"; nothing is filled in.
+        # Backward from the due date, one row per stage, filled from this ledger:
+        # due date, boards already moving, and quote lead times for the parts.
+        # Stages with no duration evidence stay "근거 없음"; nothing is invented.
         steps = [["고객 도착", f"도착기한 {due}" if due else "도착기한", "원장 확인" if due else "미확인"],
-                 ["운송", "운송 기간", "근거 없음"], ["출하 준비", "출하 준비 기간", "근거 없음"],
+                 ["운송", f"운송 기간 · 운송 중 {number(s['transit_qty'])}대는 이미 출발", "근거 없음"],
+                 ["출하 준비", f"출하 준비 기간 · 창고 {number(s['warehouse_remaining_qty'])}대 대기", "근거 없음"],
                  [f"생산 {number(basis['planned_input_qty'])}대", "생산능력·작업 달력", "근거 없음"],
-                 ["수입검사", "검사 기간", "근거 없음"], ["부품 입하 필요일", "위 기간의 합", "계산 불가"]]
-        blocks.append(QueryAnswerBlock(id="schedule_backward", title="일정 역산", tool="시연 가정 · 일정", kind="assumption",
-            table={"columns": ["단계 (도착부터 거꾸로)", "필요한 근거", "상태"], "rows": steps,
-                   "alert_cells": [[r, 2] for r, row in enumerate(steps) if row[2] != "원장 확인"]},
-            paragraphs=["단계별 기간 근거가 원장에 없어 부품 입하 필요일을 거꾸로 계산하지 않았습니다. 근거가 들어오면 같은 순서로 계산합니다."]))
+                 ["수입검사", "검사 기간", "근거 없음"],
+                 ["부품 입하 필요일", "위 기간의 합", "계산 불가"]]
+        schedule_notes = []
+        arrival = _earliest_parts_arrival(view, focus) if focus else None
+        if arrival:
+            steps.append([f"부품 입하 예상 ({focus['item_id']})",
+                          f"{arrival['supplier_id']} 견적 {arrival['lead']}영업일 → {arrival['date']}", "시연 견적 가정"])
+            if due:
+                gap = (date.fromisoformat(due) - date.fromisoformat(arrival["date"])).days
+                schedule_notes.append(f"수량을 충족하는 가장 빠른 견적({arrival['quote_ref']}) 기준으로 부품이 {arrival['date']}에 오면 도착기한 {due}까지 {gap}일(달력 기준)이 남습니다. "
+                                      f"이 안에 수입검사·생산 {number(basis['planned_input_qty'])}대·출하 준비·운송이 들어가야 하지만 각 기간 근거가 원장에 없어 가능 여부는 판단하지 않습니다.")
+            schedule_notes.append(f"입하 예상일은 기준일 {arrival['as_of']}에서 주말만 제외한 영업일 계산이며(휴일 달력 없음) 공급사 확약이 아닙니다.")
+        else:
+            steps.append(["부품 입하 예상", "수량을 충족하는 견적 없음", "미확인"])
+            schedule_notes.append("단계별 기간 근거가 원장에 없어 부품 입하 필요일을 거꾸로 계산하지 않았습니다.")
+        blocks.append(QueryAnswerBlock(id="schedule_backward", title="일정 역산", tool="원장 조회 · 일정 · 견적", kind="assumption",
+            table={"columns": ["단계 (도착부터 거꾸로)", "근거", "상태"], "rows": steps,
+                   "alert_cells": [[r, 2] for r, row in enumerate(steps) if row[2] in {"근거 없음", "계산 불가", "미확인"}]},
+            paragraphs=schedule_notes))
         if focus:
             quotes = _quote_cards(view, focus, focus["planned_shortage_qty"])
             if quotes:
