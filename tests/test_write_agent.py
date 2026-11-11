@@ -45,6 +45,7 @@ class WriteAgentTests(unittest.TestCase):
         self.model_calls, self.writes, self.documents, self.tamper = [], [], {}, {}
         self.version = [1]
         self.recommended = "SUP-A"
+        self.open_request = None
         self.workflow, self.identity = build_host(self.db, route_model=lambda *args: self.model_calls.append(args),
                                                   selected_version=self.version)
         self.identity.provision_dev_accounts()
@@ -58,7 +59,8 @@ class WriteAgentTests(unittest.TestCase):
                 "partial_bom": True, "calculation": {"shortage_qty": "23", "recommended_qty": qty, "quantity_condition": condition,
                 "supply_limit_qty": 25 if condition == "NOT_MET" else 40, "total": None, "currency": "USD"},
                 "recommended": supplier == self.recommended,
-                "recommendation_reason": "수량 조건을 충족하는 유효 견적이 이것 하나입니다." if supplier == self.recommended else None}
+                "recommendation_reason": "수량 조건을 충족하는 유효 견적이 이것 하나입니다." if supplier == self.recommended else None,
+                "open_request": self.open_request}
             return ToolOutput(snapshot=ctx, data={"quotes": [quote("SUP-A", 30, "MET"), quote("SUP-B", 30, "NOT_MET")],
                 "model_calls": 0, "ledger_mutations": 0, "meta": {"company_id": ctx.company_id, "snapshot_id": ctx.read_snapshot_id,
                 "ledger_version": ctx.ledger_version, "projection_version": ctx.projection_version}})
@@ -138,6 +140,14 @@ class WriteAgentTests(unittest.TestCase):
         final = self.decide(waiting, "approve", question="추천 견적으로 구매 요청 초안 만들어줘")
         self.assertEqual(final["result"]["reconciliation"]["status"], "MATCHED", final["error_code"])
         self.assertEqual(next(iter(self.documents.values()))["content"]["quote_id"], "quote-SUP-A")
+
+    def test_an_open_purchase_request_stops_the_agent_before_any_proposal(self):
+        self.open_request = {"document_id": "4ae2c0de-0000-0000-0000-000000000000", "quantity": 30, "status": "POSTED"}
+        done = self.start("추천 견적으로 구매 요청 초안 만들어줘")
+        self.assertEqual((done["status"], done["result"]["status"]), ("COMPLETED", "UNKNOWN"), done["error_code"])
+        self.assertEqual(done["result"]["conclusion"], "진행 중인 구매 요청 있음 · 저장 없음")
+        self.assertIn("PR-4AE2(30개)", done["result"]["answer"])
+        self.assertEqual(self.writes, [])
 
     def test_unsafe_or_unclear_requests_never_reach_the_write_tool(self):
         self.recommended = None

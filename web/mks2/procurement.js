@@ -172,6 +172,8 @@ export function supplyProgress(documents, snapshot, identity, editor = null) {
   }
   return {
     inspected: Boolean(iqc && iqc.status === 'POSTED'),
+    requestPosted: pr.status === 'POSTED', requestQty: pr.quantity,
+    postedKinds: [...new Set(chain.filter(row => row.status === 'POSTED').map(row => row.kind))],
     item, status, tone, steps: stepsAt(focus ? reachedStep[focus.status] ?? 0 : 4), focusId: focus?.id || null,
     focusLabel: focus && focus !== pr ? kindLabel[focus.kind] : null,
     focusSummary: focus ? `${kindLabel[focus.kind] || focus.kind} ${docLabel(focus.kind, focus.id)}${focus.quantity != null ? ` · ${focus.quantity}${['PRODUCTION', 'FG_RECEIPT', 'SHIPMENT', 'ARRIVAL'].includes(focus.kind) ? '대' : unit}` : ''}` : null, next, shortfall, needed: Number.isFinite(needed) ? needed : null, stale, rows: progressRows,
@@ -423,6 +425,34 @@ export function autoCandidate({ supply, fulfillment, documents, identity, ledger
   return supply?.inspected ? pick(fulfillment?.next, 'fulfillment') || null : null;
 }
 
+// DEC-H63 · fulfilment plan approval. Once the purchase request is posted, the
+// remaining steps are fixed by the ledger. The reviewer approves this plan once;
+// the screen then repeats, under that approval: the agent writes the next draft
+// on the author account → the reviewer account approves and posts it. It stops
+// on any document outside the plan, any error, a stop press or full arrival.
+const SUPPLY_STEPS = [['PO', '내부 발주'], ['SUPPLY_CONFIRMATION', '공급확인 · 모의'], ['RECEIPT', '입하'], ['IQC', '수입검사'],
+  ['PRODUCTION', '생산'], ['FG_RECEIPT', '완성품 입고'], ['SHIPMENT', '출하'], ['ARRIVAL', '고객 도착']];
+export function batchPlan(progress, snapshot) {
+  if (!progress || progress.empty || !progress.requestPosted) return null;
+  const summary = snapshot?.summary || {}, pools = snapshot?.legacy_cohort || {};
+  if (Number(summary.promise_remaining_qty) === 0) return null;
+  const posted = new Set(progress.postedKinds || []), target = Number(summary.production_remaining_qty) || 0;
+  const produced = posted.has('PRODUCTION');
+  // Boards the purchased LOT builds (one part per board in this demo); after the
+  // production record the remaining target no longer includes them.
+  const lotBoards = produced ? null : Math.min(target, Number(progress.requestQty) || 0);
+  const steps = SUPPLY_STEPS.filter(([kind]) => !posted.has(kind)).map(([kind, label]) => ({ kind,
+    label: ['PRODUCTION', 'FG_RECEIPT', 'SHIPMENT', 'ARRIVAL'].includes(kind) ? `${label}${lotBoards != null ? ` · ${lotBoards}대` : ''}` : `${label} · ${progress.requestQty}${unitWord('EA')}` }));
+  const opening = (Number(pools.good_not_received) || 0) + (Number(pools.warehouse) || 0) + (Number(pools.in_transit) || 0);
+  if (opening) steps.push({ kind: 'COHORT', label: `기초 보드 ${opening}대 · 입고 → 출하 → 도착` });
+  const extra = Math.max(0, target - (lotBoards || 0));
+  if (extra) steps.push({ kind: 'PRODUCTION', label: `추가 생산 ${extra}대 · 생산 → 입고 → 출하 → 도착 (가용 LOT 기준)` });
+  return { steps, remaining: Number(summary.promise_remaining_qty) };
+}
+const BATCH_KEY = 'ontologics-mks2-batch';
+let batch = (() => { try { return JSON.parse(globalThis.sessionStorage?.getItem(BATCH_KEY) || 'null'); } catch { return null; } })();
+function saveBatch() { try { globalThis.sessionStorage?.setItem(BATCH_KEY, JSON.stringify(batch)); } catch { /* demo convenience only */ } }
+
 export function mountProcurementFlow(container, { snapshot, api, getIdentity = () => null, onPosted = () => {}, onRefresh = () => {}, onActivity = () => {} }) {
   const abort = new AbortController(), pending = new Map();
   let documents = [], choices = [], activeId = null, editor = null, busy = false, destroyed = false, fulfillment = null, supply = null, substitute = null;
@@ -453,7 +483,7 @@ export function mountProcurementFlow(container, { snapshot, api, getIdentity = (
         : error.status === 409 ? '문서 상태나 기준이 변경되었습니다. 서버 문서를 다시 확인해 주세요.'
         : error.status === 422 ? '입력 수량·단위·조건과 필수 근거를 확인해 주세요.'
         : '결과를 확인하지 못했습니다. 같은 입력으로 재시도하면 동일 요청 키를 사용합니다.'), true);
-    } finally { if (!destroyed) { busy = false; render(); autoStep(); } }
+    } finally { if (!destroyed) { busy = false; render(); autoStep(); batchStep(); } }
   }
   async function reload(preferred = activeId) {
     const response = await api('/api/mks2/procurement/documents');
@@ -607,6 +637,75 @@ export function mountProcurementFlow(container, { snapshot, api, getIdentity = (
       message(`Agent가 ${kinds[doc.kind]} 초안을 최신 원장 v${ledgerVersion} 기준으로 다시 저장했습니다. 다른 계정에서 승인·확정해 주세요.`);
     });
   }
+  // One button, two exact-version commands by the same reviewer: review, then approve.
+  function approveDoc(doc) {
+    work(async () => {
+      const reviewed = doc.status === 'REVIEWED' ? doc : await command(`/api/mks2/procurement/documents/${encodeURIComponent(doc.id)}/review`, exact(doc));
+      if (destroyed) return;
+      const approved = await command(`/api/mks2/procurement/documents/${encodeURIComponent(doc.id)}/approve`, exact(reviewed));
+      if (destroyed) return;
+      editor = null; await reload(approved.id);
+      message('검토하고 승인했습니다. 원장 반영(확정)은 별도입니다.');
+    });
+  }
+  function postDoc(doc) {
+    work(async () => {
+      const result = await command(`/api/mks2/procurement/documents/${encodeURIComponent(doc.id)}/post`, exact(doc));
+      if (destroyed) return;
+      editor = null; needsRefresh = true; onPosted(result);
+      await reload(result.id);
+      message('원장에 반영했습니다. 최신 원장에서 수량을 확인해 주세요.');
+    });
+  }
+  // DEC-H63 plan runner: one step per call, driven after every load/command.
+  let batchQueued = false, refreshAsked = false;
+  function stopBatch(text) { batch = { ...batch, active: false, result: text }; saveBatch(); render(); }
+  function switchRole(role) { container.dispatchEvent(new CustomEvent('mks2:switch-role', { bubbles: true, detail: { role } })); }
+  function batchStep() {
+    if (!batch?.active || destroyed || batchQueued) return;
+    batchQueued = true;
+    setTimeout(() => { batchQueued = false; runBatch(); }, 700);
+  }
+  function runBatch() {
+    if (!batch?.active || destroyed || busy || editor) return;
+    if (failed) { stopBatch(`오류로 멈춤 · ${notice}`); return; }
+    if (needsRefresh) { if (!refreshAsked) { refreshAsked = true; onRefresh(); } return; }
+    const identity = getIdentity(), reviewer = can('document.approve');
+    const waiting = waitingDocuments(documents);
+    if (reviewer) {
+      const doc = waiting[0];
+      if (doc) {
+        const planned = FLOW_KINDS.has(doc.kind) && doc.created_by !== identity?.actor_id && /^(Agent )?자동 작성/.test(String(doc.content?.note || ''));
+        if (!planned) { stopBatch(`계획에 없는 문서 ${documentLabel(doc.kind, doc.id)}가 승인 대기 중이라 멈췄습니다.`); return; }
+        batch = { ...batch, current: `${kinds[doc.kind]} ${documentLabel(doc.kind, doc.id)}${doc.quantity != null ? ` · ${doc.quantity}` : ''}` }; saveBatch();
+        if (doc.status === 'APPROVED') { batch = { ...batch, done: (batch.done || 0) + 1 }; saveBatch(); postDoc(doc); }
+        else approveDoc(doc);
+        return;
+      }
+      if (Number(snapshot.summary?.promise_remaining_qty) === 0) { stopBatch(`완료 · ${batch.done || 0}개 문서를 계획 승인에 따라 확정했습니다. 남은 약속 0대.`); return; }
+      switchRole('author');
+      return;
+    }
+    if (waiting.length) { switchRole('review'); return; }
+    if (Number(snapshot.summary?.promise_remaining_qty) === 0) { stopBatch(`완료 · ${batch.done || 0}개 문서를 계획 승인에 따라 확정했습니다. 남은 약속 0대.`); return; }
+    if (!autoCandidate({ supply, fulfillment, documents, identity, ledgerVersion, enabled: true })) stopBatch('Agent가 작성할 다음 단계가 없어 멈췄습니다.');
+  }
+  function batchCard(progress) {
+    const plan = batchPlan(progress, snapshot);
+    if (batch?.active) {
+      return `<section class="mk-flow-lane mk-batch" data-batch-card><div class="mk-flow-head"><strong>이행 계획 · 일괄 진행 중</strong><span class="mk-pill info">계획 승인 ${esc(batch.approver || '')}</span></div>
+        <p class="mk-flow-summary">확정 ${esc(batch.done || 0)}건${batch.current ? ` · 현재 ${esc(batch.current)}` : ''}</p>
+        <div class="mk-supply-actions"><button type="button" class="mk-btn" data-batch-stop>중지</button></div>
+        <p class="mk-small-note">각 문서는 작성자 계정의 Agent가 쓰고 검토자 계정으로 승인·확정합니다. 계획에 없는 문서나 오류가 나오면 멈춥니다.</p></section>`;
+    }
+    const result = batch?.result ? `<p class="mk-small-note" data-batch-result>${esc(batch.result)}</p>` : '';
+    if (!plan || waitingDocuments(documents).some(row => !FLOW_KINDS.has(row.kind))) return result ? `<section class="mk-flow-lane mk-batch">${result}</section>` : '';
+    const reviewer = can('document.approve');
+    return `<section class="mk-flow-lane mk-batch" data-batch-card><div class="mk-flow-head"><strong>이행 계획 · 남은 단계 ${esc(plan.steps.length)}개</strong><span class="mk-pill mute">남은 약속 ${esc(plan.remaining)}대</span></div>
+      <ol class="mk-batch-steps">${plan.steps.map(step => `<li>${esc(step.label)}</li>`).join('')}</ol>
+      <div class="mk-supply-actions">${reviewer ? `<button type="button" class="mk-btn primary" data-batch-start${busy ? ' disabled' : ''}>계획 승인 · 일괄 진행</button>` : '<span class="mk-flow-wait">검토자가 계획을 승인하면 한 번에 진행합니다</span>'}</div>
+      <p class="mk-small-note">수량은 예상이며 단계마다 서버가 원장 기준으로 다시 검사합니다. 공급사 송신·실제 발주는 없습니다.</p>${result}</section>`;
+  }
   function render() {
     if (destroyed) return;
     const status = notice && (failed || editor || needsRefresh || lastAuto) ? `<p role="status" aria-live="polite" class="mk-supply-notice${failed ? ' mk-bom-warning' : ''}">${esc(notice)}</p>` : `<p role="status" aria-live="polite" class="mk-supply-notice"></p>`;
@@ -639,12 +738,20 @@ export function mountProcurementFlow(container, { snapshot, api, getIdentity = (
     const autoOn = autoDraftEnabled();
     const toggle = `<button type="button" class="mk-btn mk-auto-toggle${autoOn ? ' on' : ''}" data-auto-draft aria-pressed="${autoOn}" title="작성자 계정에서 앞 단계가 원장에 반영되면 Agent가 다음 초안을 작성합니다. 승인·확정은 사람이 합니다.">Agent 자동 초안 ${autoOn ? '켜짐' : '꺼짐'}</button>`;
     container.innerHTML = `<div class="mk-flow-board"><div class="mk-flow-board-head"><h3>진행 현황</h3>${toggle}</div>${banner ? `<p class="mk-flow-banner"><span>${esc(banner.text)}</span><button type="button" class="mk-btn primary" data-switch-role="${banner.role}"${busy ? ' disabled' : ''}>${esc(banner.action)}</button></p>` : ''}${status}${refresh}`
+      + batchCard(progress)
       + supplyLane(progress, blocked, otherEditing ? '' : form())
       + substituteLane(substitute, blocked, substituteEditing ? form() : '')
       + scenarioLane(scenario, blocked, scenarioEditing ? form() : '')
       + fulfillmentLane(fulfillment, blocked) + '</div>';
   }
   container.addEventListener('click', event => {
+    if (event.target.closest('[data-batch-start]') && !busy) {
+      setAutoDraft(true); failed = false;
+      batch = { active: true, approver: getIdentity()?.actor_id, started: new Date().toISOString(), ledger: ledgerVersion, done: 0,
+        plan: (batchPlan(supply, snapshot)?.steps || []).map(step => step.label) };
+      saveBatch(); render(); batchStep(); return;
+    }
+    if (event.target.closest('[data-batch-stop]')) { stopBatch('사용자가 중지했습니다. 남은 단계는 진행 현황에서 이어갈 수 있습니다.'); return; }
     if (event.target.closest('[data-auto-draft]')) { setAutoDraft(!autoDraftEnabled()); render(); autoStep(); return; }
     const switcher = event.target.closest('[data-switch-role]');
     if (switcher && !switcher.disabled) { container.dispatchEvent(new CustomEvent('mks2:switch-role', { bubbles: true, detail: { role: switcher.dataset.switchRole } })); return; }
@@ -697,15 +804,7 @@ export function mountProcurementFlow(container, { snapshot, api, getIdentity = (
       });
       return;
     }
-    if (action === 'review-approve') work(async () => {
-      // One button, two exact-version commands by the same reviewer: review, then approve.
-      const reviewed = await command(`/api/mks2/procurement/documents/${encodeURIComponent(doc.id)}/review`, exact(doc));
-      if (destroyed) return;
-      const approved = await command(`/api/mks2/procurement/documents/${encodeURIComponent(doc.id)}/approve`, exact(reviewed));
-      if (destroyed) return;
-      editor = null; await reload(approved.id);
-      message('검토하고 승인했습니다. 원장 반영(확정)은 별도입니다.');
-    });
+    if (action === 'review-approve') approveDoc(doc);
     if (['review', 'approve', 'post'].includes(action)) work(async () => {
       const result = await command(`/api/mks2/procurement/documents/${encodeURIComponent(doc.id)}/${action}`, exact(doc));
       if (destroyed) return;
