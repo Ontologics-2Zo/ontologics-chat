@@ -120,6 +120,14 @@ function focusEvidence(id) {
   lane?.focus(id);
 }
 function fillQuestion(text, name = currentScreen()) { panels[name].input.value = text; panels[name].input.focus(); }
+// After the basis changes, put the panel's last question back in its input so
+// it can be asked again on the new ledger. Never overwrites what is typed.
+function offerSameQuestion(name, question = panels[name]?.lastQuestion) {
+  const panel = panels[name];
+  if (!panel || !question || panel.input.value.trim()) return false;
+  panel.input.value = question;
+  return true;
+}
 // After an explicit BOM post, offer to resend the last question; it only fills the draft.
 function offerRerun(kind) {
   for (const name of ['dashboard', 'graph']) {
@@ -354,7 +362,12 @@ async function runQuery(name, question) {
       snapshotId: answer.meta.snapshot_id ?? answer.meta.read_snapshot_id,
       companyId: answer.meta.company_id, identityRevision: answer.meta.identity_revision });
     const evidenceAtVersion = action => {
-      if (!answerSnapshotMatches(answer)) { notify('과거 원장 버전의 답변입니다. 최신 근거가 필요하면 질문을 다시 실행해 주세요.'); return; }
+      if (!answerSnapshotMatches(answer)) {
+        const filled = offerSameQuestion(name, question);
+        notify(filled ? '과거 원장 버전의 답변입니다. 같은 질문을 아래 입력창에 넣었습니다. 보내면 최신 원장으로 다시 답합니다.'
+          : '과거 원장 버전의 답변입니다. 최신 근거가 필요하면 질문을 다시 실행해 주세요.');
+        return;
+      }
       return action();
     };
     let activeReplay = null;
@@ -557,8 +570,13 @@ function announceApplied(events, startedAt) {
         + (grew ? `계획 부족 ${impact.planned_shortage_before}→${impact.planned_shortage_after}${unit} · 기존 확보안 재검토 필요` : `계획 부족 ${impact.planned_shortage_after}${unit} 유지`)
         + ` · 원장 v${impact.ledger_version} `,
       button('변경 관계 보기', () => focusEvidence(impact.entity_id), 'btn sm'),
-      ...(grew ? names.map(name => button(question, () => fillQuestion(question, name), 'suggestion')) : [])].filter(Boolean));
-    if (grew) markEarlierAnswers(names, impact.ledger_version);
+      ...(grew ? names.flatMap(name => [
+        panels[name].lastQuestion ? button('같은 질문 다시 하기', () => fillQuestion(panels[name].lastQuestion, name), 'suggestion') : null,
+        button(question, () => fillQuestion(question, name), 'suggestion')]) : [])].filter(Boolean));
+    if (grew) {
+      for (const name of names) offerSameQuestion(name);
+      markEarlierAnswers(names, impact.ledger_version);
+    }
     for (const name of names) {
       panels[name].status.dataset.eventId = event.event_id;
       if (latency !== null) panels[name].status.dataset.latencyMs = String(latency);

@@ -484,6 +484,20 @@ test('a relevant committed reservation auto-refreshes and adds one status line w
   assert.equal(h.app.panels().dashboard.status.children.length, 1);
 });
 
+test('a grown shortage puts the same question back in the empty input and offers it again', async () => {
+  for (const typed of ['', '입력 중인 질문']) {
+    const h = await setup();
+    h.snapshot().material_requirements = { items: [{ item_id: 'item-a' }] };
+    const panel = h.app.panels().dashboard;
+    panel.topics.add('item-a'); panel.lastQuestion = '남은 68대, 납기 안에 고객에게 도착할 수 있어?'; panel.input.value = typed;
+    h.setHandler(request => request.path.startsWith('/api/mks2/events') ? reservationChanges('READY') : undefined);
+    h.setNextSnapshot(reservedSnapshot());
+    await h.app.poll();
+    assert.equal(panel.input.value, typed || panel.lastQuestion);
+    assert.match(panel.status.textContent, /같은 질문 다시 하기/);
+  }
+});
+
 test('a reservation whose graph projection is pending keeps the old snapshot and says the graph is updating', async () => {
   const h = await setup();
   h.snapshot().material_requirements = { items: [{ item_id: 'item-a' }] };
