@@ -369,6 +369,7 @@ function productInput() {
   return bom ? { ledger_version: snapshot.meta.ledger_version, bom_id: bom.bom_id,
     bom_version: bom.bom_version, payload_hash: bom.payload_hash } : undefined;
 }
+function panelName(panel) { return Object.keys(panels).find(name => panels[name] === panel); }
 async function agentQuery(panel, question, message, requestGeneration, contextEntityId) {
   let state;
   const key = crypto.randomUUID();
@@ -393,6 +394,7 @@ async function agentQuery(panel, question, message, requestGeneration, contextEn
   const base = `/api/mks2/agent/executions/${encodeURIComponent(state.execution_id)}`;
   let cursor = 0, reading = false, finished = false;
   const labels = { created: '실행 준비', route: '조회 기능 선택', validate: '권한과 기준 확인',
+    propose: '초안 제안 작성', write: '초안 저장', reconcile: '저장 결과 대사',
     fulfillment_read: '이행 수량 조회', material_analysis: '소요·부족 조회',
     product_review: 'BOM 품목 후보 검토', procurement_review: '부족량·견적 비교',
     tool: '원장 근거 조회', validation: '결과 확인', completed: '조회 완료' };
@@ -416,8 +418,9 @@ async function agentQuery(panel, question, message, requestGeneration, contextEn
   const timer = setInterval(progress, 750);
   try {
     state = pending?.capability
-      ? await api(`${base}/resume`, { question, capability: pending.capability,
+      ? await api(`${base}/resume`, { question: pending.question || question, capability: pending.capability,
         product: pending.capability === 'product_review' ? productInput() : undefined,
+        decision: pending.decision, proposal_hash: pending.proposal_hash,
         expected_revision: pending.revision, idempotency_key: key })
       : await api(`${base}/run`, {});
   } catch (error) {
@@ -439,6 +442,27 @@ async function agentQuery(panel, question, message, requestGeneration, contextEn
     if (!agentSnapshotMatches(state)) { const error = new Error('SNAPSHOT_MISMATCH'); error.status = 409; throw error; }
     const nextWaiting = { state, generation: requestGeneration, controls: [], inflight: false };
     panel.waiting = nextWaiting;
+    if (state.interrupt?.kind === 'write_approval') {
+      // The agent proposes one draft and stops. Only the user's explicit choice
+      // here lets it save that exact draft; business approval stays separate.
+      const original = panel.lastQuestion;
+      const table = element('table', 'query-table');
+      for (const [label, value] of state.interrupt.rows || []) {
+        const row = element('tr'); row.append(element('th', '', label), element('td', '', value)); table.append(row);
+      }
+      message.replaceChildren(element('p', '', state.interrupt.message), table,
+        element('p', 'note', state.interrupt.note || '승인하면 초안만 저장합니다. 원장 반영은 없습니다.'));
+      const choose = (decision, text) => button(text, () => {
+        if (!currentAgentWaiting(panel, nextWaiting) || nextWaiting.inflight || panel.submit.disabled) return;
+        panel.pending = { ...state, capability: 'procurement_draft', question: original, decision,
+                          proposal_hash: state.interrupt.proposal_hash };
+        runQuery(panelName(panel), decision === 'approve' ? '초안 저장 승인' : '초안 저장 취소');
+      });
+      for (const control of [choose('approve', '초안 저장 승인'), choose('decline', '취소')]) {
+        nextWaiting.controls.push(control); message.append(control);
+      }
+      return null;
+    }
     message.replaceChildren(element('p', '', state.interrupt?.message || '조회할 업무를 확인해 주세요.'),
       element('p', 'note', '업무를 선택하고 질문을 보완하면 같은 실행을 이어갑니다. 원장 반영은 없습니다.'));
     for (const capability of state.interrupt?.allowed_capabilities || []) {
@@ -460,6 +484,7 @@ async function agentQuery(panel, question, message, requestGeneration, contextEn
       element('p', 'note', `상태 · ${state.error_code || state.status} · 원장 변경 없음`));
     return null;
   }
+  if (state.document_writes) dashboard?.refreshProcurement?.();
   return { ...state.result, agent_execution: { execution_id: state.execution_id,
     status: state.status, mode: state.model?.mode, live_calls: state.model?.live_calls || 0,
     fake_calls: state.model?.fake_calls || 0, tool_calls: state.tool_calls } };

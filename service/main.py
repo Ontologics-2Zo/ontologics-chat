@@ -297,6 +297,9 @@ def create_app(db, *, private_root: str, origin="http://127.0.0.1:8870", dev_mod
     def delivery_answered(actor, answer):
         if app.state.demo_cue is not None and "delivery" in (answer.get("intent") or []):
             app.state.demo_cue.delivery_answered(actor.company_id)
+        # An agent-saved purchase-request draft is the same demo cue as the UI draft.
+        if app.state.demo_cue is not None and any(row.get("kind") == "PR" for row in answer.get("document_writes") or []):
+            app.state.demo_cue.purchase_request_drafted(actor.company_id)
     mount_agent_api(app, principal, workflow, model_summary, on_answer=delivery_answered)
 
     @app.get("/health")

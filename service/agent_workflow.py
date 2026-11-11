@@ -1,4 +1,8 @@
-"""Persistent bounded read workflow, separate from business approval and writes.
+"""Persistent bounded agent workflow, separate from business approval and posting.
+
+Read capabilities answer from the ledger. The one write capability saves a
+purchase-request draft only after the requesting user approves the exact
+proposal at an interrupt; another account still reviews, approves and posts it.
 
 Only opaque references and routing state enter LangGraph checkpoints. Authenticated
 inputs/results live in the local artifact store; secrets/Principals never enter
@@ -22,6 +26,7 @@ from service.agent_store import AgentStore, DurableAgentBudget, TERMINAL
 from service.agents import FulfillmentRead, MaterialAnalysis
 from service.agents.product import ProductReview
 from service.agents.procurement import ProcurementReview
+from service.agents import procurement_draft
 from service.contracts import content_hash
 from service.errors import ServiceError
 from service.query_intents import interpret_question
@@ -49,6 +54,9 @@ class TaskState(TypedDict, total=False):
     result_ref: str | None
     needs_clarification: bool
     checkpoint_version: str
+    proposal_ref: str | None
+    receipt_ref: str | None
+    decision: str | None
 
 
 class AgentWorkflow:
@@ -136,7 +144,8 @@ class AgentWorkflow:
                 "segment_count": row["segment_count"], "tool_calls": row["tool_calls"],
                 "max_tool_calls": row["max_tool_calls"], "snapshot": row["pinned_context"],
                 "result": result, "interrupt": row["interrupt"], "error_code": row["error_code"],
-                "ledger_mutations": 0, "execution_kind": "langgraph_readonly_agent",
+                "ledger_mutations": 0, "execution_kind": "langgraph_agent",
+                "document_writes": len((result or {}).get("document_writes") or []),
                 "deadline_at": row["deadline_at"].isoformat(),
                 "events": self.store.events(str(row["execution_id"]))}
 
@@ -307,6 +316,9 @@ class AgentWorkflow:
             request, explicit = effective_input()
             if explicit:
                 return {"capability": explicit, "needs_clarification": False}
+            # A draft request is recognized deterministically; the model never picks a write.
+            if procurement_draft.draft_request(request.question) is not None:
+                return {"capability": "procurement_draft", "needs_clarification": False}
             plan = interpret_question(request.question)
             # The model only receives the fixed routing flags. Narrower intents
             # map onto them (sourcing/change → materials, trace → inventory).
@@ -335,7 +347,9 @@ class AgentWorkflow:
             initial_request, _ = effective_input()
             plan = interpret_question(initial_request.question)
             previous = self.store.result(execution_id, state.get("result_ref"))
-            message = plan.clarification or (previous.get("answer") if previous else None) or "현재 회차의 이행 또는 자재 분석에 필요한 질문과 업무를 지정해 주세요. 이 재개는 승인이나 원장 반영이 아닙니다."
+            # The specialist's own clarification (e.g. which quote to use) comes first.
+            asked = previous.get("answer") if previous and previous.get("status") == "NEEDS_CLARIFICATION" else None
+            message = asked or plan.clarification or (previous.get("answer") if previous else None) or "현재 회차의 이행 또는 자재 분석에 필요한 질문과 업무를 지정해 주세요. 이 재개는 승인이나 원장 반영이 아닙니다."
             choice = interrupt({"kind": "clarification", "message": message,
                                 "allowed_capabilities": list(CAPABILITIES)})
             request, persisted_capability = effective_input()
@@ -409,8 +423,73 @@ class AgentWorkflow:
             return extend(state, "retrieve", "retrieval", search)
 
 
+        def propose(state):
+            request, _ = effective_input()
+            key = content_hash({"stage": "propose", "question": request.question, "ledger_version": context.ledger_version})
+            prior = self.store.artifact(execution_id, key)
+            if prior:
+                proposed = self.store.result(execution_id, prior["artifact_id"])
+                ref = str(prior["artifact_id"])
+            else:
+                port = self.gateway.bind(principal=principal, context=context, budget=budget,
+                                         allowed_tools={"procurement.options"})
+                proposed = procurement_draft.propose(request.question, port, context, principal.permissions)
+                ref = self.store.put_artifact(execution_id, lease, key, proposed)
+            return {"result_ref": ref, "proposal_ref": ref if proposed["status"] == "PROPOSED" else None,
+                    "needs_clarification": proposed["status"] == "NEEDS_CLARIFICATION"}
+
+        def approve_write(state):
+            # Nothing is written before this interrupt. Resume re-runs this node
+            # and must name the exact proposal; a changed snapshot fails earlier.
+            proposed = self.store.result(execution_id, state.get("proposal_ref"))
+            if not proposed or proposed.get("status") != "PROPOSED":
+                raise ServiceError("AGENT_RESULT_INVALID", 409)
+            request, _ = effective_input()
+            choice = interrupt({"kind": "write_approval", "capability": "procurement_draft",
+                                "message": proposed["answer"], "proposal_hash": proposed["proposal_hash"],
+                                "rows": proposed["proposal_rows"], "allowed_decisions": ["approve", "decline"],
+                                "note": "승인하면 이 내용 그대로 구매 요청 초안만 저장합니다. 검토·승인·확정은 다른 계정이 합니다."})
+            expected = {"capability": "procurement_draft", "question": request.question, "proposal_hash": proposed["proposal_hash"]}
+            if (not isinstance(choice, dict) or {key: choice.get(key) for key in expected} != expected
+                    or choice.get("decision") not in {"approve", "decline"}):
+                raise ServiceError("AGENT_RESUME_INVALID", 409)
+            if choice["decision"] == "decline":
+                key = content_hash({"stage": "declined", "proposal": proposed["proposal_hash"]})
+                prior = self.store.artifact(execution_id, key)
+                ref = str(prior["artifact_id"]) if prior else self.store.put_artifact(execution_id, lease, key, procurement_draft.declined(proposed))
+                return {"decision": "decline", "result_ref": ref}
+            return {"decision": "approve"}
+
+        def write(state):
+            proposed = self.store.result(execution_id, state.get("proposal_ref"))
+            key = content_hash({"stage": "write", "proposal": proposed["proposal_hash"]})
+            prior = self.store.artifact(execution_id, key)
+            if prior:
+                return {"receipt_ref": str(prior["artifact_id"])}
+            port = self.gateway.bind(principal=principal, context=context, budget=budget,
+                                     allowed_tools={"procurement.create"})
+            # Stable idempotency key: a retry after a lost response returns the same document.
+            receipt = procurement_draft.write(principal, port, context, proposed)
+            return {"receipt_ref": self.store.put_artifact(execution_id, lease, key, receipt)}
+
+        def reconcile(state):
+            proposed = self.store.result(execution_id, state.get("proposal_ref"))
+            receipt = self.store.result(execution_id, state.get("receipt_ref"))
+            key = content_hash({"stage": "reconcile", "receipt": state.get("receipt_ref")})
+            prior = self.store.artifact(execution_id, key)
+            if prior:
+                return {"result_ref": str(prior["artifact_id"])}
+            port = self.gateway.bind(principal=principal, context=context, budget=budget,
+                                     allowed_tools={"procurement.document"})
+            result = procurement_draft.reconcile(principal, port, context, proposed, receipt)
+            return {"result_ref": self.store.put_artifact(execution_id, lease, key, result)}
+
         graph = StateGraph(TaskState)
         graph.add_node("route", observed("route", route))
+        graph.add_node("propose", observed("propose", propose))
+        graph.add_node("approve_write", approve_write)
+        graph.add_node("write", observed("write", write))
+        graph.add_node("reconcile", observed("reconcile", reconcile))
         graph.add_node("clarify", clarify)
         for capability in CAPABILITIES:
             child = StateGraph(TaskState)
@@ -421,10 +500,18 @@ class AgentWorkflow:
             graph.add_edge(capability, "validate")
         graph.add_node("validate", observed("validate", validate))
         graph.add_node("retrieve", observed("retrieve", retrieve))
-        choices = {**{name: name for name in CAPABILITIES}, "clarify": "clarify"}
+        choices = {**{name: name for name in CAPABILITIES}, "procurement_draft": "propose", "clarify": "clarify"}
         graph.add_edge(START, "route")
         graph.add_conditional_edges("route", lambda state: state.get("capability") or "clarify", choices)
-        graph.add_conditional_edges("clarify", lambda state: state["capability"], {name: name for name in CAPABILITIES})
+        graph.add_conditional_edges("clarify", lambda state: state["capability"],
+                                    {**{name: name for name in CAPABILITIES}, "procurement_draft": "propose"})
+        graph.add_conditional_edges("propose", lambda state: "clarify" if state.get("needs_clarification")
+                                    else "approve_write" if state.get("proposal_ref") else "end",
+                                    {"clarify": "clarify", "approve_write": "approve_write", "end": END})
+        graph.add_conditional_edges("approve_write", lambda state: "write" if state.get("decision") == "approve" else "end",
+                                    {"write": "write", "end": END})
+        graph.add_edge("write", "reconcile")
+        graph.add_edge("reconcile", END)
         graph.add_conditional_edges("validate", lambda state: "clarify" if state["needs_clarification"] else "retrieve", {"clarify": "clarify", "retrieve": "retrieve"})
         # The AI summary is a separate after-answer step (summarize), so the
         # ledger answer is returned without waiting for the model to write.

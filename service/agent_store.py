@@ -163,6 +163,8 @@ class AgentStore:
             pending = {"capability": request.capability, "question": request.question}
             if request.product is not None:
                 pending["product"] = request.product.model_dump(mode="json")
+            if request.decision is not None:
+                pending.update(decision=request.decision, proposal_hash=request.proposal_hash)
             conn.execute("""UPDATE agent_executions SET pending_resume=%s,status='CREATED',
                 revision=revision+1,updated_at=now() WHERE execution_id=%s""",
                 (Jsonb(pending), execution_id))

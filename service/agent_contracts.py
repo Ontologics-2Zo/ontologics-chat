@@ -8,8 +8,9 @@ from service.contracts import Contract
 from service.product_contracts import ProductReviewInput
 
 
-Capability = Literal["fulfillment_read", "material_analysis", "product_review", "procurement_review"]
-WORKFLOW_VERSION = "readonly-agent-v4"
+Capability = Literal["fulfillment_read", "material_analysis", "product_review", "procurement_review", "procurement_draft"]
+# v5: a purchase-request draft write behind a human approval interrupt (T07/T14).
+WORKFLOW_VERSION = "agent-v5"
 CHECKPOINT_VERSION = "agent-state-v1"
 
 
@@ -37,11 +38,18 @@ class AgentResume(Contract):
     capability: Capability
     question: str = Field(min_length=1, max_length=2000)
     product: ProductReviewInput | None = None
+    # A write approval names the exact proposal it approves or declines.
+    decision: Literal["approve", "decline"] | None = None
+    proposal_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
     @model_validator(mode="after")
     def product_scope(self):
         if (self.capability == "product_review") != (self.product is not None):
             raise ValueError("PRODUCT_REVIEW_INPUT_REQUIRED")
+        if (self.decision is None) != (self.proposal_hash is None):
+            raise ValueError("WRITE_DECISION_REQUIRES_PROPOSAL")
+        if self.decision is not None and self.capability != "procurement_draft":
+            raise ValueError("WRITE_DECISION_CAPABILITY_REQUIRED")
         return self
 
 
