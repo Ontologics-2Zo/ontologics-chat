@@ -15,6 +15,11 @@ test('no substitute candidate for the focus item hides the row', () => {
   assert.equal(substituteState(snapshot(23, 0, []), [], author), null);
 });
 
+test('before a BOM is posted there is no shortage, so the row stays hidden', () => {
+  const noBom = { ...snapshot(23), material_requirements: { items: [] } };
+  assert.equal(substituteState(noBom, [], author), null);
+});
+
 test('the author asks for the smaller of the shortage and the candidate stock in one click', () => {
   const state = substituteState(snapshot(23), [], author);
   assert.equal(state.status, '검토 전');
