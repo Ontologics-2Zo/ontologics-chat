@@ -42,6 +42,7 @@ const errors = {
 // It follows one purchase like the shared screen: 초안 (unsaved request form) → 승인 요청
 // (saved draft, waiting for another account) → 승인 → 확정 (ledger posting), then
 // receipt and inspection. Buttons only run the existing explicit commands.
+const unitWord = unit => unit === 'EA' || !unit ? '개' : ` ${unit}`;
 const progressSteps = ['초안', '승인 요청', '승인', '확정'];
 const reachedStep = { DRAFT: 1, REVIEWED: 2, APPROVED: 3, POSTED: 4 };
 export function supplyProgress(documents, snapshot, identity, editor = null) {
@@ -51,7 +52,6 @@ export function supplyProgress(documents, snapshot, identity, editor = null) {
   const pr = rows.filter(row => row.kind === 'PR' && row.content?.resolved?.item_id === item
     && !(row.status === 'DRAFT' && row.rejection_reason)).at(-1) || null;
   const can = permission => (identity?.permitted_actions || []).includes(permission);
-  const unitWord = unit => unit === 'EA' || !unit ? '개' : ` ${unit}`;
   const short = id => String(id || '').slice(0, 8);
   const quoteOf = id => (documents || []).find(row => row.id === id);
   const stepsAt = reached => progressSteps.map((label, index) => ({ label, state: index < reached ? 'done' : index === reached ? 'current' : 'pending' }));
@@ -60,7 +60,7 @@ export function supplyProgress(documents, snapshot, identity, editor = null) {
       const quote = quoteOf(editor.values.quote_id)?.content || {};
       return { item, status: '승인 진행', tone: 'warn', steps: stepsAt(0), draft: true,
         next: [],
-        notes: ['아래 초안의 검토 근거를 적고 승인 요청을 누르면 서버에 저장되고 다른 계정의 승인을 기다립니다.'],
+        notes: ['승인 요청을 누르면 견적 권장 수량으로 초안이 서버에 저장되고 다른 계정의 승인을 기다립니다.'],
         rows: [['구매 요청', `작성 중 · ${editor.values.quantity ?? '미확인'}${unitWord(quote.unit)}`],
                ['내부 발주', `미작성 · 견적 ${quote.resolved?.supplier_id || quote.supplier_id || '미확인'}`],
                ['납기 가정', quote.lead_business_days != null ? `견적 리드타임 ${quote.lead_business_days}영업일 · 필요일 근거 없음` : '리드타임·필요일 근거 없음'],
@@ -194,6 +194,9 @@ export function mountProcurementFlow(container, { snapshot, api, getIdentity = (
     busy = true; render();
     try { await callback(); }
     catch (error) {
+      // A newer ledger event (for example another order's reservation) makes
+      // this form's basis stale; offer the existing refresh instead of a dead end.
+      if (error.message === 'PROCUREMENT_LEDGER_VERSION_CHANGED') needsRefresh = true;
       if (!destroyed && error.name !== 'AbortError') message(errors[error.message] || (error.status === 403
         ? '현재 계정의 권한과 작성자·검토자 구분을 확인해 주세요.'
         : error.status === 409 ? '문서 상태나 기준이 변경되었습니다. 서버 문서를 다시 확인해 주세요.'
@@ -226,17 +229,25 @@ export function mountProcurementFlow(container, { snapshot, api, getIdentity = (
     const { kind, values } = editor;
     if (kind === 'REJECT') return `<form class="mk-bom-form" data-purchase-form><h4>문서 반려</h4><label class="mk-bom-field">반려 사유<textarea name="reason" minlength="8" maxlength="2000" required>${esc(values.reason || '')}</textarea></label><button class="mk-btn" ${busy ? 'disabled' : ''}>반려 기록</button>${button('접기', 'close-editor', busy)}</form>`;
     const editable = fields[kind].filter(key => !['_id', 'provenance'].includes(key) && !['quote_id', 'pr_id', 'po_id', 'receipt_id', 'target_id', 'iqc_id', 'production_id', 'fg_receipt_id', 'shipment_id', 'material_basis', 'acknowledge_partial_bom', 'acknowledge_unknown_freight'].includes(key));
+    // A purchase request takes the server's recommended quantity as is (the
+    // server refuses any other number), so it has no quantity or note field.
+    const shown = kind === 'PR' ? editable.filter(key => !['quantity', 'note'].includes(key)) : editable;
+    const prChoice = kind === 'PR' ? requestChoice(values) : null;
     return `<form class="mk-bom-form" data-purchase-form><h4>${esc(kinds[kind])} ${editor.revise ? '초안 수정' : '초안'}</h4>
       ${kind === 'SUPPLY_CONFIRMATION' ? '<p>실제 공급사 응답이 없는 내부 모의 확인입니다. 도착일을 확정하지 않습니다.</p>' : ''}
-      <div class="mk-bom-fields">${editable.map(key => key === 'note'
+      ${shown.length ? `<div class="mk-bom-fields">${shown.map(key => key === 'note'
         ? `<label class="mk-bom-field">${labels[key]}<textarea name="${key}" minlength="8" maxlength="2000" required>${esc(values[key] || '')}</textarea></label>`
-        : `<label class="mk-bom-field">${esc(labels[key] || key)}<input name="${key}" type="${key === 'valid_until' ? 'date' : numberFields.has(key) ? 'number' : 'text'}" value="${esc(values[key] ?? '')}" ${numberFields.has(key) ? `min="${['passed_qty', 'failed_qty', 'lead_business_days'].includes(key) ? 0 : 1}" max="1000000000" step="1"` : ''} ${['freight', 'lead_business_days'].includes(key) ? '' : 'required'}></label>`).join('')}</div>
-      ${kind === 'PR' ? `<p>선택 기준: ${values.material_basis === 'planned' ? '계획 수율 적용안' : '기본 소요안'}</p><label class="mk-bom-ack"><input type="checkbox" name="acknowledge_partial_bom" ${values.acknowledge_partial_bom ? 'checked' : ''}>미확인 BOM 행과 기술검수·전체 제조 가능성의 미확인을 확인했습니다.</label>` : ''}
+        : `<label class="mk-bom-field">${esc(labels[key] || key)}<input name="${key}" type="${key === 'valid_until' ? 'date' : numberFields.has(key) ? 'number' : 'text'}" value="${esc(values[key] ?? '')}" ${numberFields.has(key) ? `min="${['passed_qty', 'failed_qty', 'lead_business_days'].includes(key) ? 0 : 1}" max="1000000000" step="1"` : ''} ${['freight', 'lead_business_days'].includes(key) ? '' : 'required'}></label>`).join('')}</div>` : ''}
+      ${kind === 'PR' ? `<p>요청 수량: ${prChoice ? `${esc(prChoice.calculation.recommended_qty)}${esc(unitWord(prChoice.unit))} · 견적 ${esc(prChoice.quote_ref)}(${esc(prChoice.supplier_id)})의 권장 수량` : '견적 권장 수량을 다시 불러와 주세요'}</p><p>선택 기준: ${values.material_basis === 'planned' ? '계획 수율 적용안' : '기본 소요안'}</p><label class="mk-bom-ack"><input type="checkbox" name="acknowledge_partial_bom" ${values.acknowledge_partial_bom ? 'checked' : ''}>미확인 BOM 행과 기술검수·전체 제조 가능성의 미확인을 확인했습니다.</label>` : ''}
       ${kind === 'PO' ? `<label class="mk-bom-ack"><input type="checkbox" name="acknowledge_unknown_freight" ${values.acknowledge_unknown_freight ? 'checked' : ''}>운임 미확인을 유지하는 내부 발주임을 확인합니다. 총액은 미확인으로 남습니다.</label>` : ''}
       ${kind === 'QUOTE' ? '<p>시연 가정 견적입니다. 기초 견적에 없던 조건은 직접 확인하고 입력해 주세요.</p>' : ''}
       ${kind === 'PRODUCTION' ? '<p>이 LOT의 부품을 소비해 장착한 양품 보드를 serial로 기록합니다. 계획이나 예정이 아니라 실제 생산 실적만 기록합니다.</p>' : ''}
       ${kind === 'ARRIVAL' ? '<p>고객 인수 근거가 있는 보드만 도착으로 기록합니다. 출하를 도착으로 간주하지 않습니다.</p>' : ''}
       <div class="mk-bom-actions"><button class="mk-btn" ${busy || needsRefresh ? 'disabled' : ''}>${editor.revise ? '수정 후 승인 요청' : '승인 요청'}</button>${button('취소', 'close-editor', busy)}</div></form>`;
+  }
+  function requestChoice(values) {
+    const choice = choices.find(row => row.quote_id === values.quote_id && row.material_basis === values.material_basis);
+    return choice && !choice.expired && choice.calculation?.recommended_qty && choice.calculation.quantity_condition !== 'NOT_MET' ? choice : null;
   }
   function boardsFor(doc, [, link, state]) {
     return Object.entries(snapshot.fulfillment?.boards || {}).filter(([, value]) => value.status === state && value[link] === doc.id).map(([serial]) => serial).sort();
@@ -300,6 +311,12 @@ export function mountProcurementFlow(container, { snapshot, api, getIdentity = (
     for (const key of numberFields) if (fields[current.kind]?.includes(key)) values[key] = values[key] === '' || values[key] == null ? null : Number(values[key]);
     if (fields[current.kind]?.includes('board_serials')) values.board_serials = String(values.board_serials || '').split(/[,\s]+/).map(value => value.trim()).filter(Boolean);
     if (current.kind === 'QUOTE') { values.freight = values.freight === '' || values.freight == null ? null : values.freight; values.provenance = 'DEMO_ASSUMPTION'; }
+    if (current.kind === 'PR') {
+      const choice = requestChoice(values);
+      if (!choice) { message('견적 권장 수량을 확인할 수 없습니다. 화면을 새로고침한 뒤 다시 시도해 주세요.'); return; }
+      values.quantity = choice.calculation.recommended_qty;
+      values.note = `자동 작성 · 견적 ${choice.quote_ref}(${choice.supplier_id}) · ${choice.material_basis === 'planned' ? '계획 수율 적용안' : '기본 소요안'} · 권장 수량 ${values.quantity}${unitWord(choice.unit)}`;
+    }
     work(async () => {
       const path = current.kind === 'REJECT' ? `/api/mks2/procurement/documents/${encodeURIComponent(doc.id)}/reject`
         : current.revise ? `/api/mks2/procurement/documents/${encodeURIComponent(current.revise.id)}/revise` : '/api/mks2/procurement/documents';
