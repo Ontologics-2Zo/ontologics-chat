@@ -241,16 +241,17 @@ select,.btn { border:1px solid var(--line); background:var(--surface); border-ra
 @keyframes mk-suggest-in { 0% { background: color-mix(in srgb, var(--accent) 22%, transparent); } 100% { background: transparent; } }
 @media (prefers-reduced-motion: reduce) { .suggestion.suggestion-new { animation: none; } }
 
-/* Collapsible assistant panel: hides into a round icon button */
+/* Collapsible assistant panel: reopened from the toolbar button next to 초기화 */
 .panel-heading { display:flex; align-items:center; gap:8px; }
 .panel-toggle { margin-left:auto; flex:none; display:inline-grid; place-items:center; width:30px; height:30px; padding:0; border:1px solid var(--line); border-radius:8px; background:var(--surface); color:var(--fg2); cursor:pointer; }
 .panel-toggle:hover { background:var(--raised); color:var(--fg); }
-.panel-toggle:focus-visible, .panel-launcher:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.panel-toggle:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
 .screen.panel-collapsed.graph-screen, .screen.panel-collapsed.dashboard-screen, .screen.panel-collapsed { grid-template-columns:minmax(0,1fr); }
 .assistant-panel.collapsed { display:none; }
-.panel-launcher { display:none; position:fixed; right:22px; bottom:22px; z-index:90; width:52px; height:52px; padding:0; place-items:center; border:0; border-radius:50%; background:var(--accent); color:var(--accent-fg); box-shadow:0 6px 18px rgba(15,23,42,.22); cursor:pointer; transition:transform .15s ease; }
-.panel-launcher:hover { transform:translateY(-2px); }
-.screen.panel-collapsed > .panel-launcher { display:grid; }
+.agent-toggle { display:inline-flex; align-items:center; gap:6px; }
+.agent-toggle[hidden] { display:none; }
+.agent-toggle svg { flex:none; }
+.agent-toggle[aria-pressed="true"] { background:var(--accent-soft); border-color:var(--accent); color:var(--accent); }
 .load-state { margin:30px; padding:20px; border:1px solid var(--line); background:var(--surface); border-radius:10px; }
 .notice { position:fixed; bottom:18px; left:50%; transform:translateX(-50%); max-width:calc(100% - 32px); padding:10px 14px; border-radius:10px; background:var(--fg); color:var(--bg); z-index:100; font-size:13px; }
 @media(max-width:980px) {
