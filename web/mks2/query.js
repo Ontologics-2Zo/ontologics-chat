@@ -305,7 +305,7 @@ function quoteCard(quote, onChooseQuote) {
   }
   card.append(head, metrics, node('p', 'query-quote-reason', text(quote.reason)));
   if (quote.recommended && quote.recommendation_reason) card.append(node('p', 'query-quote-reason query-quote-why', `추천 이유 · ${text(quote.recommendation_reason)}`));
-  if (quote.recommended) card.classList.add('query-quote-recommended');
+  if (quote.recommended) card.className += ' query-quote-recommended';
   const choose = action(quote.recommended ? '추천 견적으로 구매 요청 초안' : '이 견적으로 구매 요청 초안', () => onChooseQuote(quote), quote.recommended ? 'btn pri sm' : 'btn sm');
   choose.dataset.queryAction = 'choose-quote';
   if (quote.quantity_condition === 'NOT_MET' || !quote.recommended_qty) choose.disabled = true;
@@ -526,6 +526,17 @@ export function renderQueryAnswer(message, answer, {
   }
   const materials = workflow ? null : materialTable(answer, sectionData);
   if (materials) supplement.prepend ? supplement.prepend(materials) : supplement.append(materials);
+  // Quote comparison from the server calculation, in any panel, unless a card
+  // already drew the same quotes (DEC-H62: recommendation + request-draft button).
+  const cardQuotes = (blocks || []).some(block => Array.isArray(block.quotes) && block.quotes.length);
+  const quoteCards = Array.isArray(answer.calculation?.quote_cards) ? answer.calculation.quote_cards.filter(quote => quote && text(quote.quote_id)) : [];
+  if (!cardQuotes && quoteCards.length) {
+    const wrap = node('div', 'query-quote-list');
+    wrap.dataset.queryQuotes = 'calculation';
+    wrap.append(node('p', 'query-quote-list-title', '공급 후보 비교 · 추천은 고정 기준(유효 · 공급한도 확인 · 수량 충족 중 리드타임 → 소계)이며 선택은 사람이 합니다'));
+    quoteCards.forEach(quote => wrap.append(quoteCard(quote, onChooseQuote)));
+    supplement.append(wrap);
+  }
   const chips = retrievalChips(answer);
   if (chips) supplement.append(chips);
   if (answer.ai_summary && ['REJECTED', 'UNAVAILABLE'].includes(answer.ai_summary.status)) {

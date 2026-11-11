@@ -115,6 +115,12 @@ class ReservationAnswerTests(unittest.TestCase):
         self.assertIn("5개가 부족해 충분하지 않습니다", result["answer"].replace("piece", "개").replace(" 개", "개"))
         self.assertFalse(result["calculation"]["automatic_order"])
         self.assertIn("자동으로 하지 않으며", result["answer"])
+        # Cards for any panel carry the one recommendation (only CMP-A meets the limit now).
+        cards = {card["quote_ref"]: card for card in result["calculation"]["quote_cards"]}
+        self.assertEqual(set(cards), {"CMP-A", "CMP-B", "CMP-C", "CMP-D"})
+        self.assertEqual([ref for ref, card in cards.items() if card["recommended"]], ["CMP-A"])
+        self.assertIn("선택과 승인은 사람이 합니다", cards["CMP-A"]["recommendation_reason"])
+        self.assertEqual((cards["CMP-B"]["quantity_condition"], cards["CMP-A"]["recommended_qty"]), ("NOT_MET", 15))
 
     def test_delivery_answer_reports_material_change_but_stays_unknown(self):
         result = answer_query("남은 17대, 납기 안에 고객에게 도착할 수 있어?", self.after, self.ontology)
@@ -123,6 +129,8 @@ class ReservationAnswerTests(unittest.TestCase):
         self.assertIn("재검토", result["answer"])
         self.assertIn("자재 조건 변경", str(result["answer_blocks"]))
         self.assertIn("개발 원장 사건", str(result["answer_blocks"]))
+        block_quotes = [quote for block in result["answer_blocks"] for quote in (block.get("quotes") or [])]
+        self.assertEqual(result["calculation"].get("quote_cards", []), block_quotes)
 
     def test_suggestions_follow_the_reservation(self):
         # State-aware order (DEC-H56 follow-up): the round's delivery question leads.

@@ -141,6 +141,7 @@ select,.btn { border:1px solid var(--line); background:var(--surface); border-ra
 .query-mini-table td.n { text-align:right; font-variant-numeric:tabular-nums; }
 .query-mini-table td.alert { color:var(--bad); font-weight:600; }
 .query-quote-list { display:grid; gap:8px; margin-top:8px; }
+.query-quote-list-title { margin:0; font-size:11.5px; color:var(--fg2); }
 .query-quote-card { border:1px solid var(--line2); border-radius:10px; padding:10px 12px; background:var(--bg,transparent); }
 .query-quote-head { display:flex; flex-wrap:wrap; align-items:center; gap:6px; }
 .query-quote-head .pill { font-size:11px; padding:2px 8px; border-radius:999px; }
