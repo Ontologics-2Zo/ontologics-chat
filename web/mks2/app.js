@@ -285,6 +285,8 @@ function currentAgentWaiting(panel, waiting) {
   return !!waiting && panel.waiting === waiting && waiting.generation === generation
     && waiting.state.status === 'WAITING' && agentSnapshotMatches(waiting.state);
 }
+const PANEL_OPEN_ICON = '<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v8a2.5 2.5 0 0 1-2.5 2.5H10l-4.5 4v-4h0A1.5 1.5 0 0 1 4 14.5z"/><path d="M8.5 9.5h.01M12 9.5h.01M15.5 9.5h.01"/></svg>';
+const PANEL_HIDE_ICON = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/></svg>';
 function createPanel(name) {
   settleAnswer(panels[name], true);
   clearAgentWaiting(panels[name]);
@@ -292,22 +294,31 @@ function createPanel(name) {
   const heading = element('div', 'panel-heading');
   const title = name === 'dashboard' ? '업무 에이전트' : name === 'network' ? '프로젝트 그래프 질의' : name === 'twin' ? '디지털 트윈 질의' : '업무 AI 질의';
   heading.append(element('h2', '', title), element('span', 'tag', '원장 근거 조회'));
-  // Collapse the assistant to a narrow strip so the dashboard or graph gets the
-  // width. A per-screen browser preference only; nothing is sent or stored on the server.
-  const toggle = element('button', 'btn sm panel-toggle'); toggle.type = 'button';
+  // Collapse the assistant into a round icon button so the dashboard or graph gets
+  // the full width. A per-screen browser preference only; nothing is sent or stored on the server.
+  const toggle = element('button', 'panel-toggle'); toggle.type = 'button';
+  toggle.innerHTML = PANEL_HIDE_ICON;
+  toggle.title = `${title} 접기`; toggle.setAttribute('aria-label', `${title} 접기`);
+  const screen = root.parentElement;
+  screen?.querySelector?.(`.panel-launcher[data-panel="${name}"]`)?.remove();
+  const launcher = element('button', 'panel-launcher'); launcher.type = 'button';
+  launcher.dataset.panel = name; launcher.innerHTML = PANEL_OPEN_ICON;
+  launcher.title = `${title} 열기`; launcher.setAttribute('aria-label', `${title} 열기`);
+  screen?.append?.(launcher);
   const storageKey = `mks2.panel.collapsed.${name}`;
   const applyCollapsed = collapsed => {
     root.classList?.toggle('collapsed', collapsed);
-    root.parentElement?.classList?.toggle('panel-collapsed', collapsed);
-    toggle.textContent = collapsed ? '펼치기' : '접기';
+    screen?.classList?.toggle('panel-collapsed', collapsed);
     toggle.setAttribute('aria-expanded', String(!collapsed));
-    toggle.title = `${title} ${collapsed ? '펼치기' : '접기'}`;
+    launcher.setAttribute('aria-expanded', String(!collapsed));
   };
-  toggle.addEventListener('click', () => {
-    const next = !root.classList?.contains('collapsed');
-    applyCollapsed(next);
-    try { globalThis.localStorage?.setItem(storageKey, next ? '1' : '0'); } catch { /* preference only */ }
-  });
+  const setCollapsed = collapsed => {
+    applyCollapsed(collapsed);
+    try { globalThis.localStorage?.setItem(storageKey, collapsed ? '1' : '0'); } catch { /* preference only */ }
+    (collapsed ? launcher : toggle).focus?.();
+  };
+  toggle.addEventListener('click', () => setCollapsed(true));
+  launcher.addEventListener('click', () => setCollapsed(false));
   heading.append(toggle);
   let startCollapsed = false;
   try { startCollapsed = globalThis.localStorage?.getItem(storageKey) === '1'; } catch { startCollapsed = false; }
