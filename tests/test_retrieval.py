@@ -210,11 +210,32 @@ class RetrievalTests(unittest.TestCase):
         self.assertEqual(self.search("resistor")["status"], "INDEX_INCOMPLETE")
 
     def test_optional_profiles_explicit_and_do_not_invoke_embeddings(self):
-        for profile in ("R2", "R4", "R5"):
+        for profile in ("R2", "R5"):
             result = self.search("resistor", profile)
             self.assertEqual(result["status"], "PROFILE_NOT_IMPLEMENTED")
             self.assertEqual(result["profile_status"][profile], "NOT_IMPLEMENTED")
         self.assertEqual(self.embedding.calls, [])
+        # R4 is implemented but needs a configured local reranker.
+        result = self.search("resistor", "R4")
+        self.assertEqual((result["status"], result["code"]), ("INDEX_INCOMPLETE", "RETRIEVAL_RERANKER_UNAVAILABLE"))
+
+    def test_r4_reorders_candidates_including_graph_reached_ones(self):
+        class Reranker:
+            provenance = {"model_id": "synthetic-rerank"}
+            def __init__(self): self.calls = []
+            def score(self, query, texts):
+                self.calls.append(len(texts))
+                # Prefer later candidates so the order visibly changes.
+                return [float(n) for n in range(len(texts))]
+        reranker = Reranker()
+        service = RetrievalService(self.authorize, self.embedding, reranker=reranker)
+        result = service.search(self.principal, self.payload, self.context, RetrievalSearch(query="DEMO-R1", profile="R4", limit=20))
+        self.assertEqual(result["status"], "HIT")
+        self.assertTrue(reranker.calls and reranker.calls[0] <= 30)
+        self.assertTrue(all("rerank" in hit["match_modes"] for hit in result["hits"]))
+        self.assertEqual([hit["score"] for hit in result["hits"]], sorted((hit["score"] for hit in result["hits"]), reverse=True))
+        self.assertEqual(result["meta"]["reranker"], {"model_id": "synthetic-rerank"})
+        self.assertEqual(result["meta"]["external_model_calls"], 0)
 
     def test_cache_is_content_scoped_bounded_and_does_not_mutate_inputs(self):
         original = deepcopy(self.payload)

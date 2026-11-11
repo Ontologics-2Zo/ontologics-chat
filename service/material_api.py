@@ -21,8 +21,8 @@ class EvidenceCall(RetrievalEvidence):
 
 
 def mount_material_api(app, *, identity, ledger, bom, gateway, principal, context,
-                       verified_payload, embedding=None):
-    retrieval = RetrievalService(identity.authorize, embedding=embedding)
+                       verified_payload, embedding=None, reranker=None):
+    retrieval = RetrievalService(identity.authorize, embedding=embedding, reranker=reranker)
     app.state.retrieval = retrieval
 
     def output(result, payload, ctx, *, review=False):

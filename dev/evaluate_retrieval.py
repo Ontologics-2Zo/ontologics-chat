@@ -30,7 +30,7 @@ from urllib.parse import urlsplit
 import httpx
 
 ENDPOINT = "/api/mks2/retrieval/search"
-PROFILES = ("R0", "R1", "R3")
+PROFILES = ("R0", "R1", "R3", "R4")
 KINDS = {"ledger_entity", "source_row", "application_review", "development_document"}
 SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,119}\Z")
 GROUP = re.compile(r"[a-z][a-z0-9_]{0,39}\Z")

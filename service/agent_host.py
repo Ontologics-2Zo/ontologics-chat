@@ -101,7 +101,8 @@ class _ModelGuard:
         self.check()
 
 
-def build_agent_host(db, identity, gateway, context_provider, settings, *, receipt_path=None, budget_db=None):
+def build_agent_host(db, identity, gateway, context_provider, settings, *, receipt_path=None, budget_db=None,
+                     retrieval_profile="R3"):
     if settings.langsmith_enabled and receipt_path is None:
         raise ServiceError("LANGSMITH_DURABLE_RECEIPT_REQUIRED", 503)
     # An isolated demo can keep its model records in the original service's
@@ -174,7 +175,7 @@ def build_agent_host(db, identity, gateway, context_provider, settings, *, recei
 
     workflow = AgentWorkflow(db, identity, gateway, context_provider,
                              route_model=route, compose_model=compose if settings.compose_enabled else None,
-                             observer=observer)
+                             observer=observer, retrieval_profile=retrieval_profile)
     try:
         workflow.setup()
     except Exception:

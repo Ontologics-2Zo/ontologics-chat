@@ -2,7 +2,8 @@
 
 R0 uses exact identifiers and BM25; R1 adds local pretrained multilingual dense
 vectors and reciprocal-rank fusion; R3 also follows bounded, recorded edges.
-R2/R4/R5 are explicitly unimplemented. No global corpus, DB write, model API,
+R4 reorders R3 candidates with a pinned local cross-encoder. R2/R5 are
+explicitly unimplemented. No global corpus, DB write, model API,
 generated rewrite, automatic mapping or approval exists in this module.
 """
 
@@ -28,10 +29,11 @@ from service.procurement_contracts import CONTENT_TYPES
 
 INDEX_VERSION = "snapshot-hybrid/3"
 PROFILES = {"R0": "IMPLEMENTED", "R1": "IMPLEMENTED", "R2": "NOT_IMPLEMENTED",
-            "R3": "IMPLEMENTED", "R4": "NOT_IMPLEMENTED", "R5": "NOT_IMPLEMENTED"}
+            "R3": "IMPLEMENTED", "R4": "IMPLEMENTED", "R5": "NOT_IMPLEMENTED"}
 MAX_DOCUMENTS = 2500
 MAX_CORPUS_BYTES = 4 * 1024 * 1024
 MIN_COSINE = 0.45
+RERANK_POOL, RERANK_GRAPH = 20, 10
 _HASH = re.compile(r"^[0-9a-f]{64}$")
 _BOM_NODES = {"SourceDocument", "SourceSnapshot", "SourceRow", "BOMSnapshot", "BOMLine",
               "BOMApplication", "DocumentVersion", "ApprovalGrant"}
@@ -408,10 +410,11 @@ class _Index:
 
 
 class RetrievalService:
-    def __init__(self, authorize, embedding=None, *, cache_size=4):
+    def __init__(self, authorize, embedding=None, *, reranker=None, cache_size=4):
         if not callable(authorize) or type(cache_size) is not int or not 1 <= cache_size <= 8:
             raise ValueError("RETRIEVAL_CONFIGURATION_INVALID")
         self.authorize, self.embedding, self.cache_size = authorize, embedding, cache_size
+        self.reranker = reranker
         self._cache, self._lock = OrderedDict(), Lock()
 
     def _authorize(self, principal, payload, context):
@@ -456,6 +459,7 @@ class RetrievalService:
                     "corpus_version": index.corpus.version if index else None, "index_version": INDEX_VERSION,
                     "document_count": len(index.corpus.documents) if index else None,
                     "embedding": deepcopy(self.embedding.provenance) if self.embedding else None,
+                    "reranker": deepcopy(self.reranker.provenance) if self.reranker and profile == "R4" else None,
                     "lexical": "BM25 k1=1.2 b=0.75; unicode-parts-korean-bigrams/1",
                     "fusion": "weighted_reciprocal_rank k=60; exact=3 lexical=1 vector=1",
                     "vector_min_cosine": MIN_COSINE, "external_model_calls": 0},
@@ -480,6 +484,8 @@ class RetrievalService:
         corpus = index.corpus
         if request.context_entity_id and request.context_entity_id not in corpus.node_ids:
             raise ServiceError("RETRIEVAL_CONTEXT_UNAVAILABLE", 404)
+        if request.profile == "R4" and self.reranker is None:
+            return self._result(context, request.profile, index=index, status="INDEX_INCOMPLETE", code="RETRIEVAL_RERANKER_UNAVAILABLE")
         if request.profile != "R0" and self.embedding is None:
             return self._result(context, request.profile, index=index, status="INDEX_INCOMPLETE", code="RETRIEVAL_EMBEDDING_UNAVAILABLE")
         allowed = corpus.node_ids
@@ -495,6 +501,30 @@ class RetrievalService:
         except Exception:
             return self._result(context, request.profile, index=index, status="INDEX_ERROR", code="RETRIEVAL_INDEX_FAILED")
         result = self._result(context, request.profile, index=index, status="HIT" if ranked else "NO_HIT")
+        if request.profile == "R4" and ranked:
+            # Candidates: the fused direct matches plus documents reached
+            # through recorded edges from the top three. The local
+            # cross-encoder orders them; graph-only candidates compete on the
+            # same score instead of filling leftover slots.
+            seeds = {node for i in ranked[:3] for node in corpus.documents[i]["node_ids"]}
+            reached, edges = _neighbors(seeds, corpus.edges)
+            result["graph"] = {"node_ids": sorted(reached), "edges": deepcopy(edges), "max_hops": 2}
+            pool = list(ranked[:RERANK_POOL])
+            for i in indices:
+                if len(pool) >= RERANK_POOL + RERANK_GRAPH:
+                    break
+                if i not in pool and set(corpus.documents[i]["node_ids"]) & reached:
+                    pool.append(i)
+                    modes[i] = ["graph"]
+            try:
+                values = self.reranker.score(request.query, [corpus.documents[i]["text"][:2000] for i in pool])
+            except ServiceError:
+                return self._result(context, request.profile, index=index, status="INDEX_ERROR", code="RETRIEVAL_RERANK_FAILED")
+            order = {i: n for n, i in enumerate(pool)}
+            ranked = sorted(pool, key=lambda i: (-values[order[i]], order[i]))
+            for i in pool:
+                scores[i] = values[order[i]]
+                modes[i] = list(modes.get(i, [])) + ["rerank"]
         selected = ranked[:request.limit]
         if request.profile == "R3" and ranked:
             seeds = {node for i in ranked[:3] for node in corpus.documents[i]["node_ids"]}

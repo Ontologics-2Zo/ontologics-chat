@@ -50,7 +50,7 @@ class Snapshot(Contract):
 
 def create_app(db, *, private_root: str, origin="http://127.0.0.1:8870", dev_mode=False,
                reference_preview=False, catalog=None,projector=None,bom_runner=None,agent_settings=None,
-               agent_receipt_path=None, retrieval_embedding=None, model_budget_db=None):
+               agent_receipt_path=None, retrieval_embedding=None, model_budget_db=None, retrieval_reranker=None):
     parsed=urlsplit(origin)
     if parsed.scheme != "http" or parsed.hostname not in {"localhost","127.0.0.1"} or parsed.username or parsed.password or not parsed.port or parsed.path or parsed.query or parsed.fragment:
         raise ServiceError("LOCAL_ORIGIN_REQUIRED",503)
@@ -254,7 +254,8 @@ def create_app(db, *, private_root: str, origin="http://127.0.0.1:8870", dev_mod
 
     from service.material_api import mount_material_api
     mount_material_api(app, identity=identity, ledger=ledger, bom=bom, gateway=gateway, principal=principal,
-                       context=context, verified_payload=verified_payload, embedding=retrieval_embedding)
+                       context=context, verified_payload=verified_payload, embedding=retrieval_embedding,
+                       reranker=retrieval_reranker)
     from service.procurement_api import mount_procurement_api
     mount_procurement_api(app, db=db, identity=identity, ledger=ledger, gateway=gateway,
                          principal=principal, context=context, verified_payload=verified_payload)
@@ -290,7 +291,8 @@ def create_app(db, *, private_root: str, origin="http://127.0.0.1:8870", dev_mod
             return ctx.model_copy(update={"execution_id": execution_id})
 
         workflow, model_summary, observer = build_agent_host(db, identity, gateway, agent_context,
-            agent_settings, receipt_path=agent_receipt_path, budget_db=model_budget_db)
+            agent_settings, receipt_path=agent_receipt_path, budget_db=model_budget_db,
+            retrieval_profile="R4" if retrieval_reranker is not None else "R3")
     app.state.agent_workflow, app.state.agent_observer = workflow, observer
     def delivery_answered(actor, answer):
         if app.state.demo_cue is not None and "delivery" in (answer.get("intent") or []):

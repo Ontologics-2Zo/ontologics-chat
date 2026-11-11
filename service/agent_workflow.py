@@ -49,7 +49,8 @@ class TaskState(TypedDict, total=False):
 
 class AgentWorkflow:
     def __init__(self, db, identity, gateway, context_provider, *, route_model=None,
-                 compose_model=None, observer=None, max_tool_calls=8, deadline_seconds=3600):
+                 compose_model=None, observer=None, max_tool_calls=8, deadline_seconds=3600,
+                 retrieval_profile="R3"):
         if type(max_tool_calls) is not int or not 1 <= max_tool_calls <= 100:
             raise ValueError("INVALID_AGENT_BUDGET")
         if type(deadline_seconds) is not int or not 1 <= deadline_seconds <= 86400:
@@ -57,6 +58,9 @@ class AgentWorkflow:
         self.db, self.identity, self.gateway = db, identity, gateway
         self.context_provider, self.route_model, self.observer = context_provider, route_model, observer
         self.compose_model = compose_model
+        if retrieval_profile not in {"R3", "R4"}:
+            raise ValueError("INVALID_RETRIEVAL_PROFILE")
+        self.retrieval_profile = retrieval_profile
         self.max_tool_calls, self.deadline_seconds = max_tool_calls, deadline_seconds
         self.store = AgentStore(db)
         self.runtime_versions = {name: version(name) for name in
@@ -333,7 +337,9 @@ class AgentWorkflow:
                 try:
                     port = self.gateway.bind(principal=principal, context=context, budget=budget,
                                              allowed_tools={"retrieval.search"})
-                    found = port.call("retrieval.search", {"query": request.question, "profile": "R3",
+                    # The host picks R4 (local rerank, best top-5 order on the P0
+                    # cases) when a reranker is loaded, otherwise R3.
+                    found = port.call("retrieval.search", {"query": request.question, "profile": self.retrieval_profile,
                                                            "limit": 8, "ledger_version": context.ledger_version}).data
                 except ServiceError as error:
                     return {"status": "UNAVAILABLE", "reason_code": error.code, "hits": []}

@@ -90,10 +90,14 @@ def main():
         retrieval_settings = Path(args.runtime_file).resolve().parent / "model-settings.json"
         retrieval_embedding = (LocalMultilingualEmbedding.from_settings(retrieval_settings)
                                if retrieval_settings.is_file() else None)
+        from service.retrieval_rerank import LocalCrossEncoderReranker
+        retrieval_reranker = (LocalCrossEncoderReranker.from_settings(retrieval_settings)
+                              if retrieval_settings.is_file() else None)
         origin=f"http://{args.origin_host}:{args.port}"
         app=create_app(db,private_root=private_root,origin=origin,dev_mode=args.dev_mode,
                        reference_preview=args.reference_preview,catalog=catalog,projector=projector,
                        agent_settings=agent_settings, model_budget_db=budget_db, retrieval_embedding=retrieval_embedding,
+                       retrieval_reranker=retrieval_reranker,
                        agent_receipt_path=Path(args.runtime_file).resolve().parent / 'agent-observability.sqlite3')
 
         def worker():
