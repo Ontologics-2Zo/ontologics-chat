@@ -241,19 +241,14 @@ select,.btn { border:1px solid var(--line); background:var(--surface); border-ra
 @keyframes mk-suggest-in { 0% { background: color-mix(in srgb, var(--accent) 22%, transparent); } 100% { background: transparent; } }
 @media (prefers-reduced-motion: reduce) { .suggestion.suggestion-new { animation: none; } }
 
-/* Collapsible assistant panel */
+/* Collapsible assistant panel: reopened from the toolbar button next to 초기화 */
 .panel-heading { display:flex; align-items:center; gap:8px; }
-.panel-toggle { margin-left:auto; flex:none; }
-.screen.panel-collapsed.graph-screen, .screen.panel-collapsed.dashboard-screen, .screen.panel-collapsed { grid-template-columns:minmax(0,1fr) 46px; }
-.assistant-panel.collapsed > :not(.panel-heading) { display:none; }
-.assistant-panel.collapsed .panel-heading { flex-direction:column; align-items:center; padding:10px 4px; gap:10px; }
-.assistant-panel.collapsed .panel-heading .tag { display:none; }
-.assistant-panel.collapsed .panel-heading h2 { writing-mode:vertical-rl; font-size:13px; margin:0; letter-spacing:.04em; }
-.assistant-panel.collapsed .panel-toggle { margin-left:0; writing-mode:vertical-rl; padding:6px 2px; }
-@media (max-width: 980px) {
-  .screen.panel-collapsed { grid-template-columns:1fr; }
-  .assistant-panel.collapsed { min-height:0; }
-  .assistant-panel.collapsed .panel-heading { flex-direction:row; padding:8px 12px; }
-  .assistant-panel.collapsed .panel-heading h2, .assistant-panel.collapsed .panel-toggle { writing-mode:horizontal-tb; }
-  .assistant-panel.collapsed .panel-toggle { margin-left:auto; }
-}
+.panel-toggle { margin-left:auto; flex:none; display:inline-grid; place-items:center; width:30px; height:30px; padding:0; border:1px solid var(--line); border-radius:8px; background:var(--surface); color:var(--fg2); cursor:pointer; }
+.panel-toggle:hover { background:var(--raised); color:var(--fg); }
+.panel-toggle:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.screen.panel-collapsed.graph-screen, .screen.panel-collapsed.dashboard-screen, .screen.panel-collapsed { grid-template-columns:minmax(0,1fr); }
+.assistant-panel.collapsed { display:none; }
+.agent-toggle { display:inline-flex; align-items:center; gap:6px; }
+.agent-toggle[hidden] { display:none; }
+.agent-toggle svg { flex:none; }
+.agent-toggle[aria-pressed="true"] { background:var(--accent-soft); border-color:var(--accent); color:var(--accent); }
