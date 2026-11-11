@@ -15,8 +15,8 @@
 .mk-config-banner.ok>b{color:var(--ok,#1f7a46)}
 .mk-btn{display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--line,#d3dcef);border-radius:6px;padding:2px 8px;background:var(--surface,#fff);font-size:12px!important;font-weight:600!important;line-height:1.5;white-space:nowrap;color:var(--fg,#0f172a)}
 .mk-btn:hover:not(:disabled){border-color:var(--accent,#5546ff);color:var(--accent,#5546ff)}
-.mk-btn.primary{background:var(--accent,#5546ff);color:#fff;border-color:var(--accent,#5546ff)}
-.mk-btn.primary:hover:not(:disabled){color:#fff;filter:brightness(.96)}
+.mk-btn.primary{background:var(--accent,#5546ff);color:var(--accent-fg,#fff);border-color:var(--accent,#5546ff)}
+.mk-btn.primary:hover:not(:disabled){color:var(--accent-fg,#fff);filter:brightness(.96)}
 .mk-kpis{display:grid;grid-template-columns:1.7fr repeat(4,minmax(0,1fr));gap:10px;flex-shrink:0}
 .mk-kpi{min-width:0;min-height:223px;border:1px solid var(--mk-line);border-radius:10px;background:var(--mk-bg);padding:12px;display:flex;flex-direction:column;gap:6px}
 .mk-kpi-heading{display:flex;gap:6px;align-items:flex-start;font-size:12px;font-weight:600;color:var(--fg2,#475a78)}
