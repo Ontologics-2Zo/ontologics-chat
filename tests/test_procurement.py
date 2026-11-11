@@ -337,6 +337,31 @@ class ProcurementDomainTests(unittest.TestCase):
         # The opening facts are untouched: assumptions never overwrite ledger quantities.
         self.assertEqual(after["opening_balance"], self.original)
 
+    def test_baseline_boards_move_by_quantity_within_the_opening_balance(self):
+        from service.procurement_contracts import CohortContent
+        from service.procurement_state import legacy_pools
+        before = self.ledger.read(self.author)
+        round_id = before["opening_balance"]["delivery_round"]["round_id"]
+        pools = legacy_pools(before)
+        opening = before["opening_balance"]["delivery_round"]
+        def move(stage, quantity, ref):
+            return CohortContent(cohort_ref=ref, round_id=round_id, stage=stage, quantity=quantity,
+                                 note="Opening-balance boards moved by quantity")
+        if pools["warehouse"] < 1 or pools["in_transit"] < 1:
+            self.skipTest("fixture has no baseline boards in the warehouse and in transit")
+        self.assert_code("FULFILLMENT_EXCEEDS_LEGACY_COHORT", lambda: self.create(move("SHIPMENT", pools["warehouse"] + 1, "too-many")))
+        self.post(move("SHIPMENT", 1, "cohort-ship-1"))
+        self.post(move("ARRIVAL", 1, "cohort-arrive-1"))
+        after = self.ledger.read(self.author)
+        round_ = after["current_delivery_round"]
+        self.assertEqual(round_["shipped_qty"], opening["shipped_qty"] + 1)
+        self.assertEqual(round_["arrived_qty"], opening["arrived_qty"] + 1)
+        self.assertEqual(round_["remaining_promise_qty"], opening["remaining_promise_qty"] - 1)
+        self.assertEqual(legacy_pools(after), {**pools, "warehouse": pools["warehouse"] - 1})
+        types = {row["type"] for row in after["entities"]}
+        self.assertTrue({"LegacyCohort", "Shipment", "ArrivalRecord"} <= types)
+        self.assertTrue(any(rel["predicate"] == "shipsCohort" for rel in after["relationships"]))
+
     def test_activity_lists_document_steps_but_not_postings(self):
         draft = self.create(offer(quote_ref="activity-quote"))
         approved = self.action("approve", self.action("review", draft))

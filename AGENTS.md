@@ -120,3 +120,7 @@ Agent 흐름에 검색(R3) 근거와 AI 요약 문장을 붙였다. 전송 범�
 ## 일정 What-if 시나리오 · DEC-H57
 
 일정 기간(검사·생산능력·출하 준비·운송)은 원장 사실이 아니라 회차별 SCENARIO 가정 문서(작성·다른 계정 승인·확정)로만 넣고 T-Box의 ScenarioRun/ScenarioProfile/ScenarioAssumption/ProductionPlan으로 투영한다. 일정 카드는 그 가정으로 계산하되 판정은 "납기 판단 보류"를 유지한다. [기록](docs/handoff/SERVICE-WHATIF-SCHEDULE-20261111.md) [기록](docs/handoff/SERVICE-RAG-COMPOSE-20261111.md)
+
+## 회차 전량 도착 이행 · DEC-H58
+
+기초 보드(일련번호 없음)는 COHORT 문서로 입고·출하·도착 수량만 옮기며 초기 이관 잔량을 넘지 않는다. 생산 실적은 수입검사 또는 재고 LOT 하나를 근거로 한다. 기존 문서 흐름·T-Box를 유지하고 전량 도착 답변도 도착기한 준수는 판단하지 않는다. 8874 격리 시연만 해당하며 8870 원장·main 병합·배포는 포함하지 않는다. [기록](docs/handoff/SERVICE-FULFILLMENT-T10-20261111.md)

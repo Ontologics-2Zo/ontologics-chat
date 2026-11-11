@@ -2,7 +2,7 @@
 // this module never sends supplier messages or changes browser-only inventory.
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const kinds = { QUOTE: '견적 조건', PR: '구매 요청', PO: '내부 발주', SUPPLY_CONFIRMATION: '공급확인 · 모의', RECEIPT: '입하', IQC: '수입검사', CANCEL: '잔여 취소',
-  PRODUCTION: '생산 실적', FG_RECEIPT: '완성품 입고', SHIPMENT: '출하', ARRIVAL: '고객 도착' , SCENARIO: '일정 가정 시나리오' };
+  PRODUCTION: '생산 실적', FG_RECEIPT: '완성품 입고', SHIPMENT: '출하', ARRIVAL: '고객 도착' , SCENARIO: '일정 가정 시나리오' , COHORT: '기존 보드 이행' };
 const statuses = { DRAFT: '검토 전', REVIEWED: '검토 완료', APPROVED: '승인 · 반영 전', POSTED: '원장 반영' };
 const fields = {
   QUOTE: ['quote_ref', 'supplier_id', 'item_id', 'unit', 'unit_price', 'currency', 'moq', 'order_multiple', 'freight', 'valid_until', 'lead_business_days', 'provenance', 'note'],
@@ -13,11 +13,12 @@ const fields = {
   IQC: ['receipt_id', 'inspection_ref', 'passed_qty', 'failed_qty', 'note'],
   CANCEL: ['target_id', 'note'],
   // DEC-H49: named boards move production → finished goods → shipment → arrival.
-  PRODUCTION: ['iqc_id', 'production_ref', 'board_serials', 'note'],
+  PRODUCTION: ['iqc_id', 'lot_code', 'production_ref', 'board_serials', 'note'],
   FG_RECEIPT: ['production_id', 'receipt_ref', 'board_serials', 'note'],
   SHIPMENT: ['fg_receipt_id', 'shipment_ref', 'board_serials', 'note'],
   ARRIVAL: ['shipment_id', 'arrival_ref', 'board_serials', 'note'],
   // T12: what-if schedule assumptions for one delivery round.
+  COHORT: ['cohort_ref', 'round_id', 'stage', 'quantity', 'note'],
   SCENARIO: ['scenario_ref', 'round_id', 'inspection_business_days', 'daily_capacity', 'ship_prep_business_days', 'transit_days', 'provenance', 'note'],
 };
 const nextStep = { PRODUCTION: ['FG_RECEIPT', 'production_id', 'PRODUCED', '완성품 입고 기록'],
@@ -48,7 +49,7 @@ const errors = {
 // receipt and inspection. Buttons only run the existing explicit commands.
 const unitWord = unit => unit === 'EA' || !unit ? '개' : ` ${unit}`;
 // Short readable document label from the real ID (for example PR-16BF), like the shared screen.
-const docPrefix = { SCENARIO: 'SCN', PR: 'PR', PO: 'PO', SUPPLY_CONFIRMATION: 'SC', RECEIPT: 'RC', IQC: 'IQC', CANCEL: 'CX', QUOTE: 'QT',
+const docPrefix = { COHORT: 'CH', SCENARIO: 'SCN', PR: 'PR', PO: 'PO', SUPPLY_CONFIRMATION: 'SC', RECEIPT: 'RC', IQC: 'IQC', CANCEL: 'CX', QUOTE: 'QT',
   PRODUCTION: 'PD', FG_RECEIPT: 'FG', SHIPMENT: 'SH', ARRIVAL: 'AR' };
 export const documentLabel = (kind, id) => `${docPrefix[kind] || kind}-${String(id || '').replace(/[^0-9a-z]/gi, '').slice(0, 4).toUpperCase()}`;
 const progressSteps = ['초안', '승인 요청', '승인', '확정'];
@@ -210,6 +211,63 @@ export function scenarioState(documents, identity) {
   const tone = !doc ? 'mute' : doc.status === 'POSTED' ? 'ok' : 'warn';
   return { doc, status, tone, values, next, notes, label: doc ? documentLabel('SCENARIO', doc.id) : null };
 }
+// T10 delivery-round card: the opening-balance boards (no serials) move by
+// quantity, and new boards are produced from a LOT and followed to arrival.
+// Every step is a one-click draft that another account approves and posts.
+const FULFILL_KINDS = new Set(['COHORT', 'PRODUCTION', 'FG_RECEIPT', 'SHIPMENT', 'ARRIVAL']);
+export function fulfillmentState(snapshot, documents, identity) {
+  const can = permission => (identity?.permitted_actions || []).includes(permission);
+  const docs = (documents || []).filter(row => !row.cancelled_by);
+  const byId = new Map(docs.map(row => [row.id, row]));
+  // Board steps that started from an existing LOT (the supply card follows the inspected-LOT chain).
+  const lotOrigin = row => { for (let at = row; at; at = byId.get(at.parent_id)) if (at.kind === 'PRODUCTION') return Boolean(at.content?.lot_code); return false; };
+  const mine = docs.filter(row => row.kind === 'COHORT' || (FULFILL_KINDS.has(row.kind) && lotOrigin(row)));
+  const pending = mine.filter(row => row.status !== 'POSTED' && !(row.status === 'DRAFT' && row.rejection_reason)).at(-1) || null;
+  const approver = can('document.approve'), create = approver || !can('document.create');
+  const summary = snapshot?.summary || {}, pools = snapshot?.legacy_cohort || {}, boards = snapshot?.fulfillment?.boards || {};
+  const next = [], notes = [];
+  if (pending) {
+    const own = pending.created_by === identity?.actor_id;
+    if (pending.status === 'APPROVED') next.push({ label: '확정 (원장 반영)', action: 'post', target: pending.id, disabled: !can('document.post') });
+    else {
+      next.push({ label: '승인', action: 'review-approve', target: pending.id, disabled: own || !approver },
+                { label: '반려', action: 'reject', target: pending.id, disabled: own || !can('document.review') });
+      if (own) notes.push('작성자 본인은 승인할 수 없습니다. 상단에서 역할을 검토자로 바꾸세요.');
+    }
+  } else {
+    for (const [stage, pool, label] of [['FG_RECEIPT', 'good_not_received', '입고'], ['SHIPMENT', 'warehouse', '출하'], ['ARRIVAL', 'in_transit', '도착']]) {
+      if (pools[pool] > 0) next.push({ label: `기초 보드 ${label} · ${pools[pool]}대`, action: 'cohort', stage, quantity: pools[pool], disabled: create });
+    }
+    const item = summary.item_id, target = Number(summary.production_remaining_qty) || 0;
+    const requirement = (snapshot?.material_requirements?.items || []).find(row => row.item_id === item);
+    const perBoard = Number(requirement?.quantity_per_unit || requirement?.per_unit_qty || 1) || 1;
+    const lot = (snapshot?.inventory || []).filter(row => row.item_id === item && (row.lot_id) && Number(row.available_qty) >= perBoard)
+      .sort((a, b) => Number(b.available_qty) - Number(a.available_qty))[0];
+    if (target > 0 && lot) {
+      const n = Math.min(target, Math.floor(Number(lot.available_qty) / perBoard));
+      next.push({ label: `생산 실적 기록 · ${n}대 (${lot.lot_id})`, action: 'lot-production', lot: lot.lot_id, quantity: n, disabled: create });
+    }
+    for (const row of mine.filter(row => row.status === 'POSTED' && nextStep[row.kind])) {
+      const [kind, link, state, label] = nextStep[row.kind];
+      const serials = Object.entries(boards).filter(([, value]) => value.status === state && value[link] === row.id).map(([serial]) => serial);
+      if (serials.length) next.push({ label: `${label.replace(' 기록', '')} · ${serials.length}대`, action: 'board-next', target: row.id, kind, link, serials, disabled: create });
+    }
+    if (approver && next.length) notes.push('다음 기록은 작성자 계정이 만듭니다. 이 계정은 승인과 확정을 합니다.');
+  }
+  const rows = [['남은 약속', `${summary.promise_remaining_qty ?? '미확인'}대 · 도착 누계 ${summary.arrived_qty ?? '미확인'}대`],
+    ['기초 보드', `입고 대기 ${pools.good_not_received ?? 0} · 창고 ${pools.warehouse ?? 0} · 운송 ${pools.in_transit ?? 0}대`],
+    ['신규 생산', `남은 양품 목표 ${summary.production_remaining_qty ?? '미확인'}대`]];
+  const done = Number(summary.promise_remaining_qty) === 0;
+  return { pending, next, notes, rows, status: done ? '전량 도착' : pending ? '승인 진행' : '진행 중', tone: done ? 'ok' : pending ? 'warn' : 'info',
+           label: pending ? documentLabel(pending.kind, pending.id) : null };
+}
+function fulfillmentCard(state, busy) {
+  const buttons = state.next.map((entry, index) => `<button type="button" class="mk-btn${index === 0 && !entry.disabled ? ' primary' : ''}" data-purchase-action="${entry.action}" data-fulfill-index="${index}"${entry.target ? ` data-doc="${esc(entry.target)}"` : ''}${entry.disabled || busy ? ' disabled' : ''}>${esc(entry.label)}</button>`).join('');
+  return `<section class="mk-supply-progress mk-fulfillment-card" data-fulfillment-card><h3>회차 이행<span class="mk-spacer"></span><span class="mk-pill ${toneClass[state.tone] || 'mute'}">${esc(state.status)}</span></h3>
+    <dl class="mk-supply-rows">${state.rows.map(([label, value]) => `<dt>${esc(label)}</dt><dd>${esc(value)}</dd>`).join('')}${state.label ? `<dt>승인 대기</dt><dd>${esc(state.label)}</dd>` : ''}</dl>
+    <div class="mk-supply-actions">${buttons}${state.notes.map(note => `<span class="mk-small-note">${esc(note)}</span>`).join('')}</div>
+    <p class="mk-small-note">기초 보드는 serial이 없는 기초 이관 수량이며 기록된 단계별 수량 안에서만 옮깁니다. 신규 보드는 LOT 가용 수량 안에서 생산합니다.</p></section>`;
+}
 function scenarioCard(state, busy, extra = '') {
   const buttons = state.next.map((entry, index) => `<button type="button" class="mk-btn${index === 0 && !entry.disabled ? ' primary' : ''}" data-purchase-action="${entry.action}"${entry.target ? ` data-doc="${esc(entry.target)}"` : ''}${entry.disabled || busy ? ' disabled' : ''}>${esc(entry.label)}</button>`).join('');
   const body = state.doc
@@ -222,7 +280,7 @@ function scenarioCard(state, busy, extra = '') {
 
 export function mountProcurementFlow(container, { snapshot, api, getIdentity = () => null, onPosted = () => {}, onRefresh = () => {}, onActivity = () => {} }) {
   const abort = new AbortController(), pending = new Map();
-  let documents = [], choices = [], activeId = null, editor = null, busy = false, destroyed = false;
+  let documents = [], choices = [], activeId = null, editor = null, busy = false, destroyed = false, fulfillment = null;
   let notice = '', failed = false, needsRefresh = false;
   const ledgerVersion = snapshot.meta?.ledger_version;
   const active = () => documents.find(row => row.id === activeId);
@@ -313,7 +371,8 @@ export function mountProcurementFlow(container, { snapshot, api, getIdentity = (
     const scenario = scenarioState(documents, getIdentity());
     if (scenarioEditing) scenario.next = [];
     container.innerHTML = progressCard(progress, busy || needsRefresh, status + refresh + (scenarioEditing ? '' : form()))
-      + scenarioCard(scenario, busy || needsRefresh, scenarioEditing ? status + form() : '');
+      + scenarioCard(scenario, busy || needsRefresh, scenarioEditing ? status + form() : '')
+      + fulfillmentCard(fulfillment = fulfillmentState(snapshot, documents, getIdentity()), busy || needsRefresh);
   }
   container.addEventListener('click', event => {
     const target = event.target.closest('[data-purchase-action]');
@@ -328,6 +387,31 @@ export function mountProcurementFlow(container, { snapshot, api, getIdentity = (
     if (action === 'new-po') { start('PO', { pr_id: doc.id, quantity: doc.remaining_qty, acknowledge_unknown_freight: false }); return; }
     if (action === 'new-confirmation') { start('SUPPLY_CONFIRMATION', { po_id: doc.id, confirmed_qty: doc.quantity - (doc.confirmed_qty || 0), confirmation_ref: '' }); return; }
     if (action === 'new-receipt') { start('RECEIPT', { po_id: doc.id, quantity: doc.receivable_qty, receipt_ref: '', lot_code: '' }); return; }
+    if (['cohort', 'lot-production', 'board-next'].includes(action)) {
+      const entry = fulfillment?.next[Number(target.dataset.fulfillIndex)];
+      if (!entry || entry.disabled) return;
+      const stamp = Date.now().toString(36).toUpperCase(), round = snapshot.summary?.delivery_round_id;
+      let content;
+      if (action === 'cohort') content = { kind: 'COHORT', cohort_ref: `CH-${entry.stage}-${stamp}`, round_id: round, stage: entry.stage, quantity: entry.quantity,
+        note: `자동 작성 · 기초 보드 ${entry.quantity}대 ${entry.stage} 기록 (serial 없음)` };
+      else if (action === 'lot-production') {
+        const start = Object.keys(snapshot.fulfillment?.boards || {}).length + 1;
+        const serials = Array.from({ length: entry.quantity }, (_, i) => `${round}-B${String(start + i).padStart(3, '0')}-${stamp.slice(-3)}`);
+        content = { kind: 'PRODUCTION', lot_code: entry.lot, production_ref: `PRD-${stamp}`, board_serials: serials,
+          note: `자동 작성 · ${entry.lot}로 양품 ${entry.quantity}대 생산 실적 (serial 자동 생성)` };
+      } else {
+        const refField = { FG_RECEIPT: 'receipt_ref', SHIPMENT: 'shipment_ref', ARRIVAL: 'arrival_ref' }[entry.kind];
+        content = { kind: entry.kind, [entry.link]: entry.target, [refField]: `${entry.kind}-${stamp}`, board_serials: entry.serials,
+          note: `자동 작성 · 보드 ${entry.serials.length}대 ${entry.kind} 기록` };
+      }
+      work(async () => {
+        const result = await command('/api/mks2/procurement/documents', { expected_ledger_version: ledgerVersion, content });
+        if (destroyed) return;
+        await reload(result.id);
+        message('초안을 저장했습니다. 작성자와 다른 계정에서 승인·확정해 주세요.');
+      });
+      return;
+    }
     if (action === 'new-scenario') {
       // Demo defaults the presenter can change before asking for approval.
       start('SCENARIO', { scenario_ref: `SCN-${Date.now().toString(36).toUpperCase()}`, round_id: snapshot.summary?.delivery_round_id,

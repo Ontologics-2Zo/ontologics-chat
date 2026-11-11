@@ -132,3 +132,22 @@ test('the schedule scenario card follows the same author/approver rule', async (
   assert.equal(posted.status, '반영됨 · 원장 v10'); assert.equal(posted.next[0].label, '새 가정 작성');
   assert.equal(scenarioState([{ ...draft, rejection_reason: 'x' }], author).status, '가정 없음');
 });
+
+test('the delivery-round card offers baseline moves, LOT production and next board steps by one click', async () => {
+  const { fulfillmentState } = await import('../web/mks2/procurement.js');
+  const view = { summary: { item_id: 'item-x', production_remaining_qty: 40, promise_remaining_qty: 68, arrived_qty: 32 },
+    legacy_cohort: { good_not_received: 10, warehouse: 15, in_transit: 3 },
+    material_requirements: { items: [{ item_id: 'item-x', quantity_per_unit: '1' }] },
+    inventory: [{ lot_id: 'LOT-1', item_id: 'item-x', available_qty: 20 }, { lot_id: 'LOT-2', item_id: 'item-x', available_qty: 23 }],
+    fulfillment: { boards: { 'B-1': { status: 'PRODUCED', production_id: 'prod-1' } } } };
+  const production = { id: 'prod-1', kind: 'PRODUCTION', status: 'POSTED', content: { lot_code: 'LOT-2' } };
+  const state = fulfillmentState(view, [production], author);
+  assert.deepEqual(state.next.map(entry => entry.label),
+    ['기초 보드 입고 · 10대', '기초 보드 출하 · 15대', '기초 보드 도착 · 3대', '생산 실적 기록 · 23대 (LOT-2)', '완성품 입고 · 1대']);
+  assert.ok(fulfillmentState(view, [production], reviewer).next.every(entry => entry.disabled));
+  const draft = { id: 'ch-1', kind: 'COHORT', status: 'DRAFT', created_by: 'actor-a', content: {} };
+  const waiting = fulfillmentState(view, [draft], author);
+  assert.deepEqual(waiting.next.map(entry => [entry.action, entry.disabled]), [['review-approve', true], ['reject', true]]);
+  const done = fulfillmentState({ ...view, summary: { ...view.summary, promise_remaining_qty: 0 } }, [], author);
+  assert.equal(done.status, '전량 도착');
+});

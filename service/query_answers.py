@@ -853,7 +853,12 @@ def answer_query(question, view, ontology, *, context_entity_id=None):
             item("이미 생산됐으나 미도착", f"{number(s['already_produced_qty'])}대", f"양품 미입고 {number(s['good_not_received_qty'])} + 창고 {number(s['warehouse_remaining_qty'])} + 운송 중 {number(s['transit_qty'])}; 서로 다른 단계입니다."),
             item("추가 양품 목표", f"{number(s['production_remaining_qty'])}대", f"약속 {number(s['promised_qty'])} − 양품 {number(s['good_qty'])}; 현장 실측으로 확정한 수량은 아닙니다."),
         ]))
-        answers.append(f"남은 고객 도착 약속은 {number(s['promise_remaining_qty'])}대이고, 추가 양품 목표는 {number(s['production_remaining_qty'])}대입니다.")
+        if s["promise_remaining_qty"] == 0:
+            # Every promised board has a recorded arrival; the dates are not in the ledger.
+            answers.append(f"회차 {s['delivery_round_id']}의 약속 {number(s['promised_qty'] if 'promised_qty' in s else s.get('promise_qty'))}대가 모두 고객에게 도착했습니다(도착 기록 누계 {number(s['arrived_qty'])}대, 남은 약속 0대). "
+                           f"도착기한 {s.get('arrival_due_date') or '미확인'} 준수 여부는 개별 도착일 근거가 원장에 없어 판단하지 않습니다.")
+        else:
+            answers.append(f"남은 고객 도착 약속은 {number(s['promise_remaining_qty'])}대이고, 추가 양품 목표는 {number(s['production_remaining_qty'])}대입니다.")
 
     if intents & {"production", "materials", "delivery"}:
         origin = "user_assumption" if plan.is_what_if else DEMO

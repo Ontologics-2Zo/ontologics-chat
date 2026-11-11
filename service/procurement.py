@@ -15,6 +15,7 @@ from service.contracts import CANONICAL_VERSION, DocumentAction, canonical_bytes
 from service.domain import DomainService, _public
 from service.errors import ServiceError
 from service.materials import requirements_for_snapshot
+from service.procurement_state import legacy_pools
 from service.procurement_contracts import CONTENT_TYPES, FULFILLMENT_KINDS, ProcurementCreate, ProcurementReject, ProcurementRevise
 
 
@@ -130,6 +131,17 @@ class ProcurementService(DomainService):
     def _resolve(self, conn, company, payload, content):
         kind = content.kind
         value = content.model_dump(mode="json")
+        if kind == "COHORT":
+            round_ = payload.get("current_delivery_round", payload["opening_balance"]["delivery_round"])
+            if content.round_id != round_["round_id"]:
+                raise ServiceError("FULFILLMENT_ENTITY_UNCONFIRMED", 409)
+            pools = legacy_pools(payload)
+            source = {"FG_RECEIPT": "good_not_received", "SHIPMENT": "warehouse", "ARRIVAL": "in_transit"}[content.stage]
+            if content.quantity > pools[source]:
+                raise ServiceError("FULFILLMENT_EXCEEDS_LEGACY_COHORT", 409)
+            round_entity = self._entity(payload, "DeliveryRound", round_["round_id"])
+            return {"round_id": round_["round_id"], "round_entity_id": round_entity["id"], "stage": content.stage,
+                    "pools_before": pools, "quantity": content.quantity}
         if kind == "SCENARIO":
             # Assumptions target one existing delivery round and its job; no parent document.
             round_ = self._entity(payload, "DeliveryRound", content.round_id)
@@ -266,8 +278,17 @@ class ProcurementService(DomainService):
                   "configuration_entity_id": entity("ProductConfiguration", round_["configuration_id"])["id"],
                   "customer_entity_id": customers[0] if len(customers) == 1 else None}
         if kind == "PRODUCTION":
-            parent = self._parent(conn, company, content.iqc_id, "IQC")
-            lot_code, item_id, unit = parent["content"]["resolved"]["lot_code"], parent["content"]["resolved"]["item_id"], parent["content"]["resolved"]["unit"]
+            if content.iqc_id:
+                parent = self._parent(conn, company, content.iqc_id, "IQC")
+                lot_code, item_id, unit = parent["content"]["resolved"]["lot_code"], parent["content"]["resolved"]["item_id"], parent["content"]["resolved"]["unit"]
+            else:
+                # An existing LOT: its own available quantity (after other demands' reservations) is the limit.
+                parent = None
+                stock = payload.get("current_inventory", payload["opening_balance"]["inventory"])
+                rows = [row for row in stock if row.get("scope") == "LOT" and row.get("lot_id") == content.lot_code]
+                if len(rows) != 1:
+                    raise ServiceError("FULFILLMENT_LOT_NOT_AVAILABLE", 409)
+                lot_code, item_id, unit = rows[0]["lot_id"], rows[0]["item_id"], rows[0]["unit"]
             if any(serial in boards for serial in serials):
                 raise ServiceError("FULFILLMENT_BOARD_ALREADY_RECORDED", 409)
             if len(serials) > round_["remaining_good_target_qty"]:
@@ -290,7 +311,7 @@ class ProcurementService(DomainService):
             if not lines:
                 raise ServiceError("FULFILLMENT_BOM_LINE_UNCONFIRMED", 409)
             job = entity("ProductionJob", round_["job_id"])
-            return {**common, "parent": self._reference(parent), "item_id": item_id, "unit": unit, "lot_code": lot_code,
+            return {**common, **({"parent": self._reference(parent)} if parent else {}), "item_id": item_id, "unit": unit, "lot_code": lot_code,
                     "lot_entity_id": entity("PartLot", lot_code)["id"], "quantity_per_board": format(per_board, "f"),
                     "consumed_qty": consumed, "bom_line_entity_id": sorted(row["id"] for row in lines)[0],
                     "job_entity_id": job["id"], "conditional_application": items[0]["conditional"]}
@@ -311,8 +332,10 @@ class ProcurementService(DomainService):
         elif content.kind == "SUPPLY_CONFIRMATION":
             quantity = content.confirmed_qty
         key = next((getattr(content, name) for name in ("quote_ref", "confirmation_ref", "receipt_ref", "inspection_ref",
-                                                        "production_ref", "shipment_ref", "arrival_ref", "scenario_ref") if hasattr(content, name)), None)
-        return (resolved.get("parent", {}).get("id"), key, getattr(content, "lot_code", None), quantity,
+                                                        "production_ref", "shipment_ref", "arrival_ref", "scenario_ref", "cohort_ref") if hasattr(content, name)), None)
+        # Only a receipt creates a LOT; production from an existing LOT names it without claiming it.
+        lot_code = getattr(content, "lot_code", None) if content.kind == "RECEIPT" else None
+        return (resolved.get("parent", {}).get("id"), key, lot_code, quantity,
                 getattr(content, "passed_qty", 0), getattr(content, "failed_qty", 0))
 
     @staticmethod

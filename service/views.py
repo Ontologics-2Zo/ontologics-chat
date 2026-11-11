@@ -104,6 +104,7 @@ def snapshot_view(payload):
         meta.update(opening_effective_at=source["opening_effective_at"],
                     inventory_effective_at=source.get("current_inventory_effective_at"))
     from service.reservations import reservation_impacts
+    from service.procurement_state import legacy_pools
     impacts = reservation_impacts(requirements, payload.get("reservations", []))
     suggestions = []
     from decimal import Decimal
@@ -129,6 +130,7 @@ def snapshot_view(payload):
         "fulfillment": deepcopy(payload.get("fulfillment", {})),
         "capabilities": {"bom_upload": "RUNNER_UNAVAILABLE", "purchase_write": "NOT_IMPLEMENTED", "agent": "NOT_IMPLEMENTED", "model": "NOT_RUN"},
         "reservation_impacts": impacts,
+        "legacy_cohort": legacy_pools(payload),
         "suggested_questions": suggested_questions(summary, requirements, bom, payload, suggestions),
     }
 
