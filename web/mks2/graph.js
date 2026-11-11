@@ -4,6 +4,21 @@ import { layoutGraph, routeEdges, graphBounds, planEvidenceReplay, replayStepTim
 const NS = 'http://www.w3.org/2000/svg';
 const STAGE = { x: 0, y: 0, width: 1400, height: 840 };
 const TYPES = [['design', '설계·기준'], ['doc', '문서'], ['event', '사건'], ['phys', '실물(LOT)']];
+// Presentation only: colour by business area and size by importance. Every
+// object and relation stays in the graph; minor nodes just draw smaller.
+const AREAS = [['dem', '수요·이행'], ['bom', 'BOM·구성'], ['inv', '품목·재고'], ['pro', '조달'], ['ev', '근거·원문']];
+const AREA_OF = { Customer: 'dem', ContractLine: 'dem', DeliveryRound: 'dem', ProductionJob: 'dem', Demand: 'dem',
+  ProductionReport: 'dem', FGReceipt: 'dem', Shipment: 'dem', Arrival: 'dem', BoardUnit: 'dem',
+  ProductConfiguration: 'bom', ProductModel: 'bom', Revision: 'bom', BOMSnapshot: 'bom', BOMLine: 'bom', BOMApplication: 'bom',
+  InternalItem: 'inv', PartLot: 'inv', InventoryReservation: 'inv', Reservation: 'inv', ReservationEvent: 'inv',
+  PartsReceiptLine: 'inv', InspectionResult: 'inv', IncomingInspection: 'inv',
+  Supplier: 'pro', SupplierOffer: 'pro', SupplierQuote: 'pro', Quotation: 'pro', PurchaseRequest: 'pro', PurchaseOrder: 'pro',
+  PurchaseOrderLine: 'pro', SupplyConfirmation: 'pro', Receipt: 'pro',
+  SourceDocument: 'ev', SourceSnapshot: 'ev', SourceRow: 'ev', DocumentVersion: 'ev', ApprovalGrant: 'ev', Evidence: 'ev' };
+const KEY_TYPES = new Set(['Customer', 'ContractLine', 'DeliveryRound', 'ProductionJob', 'ProductConfiguration', 'InternalItem',
+  'PartLot', 'Supplier', 'BOMSnapshot', 'PurchaseOrder', 'PurchaseRequest', 'Reservation', 'InventoryReservation', 'ReservationEvent']);
+const MINOR_TYPES = new Set(['SourceRow', 'Evidence', 'DocumentVersion', 'ApprovalGrant', 'SourceSnapshot', 'BOMLine']);
+const entityType = node => node.type || node.ontology_type || node.attributes?.kind_label || '';
 
 function html(tag, className, text) {
   const node = document.createElement(tag);
@@ -108,6 +123,10 @@ export function mountGraph(container, { bundle, onSelect = () => {}, onAsk = () 
     legend.append(filter);
   }
   legend.append(html('span', 'mks-legend-bad', '■ 부족'), html('span', 'mks-legend-warn', '■ 확인 필요'), html('span', '', '┄ 초안'));
+  const areas = html('div', 'mks-area-legend');
+  areas.setAttribute('aria-label', '업무 영역 색상');
+  for (const [area, label] of AREAS) areas.append(html('span', `mks-area-chip mks-area-${area}`, label));
+  legend.append(areas);
   const tools = html('div', 'mks-graph-tools');
   const search = html('input', 'mks-graph-search');
   search.type = 'search'; search.placeholder = '객체 찾기'; search.setAttribute('aria-label', '전체 그래프 객체 찾기');
@@ -305,6 +324,10 @@ export function mountGraph(container, { bundle, onSelect = () => {}, onAsk = () 
       if (!selectedTypes.has(node.node_type)) group.classList.add('mks-type-muted');
       if (activeNodes.has(node.node_id)) group.classList.add('mks-active-step');
       if (isSourceRow(node)) group.classList.add('mks-source-row');
+      const kind = entityType(node);
+      group.classList.add(`mks-area-${AREA_OF[kind] || 'ev'}`);
+      if (KEY_TYPES.has(kind)) group.classList.add('mks-key');
+      else if (MINOR_TYPES.has(kind) || isSourceRow(node)) group.classList.add('mks-minor');
       const title = svgNode('title', {}, `${node.display_id || node.node_id} · ${node.label || ''}`);
       const ring = node.node_type === 'party' ? svgNode('rect', { class: 'mks-node-ring', x: -30, y: -14, width: 60, height: 28, rx: 14 }) : svgNode('circle', { class: 'mks-node-ring', r: 22 });
       const labelY = node.node_type === 'party' ? 28 : 36;
@@ -436,7 +459,9 @@ export function mountGraph(container, { bundle, onSelect = () => {}, onAsk = () 
   const resizeObserver = new ResizeObserver(resize);
   resizeObserver.observe(canvas);
   render();
-  if (positions.length) fitBounds(layout.bounds);
+  // First view: the business objects; source rows and evidence stay reachable via 전체 보기.
+  const coreIds = positions.filter(node => !MINOR_TYPES.has(entityType(node)) && !isSourceRow(node)).map(node => node.node_id);
+  if (coreIds.length) fit(coreIds, 0); else if (positions.length) fitBounds(layout.bounds);
   return {
     focus,
     replay,

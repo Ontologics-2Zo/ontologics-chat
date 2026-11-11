@@ -402,8 +402,12 @@ class QueryAnswerTests(unittest.TestCase):
         self.assertIn("부족 0으로 보지 않습니다", " ".join(blocks[2].paragraphs))
         schedule = blocks[3]
         self.assertEqual((schedule.kind, schedule.tool), ("assumption", "시연 가정 · 일정"))
-        self.assertIn("원장 근거가 아닙니다", " ".join(schedule.paragraphs))
-        self.assertNotRegex(" ".join(schedule.paragraphs), r"\d+일")  # no invented durations
+        # One row per stage backward from the due date; durations stay without evidence.
+        self.assertEqual([row[0] for row in schedule.table.rows][1:], ["운송", "출하 준비", f"생산 {number(result['calculation']['basis']['planned_input_qty'])}대", "수입검사", "부품 입하 필요일"])
+        self.assertEqual([row[2] for row in schedule.table.rows][1:], ["근거 없음"] * 4 + ["계산 불가"])
+        self.assertTrue(all(cell[1] == 2 for cell in schedule.table.alert_cells))
+        cells = " ".join(" ".join(row) for row in schedule.table.rows) + " ".join(schedule.paragraphs)
+        self.assertNotRegex(cells, r"\d+일")  # no invented durations
         self.assertEqual(blocks[-1].title, "자재 부족 6개 · 납기 판단 보류")
         self.assertEqual(item["planned_shortage_qty"], "6.0")
         direct = self.answer("재고 빼면 어떤 자재가 얼마나 모자라?")

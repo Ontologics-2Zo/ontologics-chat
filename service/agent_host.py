@@ -158,7 +158,11 @@ def build_agent_host(db, identity, gateway, context_provider, settings, *, recei
             workflow_version=WORKFLOW_VERSION, deadline_at=budget.deadline_at)
         # No question, business quantities, item IDs, sources or raw results
         # cross this port. Only the seven schema-checked feature flags do.
-        request = ModelRequest(call_id="route-v1", features=tuple(features))
+        try:
+            request = ModelRequest(call_id="route-v1", features=tuple(features))
+        except ValueError:
+            # A feature outside the fixed flags must fail with a clear code, not a generic one.
+            raise ServiceError("MODEL_ROUTE_FEATURE_INVALID", 422) from None
         return models.bind(principal=principal, context=model_context,
                            budget=_ModelGuard(budget, context.execution_id)).complete(request).capability
 

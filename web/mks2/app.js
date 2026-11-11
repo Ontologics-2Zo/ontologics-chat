@@ -125,6 +125,40 @@ function focusEvidence(id) {
   location.hash = '#graph';
   lane?.focus(id);
 }
+// Shortest chain of recorded relations from a node to the first node that
+// matches isTarget (both directions). Only snapshot edges are used.
+function graphChain(fromId, isTarget, maxDepth = 8) {
+  const nodes = snapshot?.graph?.data?.nodes || [], edges = snapshot?.graph?.data?.edges || [];
+  const byId = new Map(nodes.map(node => [node.node_id || node.id, node]));
+  if (!byId.has(fromId)) return [];
+  const next = new Map();
+  for (const edge of edges) {
+    if (!byId.has(edge.source) || !byId.has(edge.target)) continue;
+    (next.get(edge.source) || next.set(edge.source, []).get(edge.source)).push(edge.target);
+    (next.get(edge.target) || next.set(edge.target, []).get(edge.target)).push(edge.source);
+  }
+  const parent = new Map([[fromId, null]]), depth = new Map([[fromId, 0]]), queue = [fromId];
+  while (queue.length) {
+    const id = queue.shift();
+    if (id !== fromId && isTarget(byId.get(id))) {
+      const path = [];
+      for (let at = id; parent.get(at) !== null; at = parent.get(at)) path.unshift([parent.get(at), at]);
+      return path;
+    }
+    if (depth.get(id) >= maxDepth) continue;
+    for (const to of next.get(id) || []) if (!parent.has(to)) { parent.set(to, id); depth.set(to, depth.get(id) + 1); queue.push(to); }
+  }
+  return [];
+}
+const nodeType = node => node?.type || node?.node_type || node?.ontology_type;
+// "변경 관계 보기": play the chain from the changed record to the delivery round.
+function showChain(fromId) {
+  cancelPendingReplay();
+  location.hash = '#graph';
+  const hops = graphChain(fromId, node => nodeType(node) === 'DeliveryRound');
+  if (!hops.length || !lane) { lane?.focus(fromId); return; }
+  lane.replay({ hops, nodeIds: [...new Set(hops.flat())] });
+}
 // Visible progress while a question runs: spinner, elapsed seconds and the
 // server's own completed steps. It describes server events, not a fake bar.
 const PROGRESS_STEPS = [['route', '질문 분석 · AI'], ['read', '원장 조회·계산'], ['validate', '결과 확인'], ['retrieve', '근거 검색']];
@@ -430,7 +464,16 @@ async function runQuery(name, question) {
       const replay = ++replayGeneration, playGeneration = generation;
       activeReplay = replay;
       const target = network ? graph : lane;
-      return presentation.play(() => target.replay({ hops, nodeIds: ids, edgeIds: answer.evidence_edge_ids || [] }),
+      // An answer without its own path still shows a connected flow: the round
+      // to the focus item (for example the short material) over recorded relations.
+      let flow = hops;
+      if (!flow.length && !network) {
+        const round = (snapshot.graph?.data?.nodes || []).find(node => nodeType(node) === 'DeliveryRound'
+          && (node.display_id === snapshot.summary?.delivery_round_id));
+        const item = snapshot.summary?.item_id;
+        if (round && item) flow = graphChain(round.node_id || round.id, node => nodeType(node) === 'InternalItem' && node.display_id === item);
+      }
+      return presentation.play(() => target.replay({ hops: flow, nodeIds: ids, edgeIds: answer.evidence_edge_ids || [] }),
         () => generation === playGeneration && replay === replayGeneration);
     });
     const animateAnswer = answerVisible(name);
@@ -630,7 +673,7 @@ function announceApplied(events, startedAt) {
       ` 관련 재고 변경 · 다른 주문 ${impact.demand_ref} 예약 +${impact.quantity}${unit} · 가용 ${impact.available_before}→${impact.available_after} · `
         + (grew ? `계획 부족 ${impact.planned_shortage_before}→${impact.planned_shortage_after}${unit} · 기존 확보안 재검토 필요` : `계획 부족 ${impact.planned_shortage_after}${unit} 유지`)
         + ` · 원장 v${impact.ledger_version} `,
-      button('변경 관계 보기', () => focusEvidence(impact.entity_id), 'btn sm'),
+      button('변경 관계 보기', () => showChain(impact.entity_id), 'btn sm'),
       ...(grew ? names.flatMap(name => [
         panels[name].lastQuestion ? button('같은 질문 다시 하기', () => askNow(name, panels[name].lastQuestion), 'suggestion') : null,
         button(question, () => fillQuestion(question, name), 'suggestion')]) : [])].filter(Boolean));

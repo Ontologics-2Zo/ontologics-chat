@@ -471,13 +471,9 @@ export function renderQueryAnswer(message, answer, {
       if (block.kind !== 'verdict') heading.append(node('span', 'query-answer-number', String(++number)));
       heading.append(node('h3', '', block.title), node('span', 'query-answer-tool', block.tool));
       card.append(heading);
-      // An assumption card stays folded: it is a scenario frame, not ledger evidence.
-      let target = card;
-      if (block.kind === 'assumption') {
-        const fold = node('details', 'query-assumption');
-        fold.append(node('summary', '', '가정 시나리오 · 원장 근거 아님'));
-        card.append(fold); target = fold;
-      }
+      // An assumption card is shown open; its heading tag (for example
+      // "시연 가정 · 일정") and its own style mark it as a scenario frame.
+      const target = card;
       const table = answerTable(block.table);
       if (table) target.append(table);
       const start = runs.length; appendParagraphs(target, block.paragraphs);

@@ -967,7 +967,7 @@ test('frame scheduling failure restores the complete confirmed body instead of l
   }
 });
 
-test('reference-order delivery cards render table, folded assumption, quote choice and verdict as text', () => {
+test('reference-order delivery cards render table, open assumption table, quote choice and verdict as text', () => {
   const { message, restore } = setup();
   try {
     const data = response(); data.intent = ['delivery'];
@@ -976,7 +976,8 @@ test('reference-order delivery cards render table, folded assumption, quote choi
       { id: 'delivery_balance', title: '“9대”가 무엇인지 확인', tool: '원장 조회', kind: 'normal', paragraphs: ['9대는 남은 약속입니다.'] },
       { id: 'material_shortage', title: '부품 부족 예측', tool: '원장 계산 · BOM 전개', kind: 'normal', paragraphs: ['합성 부족 3개.'],
         table: { columns: ['위치', '품목', '필요', '가용', '부족'], rows: [['<b>U1</b>', 'item-x', '5', '2', '3']], alert_cells: [[0, 4]] } },
-      { id: 'schedule_backward', title: '일정 역산 · 가정 시나리오', tool: '시연 가정 · 일정', kind: 'assumption', paragraphs: ['근거 없음.'] },
+      { id: 'schedule_backward', title: '일정 역산', tool: '시연 가정 · 일정', kind: 'assumption', paragraphs: ['근거가 없어 계산하지 않았습니다.'],
+        table: { columns: ['단계 (도착부터 거꾸로)', '필요한 근거', '상태'], rows: [['운송', '운송 기간', '근거 없음']], alert_cells: [[0, 2]] } },
       { id: 'supply_candidates', title: '공급 후보 비교', tool: '원장 조회 · 견적 → 공급사', kind: 'normal', paragraphs: ['사람이 선택하세요.'],
         quotes: [{ quote_id: 'q-1', quote_ref: 'CMP-X', supplier_id: 'sup-x', material_basis: 'planned', quantity_condition: 'MET', recommended_qty: 5, margin_qty: 2,
                    supply_limit_qty: 9, moq: 5, order_multiple: 5, unit_price: '1', currency: 'KRW', freight: null, total: null, lead_business_days: 3, valid_until: null, reason: '충족' },
@@ -986,11 +987,14 @@ test('reference-order delivery cards render table, folded assumption, quote choi
     ];
     const chosen = [];
     renderQueryAnswer(message, data, { mode: 'workflow', onChooseQuote: quote => chosen.push(quote.quote_id) });
-    const table = descendants(message).find(item => item.className === 'query-mini-table');
+    const table = descendants(message).filter(item => item.className === 'query-mini-table')[0];
     assert.ok(table); assert.ok(table.textContent.includes('<b>U1</b>'));  // literal text, never HTML
     assert.equal(descendants(table).filter(item => item.className?.includes('alert')).length, 1);
-    const fold = descendants(message).find(item => item.className === 'query-assumption');
-    assert.equal(fold.tagName, 'DETAILS'); assert.ok(fold.textContent.includes('가정 시나리오 · 원장 근거 아님'));
+    // The assumption card is open (no fold label) and keeps its assumption tag.
+    assert.equal(descendants(message).filter(item => item.tagName === 'DETAILS' && item.className === 'query-assumption').length, 0);
+    const schedule = withClass(message, 'query-answer-assumption')[0];
+    assert.ok(schedule.textContent.includes('시연 가정 · 일정') && schedule.textContent.includes('근거 없음'));
+    assert.ok(!message.textContent.includes('가정 시나리오 · 원장 근거 아님'));
     const buttons = descendants(message).filter(item => item.dataset.queryAction === 'choose-quote');
     assert.equal(buttons.length, 2); assert.equal(buttons[1].disabled, true);
     buttons[0].click(); assert.deepEqual(chosen, ['q-1']);

@@ -238,9 +238,16 @@ def _delivery_blocks(view, plan, sections, prerequisite, requirements):
             notes.append(f"자재 조건 변경: {event['value']} 이후 {available['label']} {available['value']}, 계획 투입 기준 부족 {entries['계획 투입 기준 부족']['value']}입니다. 기존 확보안은 재검토가 필요하며 공급사·초안은 자동으로 바뀌지 않습니다.")
         blocks.append(QueryAnswerBlock(id="material_shortage", title="부품 부족 예측", tool="원장 계산 · BOM 전개", kind="normal",
             paragraphs=notes, table={"columns": ["위치", "품목", "필요", "가용", "부족"], "rows": rows, "alert_cells": alerts}))
-        blocks.append(QueryAnswerBlock(id="schedule_backward", title="일정 역산 · 가정 시나리오", tool="시연 가정 · 일정", kind="assumption", paragraphs=[
-            f"도착 {due or '미확인'} ← 운송 (근거 없음) ← 출하 준비 (근거 없음) ← 생산 {number(basis['planned_input_qty'])}대 (생산능력 근거 없음) ← 수입검사 (근거 없음) → 부품 입하 필요일 계산 불가.",
-            "원장에 생산능력·작업 달력·검사·출하·운송 기간 근거가 없어 일정을 역산하지 않았습니다. 이 카드는 가정 시나리오의 틀이며 원장 근거가 아닙니다."]))
+        # Backward from the due date, one row per stage. Durations without
+        # ledger evidence stay "근거 없음"; nothing is filled in.
+        steps = [["고객 도착", f"도착기한 {due}" if due else "도착기한", "원장 확인" if due else "미확인"],
+                 ["운송", "운송 기간", "근거 없음"], ["출하 준비", "출하 준비 기간", "근거 없음"],
+                 [f"생산 {number(basis['planned_input_qty'])}대", "생산능력·작업 달력", "근거 없음"],
+                 ["수입검사", "검사 기간", "근거 없음"], ["부품 입하 필요일", "위 기간의 합", "계산 불가"]]
+        blocks.append(QueryAnswerBlock(id="schedule_backward", title="일정 역산", tool="시연 가정 · 일정", kind="assumption",
+            table={"columns": ["단계 (도착부터 거꾸로)", "필요한 근거", "상태"], "rows": steps,
+                   "alert_cells": [[r, 2] for r, row in enumerate(steps) if row[2] != "원장 확인"]},
+            paragraphs=["단계별 기간 근거가 원장에 없어 부품 입하 필요일을 거꾸로 계산하지 않았습니다. 근거가 들어오면 같은 순서로 계산합니다."]))
         if focus:
             quotes = _quote_cards(view, focus, focus["planned_shortage_qty"])
             if quotes:

@@ -125,7 +125,8 @@ class ReservationAnswerTests(unittest.TestCase):
         self.assertIn("개발 원장 사건", str(result["answer_blocks"]))
 
     def test_suggestions_follow_the_reservation(self):
-        self.assertEqual(self.before["suggested_questions"][0], "남은 약속은 몇 대고, 얼마나 더 만들어야 해?")
+        # State-aware order (DEC-H56 follow-up): the round's delivery question leads.
+        self.assertEqual(self.before["suggested_questions"][0], "남은 17대, 납기 안에 고객에게 도착할 수 있어?")
         self.assertEqual(self.after["suggested_questions"][:2], ["왜 부족이 11개로 늘었어?", "기존 6개 안이면 충분해? 어떤 안을 다시 검토할까?"])
 
 

@@ -35,6 +35,9 @@ CAPABILITIES = {"fulfillment_read": FulfillmentRead, "material_analysis": Materi
 CAPABILITY_TOOLS = {"fulfillment_read": "ledger.query", "material_analysis": "ledger.query",
                     "product_review": "product.review", "procurement_review": "procurement.options"}
 MODEL_CAPABILITIES = frozenset({"fulfillment_read", "material_analysis"})
+ROUTE_FEATURE = {"fulfillment": "fulfillment", "production": "production", "materials": "materials",
+                 "inventory": "inventory", "delivery": "delivery", "ontology": "ontology",
+                 "sourcing": "materials", "change": "materials", "trace": "inventory"}
 PINNED_FIELDS = ("company_id", "read_snapshot_id", "ledger_version", "projection_version",
                  "ontology_version", "rule_version", "as_of", "known_as_of")
 
@@ -304,14 +307,18 @@ class AgentWorkflow:
             if explicit:
                 return {"capability": explicit, "needs_clarification": False}
             plan = interpret_question(request.question)
+            # The model only receives the fixed routing flags. Narrower intents
+            # map onto them (sourcing/change → materials, trace → inventory).
+            features = tuple(sorted({ROUTE_FEATURE[intent] for intent in plan.intents if intent in ROUTE_FEATURE})) or ("unknown",)
             if plan.clarification or plan.unsupported:
                 capability = None
+            elif set(plan.intents) == {"ontology"}:
+                capability = "fulfillment_read"  # schema scope: same read-only query, no model needed
             elif self.route_model:
-                features = tuple(plan.intents) or ("unknown",)
                 capability = self.route_model(principal, context, segment_id, features, budget)
-            elif set(plan.intents) & {"materials", "inventory"}:
+            elif set(features) & {"materials", "inventory"}:
                 capability = "material_analysis"
-            elif set(plan.intents) & {"fulfillment", "production", "delivery"}:
+            elif set(features) & {"fulfillment", "production", "delivery"}:
                 capability = "fulfillment_read"
             else:
                 capability = None
