@@ -81,10 +81,18 @@ test('after inspection the card continues to production, shipment and arrival', 
     { id: 'iqc-1', kind: 'IQC', status: 'POSTED', parent_id: 'rc-1', passed_qty: 23, quantity: 23, content: {} },
     { id: 'prod-1', kind: 'PRODUCTION', status: 'POSTED', parent_id: 'iqc-1', quantity: 3, content: {} }];
   const view = { ...snapshot(0), summary: { item_id: 'item-x', production_remaining_qty: 37 },
+    inventory: [{ lot_id: 'LOT-N', item_id: 'item-x', available_qty: 20 }],
     fulfillment: { boards: { 'B-1': { status: 'PRODUCED', production_id: 'prod-1' }, 'B-2': { status: 'PRODUCED', production_id: 'prod-1' } } } };
   const produced = supplyProgress(chain, view, author);
   assert.equal(produced.status, '생산 진행');
   assert.deepEqual(actions(produced), ['new-production', 'new-next']);
+  // One click: the quantity is the remaining target capped by the LOT's available stock.
+  assert.deepEqual([produced.next[0].label, produced.next[0].quantity, produced.next[0].lot], ['생산 실적 기록 · 20대', 20, 'LOT-N']);
+  const target = supplyProgress(chain, { ...view, summary: { ...view.summary, production_remaining_qty: 5 } }, author);
+  assert.equal(target.next[0].quantity, 5);
+  const empty = supplyProgress(chain, { ...view, inventory: [] }, author);
+  assert.deepEqual(actions(empty), ['new-next']);
+  assert.ok(empty.notes.some(note => /LOT-N 가용 수량이 없어/.test(note)));
   assert.match(produced.next[1].label, /완성품 입고 기록 · 2대/);
   assert.ok(produced.rows.some(([label, value]) => label === '입하 · 검사' && value === 'LOT-N · 입하 23개 · 합격 23개'));
   assert.ok(produced.rows.some(([label, value]) => label === '보드 이행' && value === '생산 2 · 출하 0 · 도착 0대'));
