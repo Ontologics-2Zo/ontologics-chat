@@ -153,11 +153,15 @@ def _serial_list(serials, limit=4):
     serials = sorted(serials)
     if len(serials) <= limit:
         return ", ".join(serials)
-    parts = [re.match(r"^(.*?)(\d+)(\D*)$", serial) for serial in serials]
-    if all(parts) and len({(m.group(1), m.group(3), len(m.group(2))) for m in parts}) == 1:
-        numbers = [int(m.group(2)) for m in parts]
-        if numbers == list(range(numbers[0], numbers[0] + len(numbers))):
-            return f"{serials[0]} – {serials[-1]}"
+    # Split into digit / non-digit pieces; a run is when exactly one digit piece
+    # differs between serials and its values are consecutive (…-B001-0JE …-B030-0JE).
+    pieces = [re.findall(r"\d+|\D+", serial) for serial in serials]
+    if len({len(p) for p in pieces}) == 1:
+        varying = [i for i in range(len(pieces[0])) if len({p[i] for p in pieces}) > 1]
+        if len(varying) == 1 and pieces[0][varying[0]].isdigit() and len({len(p[varying[0]]) for p in pieces}) == 1:
+            numbers = [int(p[varying[0]]) for p in pieces]
+            if numbers == list(range(numbers[0], numbers[0] + len(numbers))):
+                return f"{serials[0]} – {serials[-1]}"
     return f"{', '.join(serials[:limit])} 외 {len(serials) - limit}대"
 
 
