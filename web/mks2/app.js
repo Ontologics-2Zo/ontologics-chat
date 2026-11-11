@@ -599,6 +599,7 @@ async function runQuery(name, question) {
         settleAnswer(panel); cancelPendingReplay();
         dashboard.startPurchaseRequest(quote).then(opened => {
           if (opened === 'APPROVER_CANNOT_AUTHOR') setStatus([name], ['승인 권한이 있는 계정은 구매 요청을 작성하지 않습니다. 작성하면 승인할 다른 계정이 없습니다. 상단에서 작성자 계정으로 바꿔 주세요.']);
+          else if (opened === 'DOCUMENT_WAITING') setStatus([name], ['승인을 기다리는 다른 문서가 있습니다. 진행 현황에서 그 문서를 승인·확정하거나 반려한 뒤 구매 요청을 작성해 주세요.']);
           else if (!opened) setStatus([name], ['이 견적으로 구매 요청 초안을 열 수 없습니다. 권한·견적 상태를 확인해 주세요.']);
           else location.hash = '#dashboard';
         });
