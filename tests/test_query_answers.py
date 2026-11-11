@@ -37,6 +37,24 @@ class QueryAnswerTests(unittest.TestCase):
     def answer(self, question, **kwargs):
         return answer_query(question, self.view, self.ontology, **kwargs)
 
+    def test_detail_reads_answer_from_recorded_values_only(self):
+        quality = self.answer("불량률은 얼마야?")
+        self.assertEqual((quality["status"], quality["intent"]), ("ANSWERED", ["quality"]))
+        self.assertRegex(quality["answer"], r"불량률은 [\d.]+%")
+        self.assertIn("가정", quality["answer"])  # planned yield is kept apart from the actual rate
+        transit = self.answer("운송 중인 보드는 몇 대야?")
+        self.assertEqual((transit["status"], transit["intent"]), ("ANSWERED", ["transit"]))
+        self.assertIn("근거는 원장에 없습니다", transit["answer"])
+        substitute = self.answer("대체 후보는 있어?")
+        self.assertEqual(substitute["intent"], ["substitute"])
+        self.assertIn(substitute["status"], {"ANSWERED", "UNKNOWN"})
+        if substitute["status"] == "ANSWERED":
+            self.assertIn("확보량에 넣지 않습니다", substitute["answer"])
+        position = self.answer("어디에 들어가?")
+        self.assertEqual(position["intent"], ["position"])
+        unknown = self.answer("IM-9999는 어디에 들어가?")
+        self.assertIn(unknown["status"], {"UNKNOWN", "NEEDS_CLARIFICATION"})  # never guessed
+
     def test_colloquial_fulfillment_separates_remaining_and_new_production(self):
         result = self.answer("얼마나 남았어? 몇 대 더 만들어야 해?")
         self.assertEqual(result["status"], "ANSWERED")

@@ -31,10 +31,10 @@ class _ReadSpecialist:
 
 class FulfillmentRead(_ReadSpecialist):
     # The ontology scope question is answered by the same read-only ledger query.
-    allowed_intents = frozenset({"fulfillment", "production", "delivery", "ontology"})
+    allowed_intents = frozenset({"fulfillment", "production", "delivery", "ontology", "quality", "transit"})
 
 
 class MaterialAnalysis(_ReadSpecialist):
     # Sourcing comparison, shortage-change reasons and LOT tracing are material
     # reads answered by the same ledger query.
-    allowed_intents = frozenset({"materials", "inventory", "sourcing", "change", "trace"})
+    allowed_intents = frozenset({"materials", "inventory", "sourcing", "change", "trace", "position", "substitute"})

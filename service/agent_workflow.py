@@ -37,7 +37,8 @@ CAPABILITY_TOOLS = {"fulfillment_read": "ledger.query", "material_analysis": "le
 MODEL_CAPABILITIES = frozenset({"fulfillment_read", "material_analysis"})
 ROUTE_FEATURE = {"fulfillment": "fulfillment", "production": "production", "materials": "materials",
                  "inventory": "inventory", "delivery": "delivery", "ontology": "ontology",
-                 "sourcing": "materials", "change": "materials", "trace": "inventory"}
+                 "sourcing": "materials", "change": "materials", "trace": "inventory",
+                 "position": "materials", "substitute": "materials", "quality": "production", "transit": "fulfillment"}
 PINNED_FIELDS = ("company_id", "read_snapshot_id", "ledger_version", "projection_version",
                  "ontology_version", "rule_version", "as_of", "known_as_of")
 

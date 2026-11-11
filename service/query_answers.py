@@ -20,14 +20,17 @@ from service.query_intents import interpret_question
 RULE_VERSION = "cq-read-analysis/2"
 LABELS = {"trace": "LOT 추적", "change": "수량 변경 원인", "sourcing": "부족 자재 확보안 비교", "fulfillment": "납품 이행", "production": "추가 생산·투입",
           "materials": "자재 소요·부족", "inventory": "가용 재고",
-          "delivery": "고객 도착·납기 판단", "ontology": "전체 온톨로지"}
+          "delivery": "고객 도착·납기 판단", "ontology": "전체 온톨로지",
+          "quality": "불량·판정 실적", "position": "BOM 장착 위치", "substitute": "대체 후보", "transit": "운송·창고 보드"}
 SYNTHETIC = "synthetic_opening_balance"
 DEMO = "conditional_demo"
 # DEC-H47 branches explain existing material CQs; no new official CQ IDs.
 CQ_REFS = {"trace": ("DEMO-CQ-03",), "change": ("B-CQ01", "B-CQ04"), "sourcing": ("CQ09", "B-CQ01", "B-CQ04"),
            "fulfillment": ("DEMO-CQ-01", "B-CQ02"), "production": ("DEMO-CQ-02", "B-CQ03"),
            "materials": ("CQ09", "B-CQ04"), "inventory": ("B-CQ01", "B-CQ04"),
-           "delivery": ("DEMO-CQ-01", "B-CQ01", "B-CQ04"), "ontology": ()}
+           "delivery": ("DEMO-CQ-01", "B-CQ01", "B-CQ04"), "ontology": (),
+           # Detail reads without an assigned official CQ ID yet; none is invented.
+           "quality": (), "position": (), "substitute": (), "transit": ()}
 
 
 def number(value):
@@ -735,6 +738,70 @@ def _lot_trace_answer(question, view, plan):
     return result
 
 
+def _quality_answer(view, plan, req):
+    s = view["summary"]
+    judged = (s.get("good_qty") or 0) + (s.get("defect_qty") or 0)
+    if not judged:
+        return _result(view, plan, status="UNKNOWN", answer="판정된 생산 실적이 없어 불량률을 계산하지 않았습니다.", conclusion="판정 실적 없음")
+    rate = _ratio_text(s["defect_qty"], judged)
+    yield_text = percentage(req["basis"]["plan_yield"])
+    answer = (f"판정된 {number(judged)}대 중 불량 {number(s['defect_qty'])}대로 불량률은 {rate}%입니다(판정대기 {number(s.get('pending_judgement_qty') or 0)}대 제외). "
+              f"양품은 {number(s['good_qty'])}대입니다. 계획 수율 {yield_text}%는 생산 계획용 가정이며 이 실적과 별개입니다.")
+    return _result(view, plan, answer=answer, conclusion=f"불량률 {rate}% · 합성 기초 실적", sections=[section("quality", "생산 판정 실적 · 합성 기초 이관", SYNTHETIC, [
+        {"label": "양품 / 불량 / 판정대기", "value": f"{number(s['good_qty'])} / {number(s['defect_qty'])} / {number(s.get('pending_judgement_qty') or 0)}대"},
+        {"label": "불량률(판정 기준)", "value": f"{rate}%"}, {"label": "계획 수율(가정)", "value": f"{yield_text}%"}])])
+
+
+def _focus_items(view, plan, req):
+    items = req.get("items") or []
+    asked = {value.casefold() for value in plan.item_ids}
+    chosen = [row for row in items if row["item_id"].casefold() in asked] if asked else \
+             [row for row in items if row["item_id"] == view["summary"].get("item_id")]
+    return chosen, asked
+
+
+def _position_answer(view, plan, req):
+    if req.get("bom_id") is None:
+        return _result(view, plan, status="UNKNOWN", answer="BOM 원본이 반영되지 않아 장착 위치를 확인할 수 없습니다. BOM 원본 등록 후 다시 질문해 주세요.",
+                       conclusion="BOM 미등록")
+    chosen, asked = _focus_items(view, plan, req)
+    if not chosen:
+        return _result(view, plan, status="UNKNOWN", answer=f"{', '.join(sorted(plan.item_ids)) or '요청 품목'}은 적용 검토된 BOM 행에 없어 장착 위치를 확인하지 못했습니다. 미확인 행은 위치·소요를 추정하지 않습니다.",
+                       conclusion="적용 행 없음")
+    lines = [f"{row['item_id']}은 {_designators(req, row)}에 들어갑니다(대당 {number(row.get('quantity_per_unit') or row.get('per_unit_qty') or 1)} {row.get('unit') or 'EA'}, BOM 원문 {len(row['row_ids'])}행)." for row in chosen]
+    answer = " ".join(lines) + " 적용 매핑은 시연 가정이며 제조 기술검수는 완료되지 않았습니다."
+    return _result(view, plan, answer=answer, conclusion="BOM 원문 위치 · 적용은 시연 가정", include_bom=True,
+                   selected_items=[row["item_id"] for row in chosen],
+                   sections=[section("position", "BOM 장착 위치 · 실제 원문", "actual_bom",
+                                     [{"label": row["item_id"], "value": _designators(req, row)} for row in chosen])])
+
+
+def _substitute_answer(view, plan, req):
+    rows = view.get("substitutes") or []
+    asked = {value.casefold() for value in plan.item_ids}
+    rows = [row for row in rows if not asked or row["original_item_id"].casefold() in asked or row["candidate_item_id"].casefold() in asked]
+    if not rows:
+        return _result(view, plan, status="UNKNOWN", answer="원장에 등록된 대체 후보가 없습니다. 대체 여부는 기술 검토가 필요하며 추정하지 않습니다.", conclusion="대체 후보 없음")
+    status_ko = {"NOT_REVIEWED": "검토 전", "APPROVED": "승인됨", "REJECTED": "반려"}
+    lines = [f"{row['original_item_id']}의 대체 후보는 {row['candidate_item_id']}({status_ko.get(row['status'], row['status'])})입니다. "
+             f"보유 {number(row['candidate_on_hand_qty'])} {row['unit']} 중 이번 수요에 인정한 수량은 {number(row['counted_qty_for_selected_demand'])} {row['unit']}입니다."
+             for row in rows]
+    answer = " ".join(lines) + " 검토 전 대체 후보는 부족 계산의 확보량에 넣지 않습니다."
+    return _result(view, plan, answer=answer, conclusion="대체 후보 · 검토 전은 확보량 제외", sections=[section("substitute", "대체 후보 · 합성 기초 이관", SYNTHETIC, [
+        {"label": f"{row['original_item_id']} → {row['candidate_item_id']}", "value": f"{status_ko.get(row['status'], row['status'])} · 보유 {number(row['candidate_on_hand_qty'])} · 인정 {number(row['counted_qty_for_selected_demand'])}"}
+        for row in rows])])
+
+
+def _transit_answer(view, plan, req):
+    s = view["summary"]
+    answer = (f"운송 중 {number(s['transit_qty'])}대, 창고에서 출하를 기다리는 {number(s['warehouse_remaining_qty'])}대, 완성품 입고를 기다리는 양품 {number(s['good_not_received_qty'])}대가 있습니다. "
+              f"지금까지 출하 {number(s['shipped_qty'])}대 중 고객 도착은 {number(s['arrived_qty'])}대입니다. 운송 기간·도착 예정일 근거는 원장에 없습니다.")
+    return _result(view, plan, answer=answer, conclusion="합성 기초 이관 수량 · 운송 기간 근거 없음", sections=[section("transit", "보드 위치 · 합성 기초 이관", SYNTHETIC, [
+        {"label": "운송 중", "value": f"{number(s['transit_qty'])}대"}, {"label": "창고 출하 대기", "value": f"{number(s['warehouse_remaining_qty'])}대"},
+        {"label": "완성품 입고 대기", "value": f"{number(s['good_not_received_qty'])}대"},
+        {"label": "출하 / 도착", "value": f"{number(s['shipped_qty'])} / {number(s['arrived_qty'])}대"}])])
+
+
 def answer_query(question, view, ontology, *, context_entity_id=None):
     plan = interpret_question(question)
     if plan.clarification:
@@ -752,6 +819,10 @@ def answer_query(question, view, ontology, *, context_entity_id=None):
     req = _requirements(view, plan)
     if "trace" in intents:
         return _lot_trace_answer(question, view, plan)
+    for intent, answer in (("quality", _quality_answer), ("position", _position_answer),
+                           ("substitute", _substitute_answer), ("transit", _transit_answer)):
+        if intent in intents:
+            return answer(view, plan, req)
     if intents & {"change", "sourcing"}:
         return _material_change_answer(view, plan, req)
     basis = req["basis"]
