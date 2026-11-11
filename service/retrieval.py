@@ -26,7 +26,7 @@ from service.imports import ENTITY_FIELDS
 from service.procurement_contracts import CONTENT_TYPES
 
 
-INDEX_VERSION = "snapshot-hybrid/2"
+INDEX_VERSION = "snapshot-hybrid/3"
 PROFILES = {"R0": "IMPLEMENTED", "R1": "IMPLEMENTED", "R2": "NOT_IMPLEMENTED",
             "R3": "IMPLEMENTED", "R4": "NOT_IMPLEMENTED", "R5": "NOT_IMPLEMENTED"}
 MAX_DOCUMENTS = 2500
@@ -74,6 +74,12 @@ def lexical_tokens(text):
     words = re.findall(r"\w+(?:[-./:+]\w+)*|[%Ωµμ±]", _normal(text))
     result = list(words)
     for word in words:
+        # Spec strings such as value/voltage/tolerance/package stay whole and
+        # are also indexed by part, so "100nF" finds "100nF/16V/10%/X7R".
+        parts = [part for part in word.split("/") if part]
+        if len(parts) > 1:
+            result.extend(parts)
+    for word in words:
         for run in re.findall(r"[가-힣]{2,}", word):
             result.extend("ko:" + run[i:i + 2] for i in range(len(run) - 1))
     return result
@@ -84,6 +90,25 @@ def _time(value):
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise ValueError
     return parsed
+
+
+# Korean names of the T-Box classes and fields already shown on the screen
+# (web/mks2/lanegraph.js TYPE_KO). They are search cues only, never facts.
+TYPE_KO = {"Customer": "고객", "ContractLine": "계약 라인", "DeliveryRound": "납품 회차", "ProductionJob": "작업지시 생산 작업",
+           "ProductConfiguration": "제품 구성", "InternalItem": "사내 품목", "PartLot": "재고 LOT 로트",
+           "SupplierOffer": "견적", "Supplier": "공급사 업체"}
+FIELD_KO = {"customer_id": "고객", "supplier_id": "공급사", "item_id": "품목", "location": "보관 위치",
+            "substitute_status": "대체 후보", "technical_mapping_status": "기술 매핑", "unit_price": "단가",
+            "freight": "운송비", "lead_business_days": "리드타임", "promised_qty": "약속 수량", "moq": "최소 주문 수량"}
+STATUS_KO = {"NOT_REVIEWED": "검토 전 검토되지 않음", "UNREVIEWED": "미검토 검토되지 않음", "CANDIDATE": "후보"}
+
+
+def _korean_hints(original):
+    attributes = original.get("attributes") or {}
+    words = [TYPE_KO.get(original.get("type"), "")]
+    words += [FIELD_KO[key] for key in sorted(attributes) if key in FIELD_KO and attributes[key] not in (None, "")]
+    words += [STATUS_KO[value] for value in sorted({v for v in attributes.values() if isinstance(v, str)}) if value in STATUS_KO]
+    return " ".join(word for word in words if word)
 
 
 def _text(value):
@@ -201,7 +226,7 @@ def _build_corpus(payload, context):
         add("ledger_entity", original, {"sha256": entity["evidence"]["source_sha256"],
             "locator": entity["evidence"]["source_locator"], "source_version": meta.get("source_snapshot_id")},
             [entity["id"]], [entity["id"], entity["display_id"]], "synthetic_operation", "CANONICAL_SYNTHETIC",
-            _text(original))
+            (_text(original) + " " + _korean_hints(original)).strip())
 
     if bom:
         if _time(bom["registered_at"]) > context.known_as_of:
@@ -475,6 +500,11 @@ class RetrievalService:
             seeds = {node for i in ranked[:3] for node in corpus.documents[i]["node_ids"]}
             reached, edges = _neighbors(seeds, corpus.edges)
             result["graph"] = {"node_ids": sorted(reached), "edges": deepcopy(edges), "max_hops": 2}
+            # Graph-reached documents only fill free slots. Measured on the P0
+            # cases (SERVICE-RETRIEVAL-P0), fusing graph credit into the score
+            # reordered near-tied sibling documents (quotes sharing one item)
+            # and lowered MRR at every weight tried; ranking them is left to
+            # the P2 reranker.
             for i in indices:
                 if i not in selected and set(corpus.documents[i]["node_ids"]) & reached and len(selected) < request.limit:
                     selected.append(i)
