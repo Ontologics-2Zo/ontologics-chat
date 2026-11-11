@@ -1,7 +1,7 @@
 import { mountDashboard } from './dashboard.js';
 import { mountGraph } from './graph.js';
 import { mountLaneGraph } from './lanegraph.js';
-import { renderQueryAnswer } from './query.js';
+import { renderQueryAnswer, updateAiSummary } from './query.js';
 import { mountTwin } from './twin.js';
 
 // UI state is ephemeral. Identity, quantities, versions and answers come from the server.
@@ -118,6 +118,48 @@ function focusEvidence(id) {
   cancelPendingReplay();
   location.hash = '#graph';
   lane?.focus(id);
+}
+// Visible progress while a question runs: spinner, elapsed seconds and the
+// server's own completed steps. It describes server events, not a fake bar.
+const PROGRESS_STEPS = [['route', '질문 분석 · AI'], ['read', '원장 조회·계산'], ['validate', '결과 확인'], ['retrieve', '근거 검색']];
+const PROGRESS_STAGE = { route: 'route', fulfillment_read: 'read', material_analysis: 'read', product_review: 'read',
+  procurement_review: 'read', validate: 'validate', retrieve: 'retrieve' };
+function startProgress(message, agent) {
+  const root = element('div', 'mk-progress'), head = element('div', 'mk-progress-head');
+  const time = element('span', 'mk-progress-time', '0초');
+  head.append(element('span', 'mk-spinner'), element('span', 'mk-progress-title', agent ? '답변을 만들고 있습니다' : '원장을 조회하고 있습니다'), time);
+  root.append(head);
+  const items = new Map();
+  if (agent) {
+    const list = element('ol', 'mk-progress-steps');
+    for (const [key, label] of PROGRESS_STEPS) { const item = element('li', 'pending', label); items.set(key, item); list.append(item); }
+    items.get('route').className = 'active';
+    root.append(list);
+  }
+  root.append(element('p', 'note', '원장 변경 없음 · 보통 10초 안팎 걸립니다.'));
+  message.replaceChildren(root);
+  const started = Date.now();
+  const timer = setInterval(() => { time.textContent = `${Math.floor((Date.now() - started) / 1000)}초`; }, 1000);
+  return {
+    mark(stage, status) {
+      const key = PROGRESS_STAGE[stage], item = items.get(key);
+      if (!item) return;
+      if (status === 'COMPLETED') {
+        item.className = 'done';
+        const next = PROGRESS_STEPS[PROGRESS_STEPS.findIndex(([name]) => name === key) + 1];
+        if (next && items.get(next[0]).className === 'pending') items.get(next[0]).className = 'active';
+      } else if (item.className !== 'done') item.className = 'active';
+    },
+    stop() { clearInterval(timer); },
+  };
+}
+// Sends a question at once in its own panel (used by "같은 질문 다시 하기").
+function askNow(name, question) {
+  const panel = panels[name];
+  if (!panel || !question || panel.submit.disabled) return false;
+  if (panel.input.value.trim() === question) panel.input.value = '';
+  runQuery(name, question);
+  return true;
 }
 function fillQuestion(text, name = currentScreen()) { panels[name].input.value = text; panels[name].input.focus(); }
 // After the basis changes, put the panel's last question back in its input so
@@ -255,8 +297,7 @@ async function agentQuery(panel, question, message, requestGeneration, contextEn
       for (const line of stream.split('\n')) if (line.startsWith('data: ')) {
         const event = JSON.parse(line.slice(6));
         cursor = Math.max(cursor, event.sequence || 0);
-        if (!finished && generation === requestGeneration) message.textContent =
-          `업무 조회 진행 · ${labels[event.stage] || '서버 처리 중'} · 원장 변경 없음`;
+        if (!finished && generation === requestGeneration) message.progress?.mark(event.stage, event.status);
       }
     } catch { /* The authoritative run response handles connection/auth errors. */ }
     finally { reading = false; }
@@ -316,7 +357,9 @@ async function runQuery(name, question) {
   const panel = panels[name], requestGeneration = generation;
   settleAnswer(panel);
   panel.messages.append(element('div', 'message user', question)); panel.submit.disabled = true; panel.lastQuestion = question;
-  const message = element('div', 'message assistant', '원장과 근거를 조회하고 있습니다.'); panel.messages.append(message);
+  const message = element('div', 'message assistant'); panel.messages.append(message);
+  const agentPath = agentMode !== 'disabled' && name !== 'twin';
+  message.progress = startProgress(message, agentPath);
   let followAnswer = true, presentationOwnsScroll = false;
   const trackScroll = () => {
     if (Number.isFinite(panel.messages.scrollHeight)) {
@@ -334,7 +377,7 @@ async function runQuery(name, question) {
     // take the agent path. The digital twin keeps the read API its evidence
     // highlight is built on; every screen uses it when the model is off.
     const context = name === 'twin' ? twinContextId : contextId;
-    const answer = agentMode !== 'disabled' && name !== 'twin'
+    const answer = agentPath
       ? await agentQuery(panel, question, message, requestGeneration, context)
       : await api('/api/mks2/query', { question, ledger_version: snapshot.meta.ledger_version,
         context_entity_id: context || undefined });
@@ -363,6 +406,8 @@ async function runQuery(name, question) {
       companyId: answer.meta.company_id, identityRevision: answer.meta.identity_revision });
     const evidenceAtVersion = action => {
       if (!answerSnapshotMatches(answer)) {
+        // A button on an old answer never sends a question by itself (no
+        // side-effect model call); the question waits in the input instead.
         const filled = offerSameQuestion(name, question);
         notify(filled ? '과거 원장 버전의 답변입니다. 같은 질문을 아래 입력창에 넣었습니다. 보내면 최신 원장으로 다시 답합니다.'
           : '과거 원장 버전의 답변입니다. 최신 근거가 필요하면 질문을 다시 실행해 주세요.');
@@ -387,6 +432,7 @@ async function runQuery(name, question) {
       && !globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches
       && typeof Intl.Segmenter === 'function' && typeof requestAnimationFrame === 'function'
       && typeof cancelAnimationFrame === 'function';
+    message.progress?.stop();
     const presentation = renderQueryAnswer(message, answer, {
       animate: animateAnswer, mode: name === 'dashboard' ? 'workflow' : 'graph',
       beforeBody: waitForGraph ? () => replayEvidence() : undefined,
@@ -428,11 +474,19 @@ async function runQuery(name, question) {
       if (panel.presentation === presentation) panel.presentation = null;
     });
     if (ids.length && name !== 'dashboard' && !waitForGraph) replayEvidence();
+    if (answer.ai_summary?.status === 'PENDING' && answer.agent_execution?.execution_id) {
+      // The ledger answer is already shown; the AI summary card fills in when written.
+      const revision = identity?.identity_revision;
+      api(`/api/mks2/agent/executions/${encodeURIComponent(answer.agent_execution.execution_id)}/summary`, {})
+        .then(result => { if (identity?.identity_revision === revision) updateAiSummary(message, result.ai_summary); })
+        .catch(() => { if (identity?.identity_revision === revision) updateAiSummary(message, { status: 'UNAVAILABLE' }); });
+    }
   } catch (error) {
     if (error.name === 'AbortError' || generation !== requestGeneration) return;
     message.replaceChildren(element('p', '', errorText(error)));
     if (error.status === 401) invalidateView();
   } finally {
+    message.progress?.stop();
     if (!presentationOwnsScroll) releaseScroll();
     if (generation === requestGeneration) {
       panel.submit.disabled = false;
@@ -571,7 +625,7 @@ function announceApplied(events, startedAt) {
         + ` · 원장 v${impact.ledger_version} `,
       button('변경 관계 보기', () => focusEvidence(impact.entity_id), 'btn sm'),
       ...(grew ? names.flatMap(name => [
-        panels[name].lastQuestion ? button('같은 질문 다시 하기', () => fillQuestion(panels[name].lastQuestion, name), 'suggestion') : null,
+        panels[name].lastQuestion ? button('같은 질문 다시 하기', () => askNow(name, panels[name].lastQuestion), 'suggestion') : null,
         button(question, () => fillQuestion(question, name), 'suggestion')]) : [])].filter(Boolean));
     if (grew) {
       for (const name of names) offerSameQuestion(name);

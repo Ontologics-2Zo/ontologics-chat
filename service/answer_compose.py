@@ -47,8 +47,9 @@ SYSTEM_PROMPT = (
     "Use only the facts and evidence IDs given. Never write numbers: refer to any quantity by its placeholder "
     "such as ⟦F3⟧ exactly as listed, and write identifiers only as listed. Keep every UNKNOWN or 미확인 state "
     "as unknown; never call delivery possible, confirmed or guaranteed when the verdict is on hold. "
-    "Be brief: at most 3 paragraphs of about 200 characters each; lead with the verdict and the main shortage, "
-    "and skip facts that add nothing. Return only the requested JSON, each paragraph citing the fact or evidence IDs it uses.")
+    "Be very brief: one paragraph of 2 or 3 short sentences, under 250 characters in total. Lead with the verdict, "
+    "then the main shortage with its quantity placeholder, then the most important open condition. "
+    "Return only the requested JSON, citing the fact or evidence IDs used.")
 
 
 def _scope_a(text):
@@ -110,7 +111,7 @@ class ComposeRequest(Contract):
     call_id: str = Field(pattern=r"^[A-Za-z0-9_.:/-]{1,200}$")
     packet: AnswerPacket
     profile_id: Literal["compose-v1"] = PROFILE_ID
-    max_output_tokens: int = Field(default=800, ge=64, le=800)
+    max_output_tokens: int = Field(default=400, ge=64, le=800)
 
 
 class ComposeContext(ModelContext):

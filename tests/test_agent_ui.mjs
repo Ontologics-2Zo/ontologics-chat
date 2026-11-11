@@ -67,6 +67,7 @@ async function setup({ animated = false, reduced = false, agent = 'fake' } = {})
         highlight(value) { this.highlights.push(value); }, reset() { this.resets++; } };
       twins.push(instance); return instance;
     },
+    updateAiSummary: () => true,
     renderQueryAnswer: (message, answer, options) => {
       let resolve;
       const finished = new Promise(done => { resolve = done; });
@@ -496,6 +497,25 @@ test('a grown shortage puts the same question back in the empty input and offers
     assert.equal(panel.input.value, typed || panel.lastQuestion);
     assert.match(panel.status.textContent, /같은 질문 다시 하기/);
   }
+});
+
+test('the same-question button sends the question at once', async () => {
+  const h = await setup();
+  h.snapshot().material_requirements = { items: [{ item_id: 'item-a' }] };
+  const panel = h.app.panels().dashboard;
+  panel.topics.add('item-a'); panel.lastQuestion = '합성 재질문';
+  h.setHandler(request => request.path.startsWith('/api/mks2/events') ? reservationChanges('READY')
+    : request.path.endsWith('/run') ? stateAt(h.snapshot(), { status: 'COMPLETED', revision: 3 })
+      : request.path === '/api/mks2/agent/executions' ? stateAt(h.snapshot(), { status: 'READY', revision: 1 }) : undefined);
+  h.setNextSnapshot(reservedSnapshot());
+  await h.app.poll();
+  const again = (function find(node) { return node.textContent === '같은 질문 다시 하기' && node.events?.click ? node : node.children?.map(find).find(Boolean); })(panel.status);
+  assert.ok(again);
+  again.events.click();
+  await new Promise(setImmediate);
+  const created = h.requests.filter(r => r.path === '/api/mks2/agent/executions');
+  assert.equal(created.length, 1);
+  assert.equal(created[0].body.question, '합성 재질문');
 });
 
 test('a reservation whose graph projection is pending keeps the old snapshot and says the graph is updating', async () => {

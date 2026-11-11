@@ -124,6 +124,9 @@ class AgentWorkflow:
             # historical business snapshot. Keep the stored artifact immutable.
             result = {**result, "meta": {**result.get("meta", {}),
                                         "identity_revision": principal.identity_revision}}
+            if self._summarizable(row):
+                stored = self.store.artifact(str(row["execution_id"]), self._summary_key(row))
+                result["ai_summary"] = stored["content"] if stored else {"status": "PENDING"}
         return {"execution_id": str(row["execution_id"]), "revision": row["revision"],
                 "status": row["status"], "capability": row["capability"],
                 "segment_count": row["segment_count"], "tool_calls": row["tool_calls"],
@@ -132,6 +135,51 @@ class AgentWorkflow:
                 "ledger_mutations": 0, "execution_kind": "langgraph_readonly_agent",
                 "deadline_at": row["deadline_at"].isoformat(),
                 "events": self.store.events(str(row["execution_id"]))}
+
+    def _summarizable(self, row):
+        return (self.compose_model is not None and row["status"] == "COMPLETED"
+                and row.get("capability") in MODEL_CAPABILITIES and bool(row.get("result_ref")))
+
+    @staticmethod
+    def _summary_key(row):
+        return content_hash({"stage": "compose", "base": str(row["result_ref"])})
+
+    def summarize(self, principal, execution_id):
+        """After-answer AI summary of a completed answer; never changes the answer itself.
+
+        Stored once per answer. A concurrent request returns PENDING instead of a
+        second model call, and a changed snapshot makes the summary unavailable.
+        """
+        row = self._owner(principal, execution_id)
+        if not self._summarizable(row):
+            raise ServiceError("AGENT_SUMMARY_NOT_ALLOWED", 409)
+        execution_id, key = str(row["execution_id"]), self._summary_key(row)
+        stored = self.store.artifact(execution_id, key)
+        if stored:
+            return stored["content"]
+        with self.store.summary_lock(execution_id) as locked:
+            if not locked:
+                return {"status": "PENDING"}
+            stored = self.store.artifact(execution_id, key)
+            if stored:
+                return stored["content"]
+            try:
+                context = self._revalidate(principal, row)
+            except ServiceError as error:
+                return self.store.put_summary(execution_id, key, {"status": "UNAVAILABLE", "reason_code": error.code})
+            result = self.store.result(execution_id, row["result_ref"])
+            hits = ((result or {}).get("retrieval") or {}).get("hits") or []
+
+            class _Budget:
+                deadline_at = row["deadline_at"]
+                @staticmethod
+                def check():
+                    if datetime.now(timezone.utc) >= row["deadline_at"]:
+                        raise ServiceError("AGENT_DEADLINE_EXCEEDED", 408)
+                    self._revalidate(principal, row)
+            summary = self.compose_model(principal, context, str(row.get("segment_id") or execution_id),
+                                         result, hits[:5], _Budget())
+            return self.store.put_summary(execution_id, key, summary)
 
     def events(self, principal, execution_id, after=0):
         row = self._owner(principal, execution_id)
@@ -352,13 +400,6 @@ class AgentWorkflow:
                         "corpus_version": (found.get("meta") or {}).get("corpus_version"), "hits": hits}
             return extend(state, "retrieve", "retrieval", search)
 
-        def compose(state):
-            if self.compose_model is None:
-                return {}
-            def summarize(result):
-                hits = (result.get("retrieval") or {}).get("hits") or []
-                return self.compose_model(principal, context, segment_id, result, hits[:5], budget)
-            return extend(state, "compose", "ai_summary", summarize)
 
         graph = StateGraph(TaskState)
         graph.add_node("route", observed("route", route))
@@ -372,14 +413,14 @@ class AgentWorkflow:
             graph.add_edge(capability, "validate")
         graph.add_node("validate", observed("validate", validate))
         graph.add_node("retrieve", observed("retrieve", retrieve))
-        graph.add_node("compose", observed("compose", compose))
         choices = {**{name: name for name in CAPABILITIES}, "clarify": "clarify"}
         graph.add_edge(START, "route")
         graph.add_conditional_edges("route", lambda state: state.get("capability") or "clarify", choices)
         graph.add_conditional_edges("clarify", lambda state: state["capability"], {name: name for name in CAPABILITIES})
         graph.add_conditional_edges("validate", lambda state: "clarify" if state["needs_clarification"] else "retrieve", {"clarify": "clarify", "retrieve": "retrieve"})
-        graph.add_edge("retrieve", "compose")
-        graph.add_edge("compose", END)
+        # The AI summary is a separate after-answer step (summarize), so the
+        # ledger answer is returned without waiting for the model to write.
+        graph.add_edge("retrieve", END)
         return graph.compile(checkpointer=saver, name=WORKFLOW_VERSION)
 
     def run(self, principal, execution_id, *, expected_revision=None):

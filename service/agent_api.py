@@ -33,6 +33,13 @@ def mount_agent_api(app, principal, workflow, model_summary, on_answer=None):
         actor = principal(request, write=True)
         return answered(actor, enabled().run(actor, execution_id))
 
+    @app.post("/api/mks2/agent/executions/{execution_id}/summary")
+    def summary(request: Request, execution_id: str):
+        # Spends model budget, so it is a write-scoped request like run.
+        return {"execution_id": execution_id,
+                "ai_summary": enabled().summarize(principal(request, write=True), execution_id),
+                "model": model_summary(execution_id)}
+
     @app.get("/api/mks2/agent/executions/{execution_id}")
     def status(request: Request, execution_id: str):
         return result(enabled().status(principal(request), execution_id))

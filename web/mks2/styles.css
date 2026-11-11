@@ -217,3 +217,19 @@ select,.btn { border:1px solid var(--line); background:var(--surface); border-ra
 .query-retrieval { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 6px 0; }
 .query-retrieval-label { font-size: 11.5px; font-weight: 600; color: var(--fg2); margin-right: 2px; }
 .query-retrieval-chip { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Question progress (server events) and the pending AI summary */
+.mk-progress { display: grid; gap: 6px; }
+.mk-progress-head { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.mk-progress-time { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--fg2); font-weight: 500; font-size: 12px; }
+.mk-progress-steps { margin: 0; padding-left: 18px; display: grid; gap: 2px; font-size: 12.5px; }
+.mk-progress-steps li.pending { color: var(--fg3, var(--fg2)); }
+.mk-progress-steps li.active { color: var(--fg); font-weight: 600; }
+.mk-progress-steps li.done { color: var(--fg2); }
+.mk-progress-steps li.done::marker { content: "✓ "; }
+.mk-spinner { width: 12px; height: 12px; border-radius: 50%; display: inline-block; flex: none;
+  border: 2px solid color-mix(in srgb, var(--accent) 25%, transparent); border-top-color: var(--accent);
+  animation: mk-spin .8s linear infinite; vertical-align: -2px; margin-right: 6px; }
+@keyframes mk-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .mk-spinner { animation-duration: 2.4s; } }
+.query-ai-pending .query-paragraph { color: var(--fg2); }

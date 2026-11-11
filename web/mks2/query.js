@@ -277,14 +277,25 @@ function quoteCard(quote, onChooseQuote) {
 const evidenceKinds = { ledger_entity: '원장 개체', source_row: 'BOM 원문 행', application_review: 'BOM 적용 검토', development_document: '개발 문서' };
 // Model-written summary that passed the server's checks. Numbers in it were
 // filled by the server from its own results; the model only wrote sentences.
-function aiSummaryCard(answer) {
-  const summary = answer.ai_summary;
-  if (!summary || summary.status !== 'VERIFIED' || !Array.isArray(summary.paragraphs) || !summary.paragraphs.length) return null;
-  const card = node('section', 'query-answer-card query-ai-summary');
-  card.dataset.blockId = 'ai_summary';
+// PENDING shows a placeholder that updateAiSummary() fills after the answer.
+function fillAiCard(card, summary) {
   const heading = node('div', 'query-answer-heading');
+  if (summary?.status === 'PENDING') {
+    card.className = 'query-answer-card query-ai-summary query-ai-pending';
+    heading.append(node('h3', '', 'AI 요약'), node('span', 'query-answer-tool', '작성 중'));
+    const line = node('p', 'query-paragraph');
+    line.append(node('span', 'mk-spinner'), node('span', '', 'AI가 요약을 작성하고 있습니다. 원장 답변은 아래에 이미 표시되어 있습니다.'));
+    card.replaceChildren(heading, line);
+    return true;
+  }
+  if (!summary || summary.status !== 'VERIFIED' || !Array.isArray(summary.paragraphs) || !summary.paragraphs.length) {
+    card.className = 'query-answer-card query-ai-summary-fallback';
+    card.replaceChildren(node('p', 'note query-ai-fallback', 'AI 요약이 서버 검증을 통과하지 못해 원장 계산 결과만 표시합니다.'));
+    return false;
+  }
+  card.className = 'query-answer-card query-ai-summary';
   heading.append(node('h3', '', 'AI 요약'), node('span', 'query-answer-tool', summary.execution_mode === 'live' ? '모델 작성 · 서버 검증' : '시험 모델 · 서버 검증'));
-  card.append(heading);
+  const children = [heading];
   const facts = new Map((summary.facts || []).map(fact => [fact.id, text(fact.name)]));
   summary.paragraphs.slice(0, 4).forEach(paragraph => {
     const p = node('p', 'query-paragraph', text(paragraph.text));
@@ -298,10 +309,24 @@ function aiSummaryCard(answer) {
       chips.append(chip);
     }
     if (chips.children.length) p.append(chips);
-    card.append(p);
+    children.push(p);
   });
-  card.append(node('p', 'note', '숫자는 서버 계산값이며 AI는 문장만 작성했습니다. 판정은 아래 원장 답변을 따릅니다.'));
-  return card;
+  children.push(node('p', 'note', '숫자는 서버 계산값이며 AI는 문장만 작성했습니다. 판정은 아래 원장 답변을 따릅니다.'));
+  card.replaceChildren(...children);
+  return true;
+}
+function aiSummaryCard(answer) {
+  const summary = answer.ai_summary;
+  if (!summary || !['VERIFIED', 'PENDING'].includes(summary.status)) return null;
+  const card = node('section', 'query-answer-card');
+  card.dataset.blockId = 'ai_summary';
+  return fillAiCard(card, summary) ? card : null;
+}
+// Fills the placeholder card of an answer already on screen; the answer itself is unchanged.
+export function updateAiSummary(message, summary) {
+  const card = message?.aiSummaryCard;
+  if (!card) return false;
+  return fillAiCard(card, summary);
 }
 function retrievalChips(answer) {
   const found = answer.retrieval;
@@ -434,6 +459,7 @@ export function renderQueryAnswer(message, answer, {
     });
   } else appendParagraphs(visibleBody, paragraphs);
   const aiCard = aiSummaryCard(answer);
+  message.aiSummaryCard = aiCard;
   if (aiCard) verdict.append(aiCard);
   verdict.append(visibleBody);
   const typingControls = node('div', 'query-typing-controls'), typingStatus = node('span', 'query-typing-status');

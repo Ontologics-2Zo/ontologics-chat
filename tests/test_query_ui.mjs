@@ -1040,3 +1040,21 @@ test('a verified AI summary is shown as text with citations; a rejected one leav
     }
   } finally { restore(); }
 });
+
+test('a pending AI summary shows a placeholder that is filled or replaced later without touching the answer', async () => {
+  const { message, restore } = setup();
+  try {
+    const { updateAiSummary } = await import('../web/mks2/query.js');
+    const data = { ...response(), ai_summary: { status: 'PENDING' } };
+    renderQueryAnswer(message, data);
+    const card = withClass(message, 'query-ai-pending')[0];
+    assert.match(card.textContent, /AI 요약.*작성 중.*원장 답변은 아래에/);
+    const before = message.textContent.replace(card.textContent, '');
+    assert.equal(updateAiSummary(message, { status: 'VERIFIED', execution_mode: 'live', paragraphs: [{ text: '판단은 보류합니다.', cites: [{ id: 'F1' }] }] }), true);
+    assert.match(card.textContent, /모델 작성 · 서버 검증.*판단은 보류합니다/);
+    assert.equal(message.textContent.replace(card.textContent, ''), before);
+    assert.equal(updateAiSummary(message, { status: 'UNAVAILABLE' }), false);
+    assert.match(card.textContent, /원장 계산 결과만 표시/);
+    assert.equal(updateAiSummary(new Element('div'), { status: 'VERIFIED' }), false);
+  } finally { restore(); }
+});

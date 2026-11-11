@@ -104,16 +104,26 @@ class AgentApiTests(unittest.TestCase):
         client.headers.update(self.headers(auth))
         created = client.post('/api/mks2/agent/executions', json={'question': '납기 안에 고객에게 도착할 수 있어?',
             'ledger_version': 1, 'idempotency_key': 'compose-1', 'capability': 'fulfillment_read'}).json()
-        state = client.post('/api/mks2/agent/executions/' + created['execution_id'] + '/run', json={}).json()
+        path = '/api/mks2/agent/executions/' + created['execution_id']
+        state = client.post(path + '/run', json={}).json()
         self.assertEqual(state['status'], 'COMPLETED', state)
-        summary = state['result']['ai_summary']
+        # The ledger answer returns first; the summary is a separate step.
+        self.assertEqual(state['result']['ai_summary'], {'status': 'PENDING'})
+        written = client.post(path + '/summary', json={})
+        self.assertEqual(written.status_code, 200, written.text)
+        summary = written.json()['ai_summary']
         self.assertEqual(summary['status'], 'VERIFIED', summary)
         self.assertEqual(summary['execution_mode'], 'fake')
         self.assertTrue(summary['paragraphs'])
-        self.assertEqual(state['model']['live_calls'], 0)
-        # The same run again replays artifacts; no second compose attempt is made.
-        again = client.post('/api/mks2/agent/executions/' + created['execution_id'] + '/run', json={}).json()
-        self.assertEqual(again['result']['ai_summary'], summary)
+        self.assertEqual(written.json()['model']['live_calls'], 0)
+        # Stored once: a repeat request and the status view return the same summary.
+        self.assertEqual(client.post(path + '/summary', json={}).json()['ai_summary'], summary)
+        self.assertEqual(client.get(path).json()['result']['ai_summary'], summary)
+        self.assertEqual(client.post(path + '/summary', json={}, headers={'X-CSRF-Token': ''}).status_code, 403)
+        # Without compose the summary step is refused.
+        plain = self.client.post('/api/mks2/agent/executions/' + self.create('남은 약속은?', capability='fulfillment_read',
+            idempotency_key='plain-1')['execution_id'] + '/summary', json={})
+        self.assertEqual(plain.status_code, 409)
 
     def test_model_records_can_live_in_a_shared_budget_database(self):
         schema = "test_budget_" + uuid4().hex
