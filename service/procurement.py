@@ -130,6 +130,14 @@ class ProcurementService(DomainService):
     def _resolve(self, conn, company, payload, content):
         kind = content.kind
         value = content.model_dump(mode="json")
+        if kind == "SCENARIO":
+            # Assumptions target one existing delivery round and its job; no parent document.
+            round_ = self._entity(payload, "DeliveryRound", content.round_id)
+            job = next((row for row in payload["entities"] if row["type"] == "ProductionJob"
+                        and any(rel["predicate"] == "jobForRound" and rel["source"] == row["id"] and rel["target"] == round_["id"]
+                                for rel in payload["relationships"])), None)
+            return {"round_id": round_["display_id"], "round_entity_id": round_["id"],
+                    "job_entity_id": job["id"] if job else None, "provenance": "DEMO_ASSUMPTION"}
         if kind == "QUOTE":
             self._valid_quote(value)
             item = self._entity(payload, "InternalItem", content.item_id)
@@ -303,7 +311,7 @@ class ProcurementService(DomainService):
         elif content.kind == "SUPPLY_CONFIRMATION":
             quantity = content.confirmed_qty
         key = next((getattr(content, name) for name in ("quote_ref", "confirmation_ref", "receipt_ref", "inspection_ref",
-                                                        "production_ref", "shipment_ref", "arrival_ref") if hasattr(content, name)), None)
+                                                        "production_ref", "shipment_ref", "arrival_ref", "scenario_ref") if hasattr(content, name)), None)
         return (resolved.get("parent", {}).get("id"), key, getattr(content, "lot_code", None), quantity,
                 getattr(content, "passed_qty", 0), getattr(content, "failed_qty", 0))
 

@@ -6,8 +6,8 @@ const STAGE = { x: 0, y: 0, width: 1400, height: 840 };
 const TYPES = [['design', '설계·기준'], ['doc', '문서'], ['event', '사건'], ['phys', '실물(LOT)']];
 // Presentation only: colour by business area and size by importance. Every
 // object and relation stays in the graph; minor nodes just draw smaller.
-const AREAS = [['dem', '수요·이행'], ['bom', 'BOM·구성'], ['inv', '품목·재고'], ['pro', '조달'], ['ev', '근거·원문']];
-const AREA_OF = { Customer: 'dem', ContractLine: 'dem', DeliveryRound: 'dem', ProductionJob: 'dem', Demand: 'dem',
+const AREAS = [['dem', '수요·이행'], ['bom', 'BOM·구성'], ['inv', '품목·재고'], ['pro', '조달'], ['plan', '가정·계획'], ['ev', '근거·원문']];
+const AREA_OF = { ScenarioRun: 'plan', ScenarioProfile: 'plan', ScenarioAssumption: 'plan', ProductionPlan: 'plan', Customer: 'dem', ContractLine: 'dem', DeliveryRound: 'dem', ProductionJob: 'dem', Demand: 'dem',
   ProductionReport: 'dem', FGReceipt: 'dem', Shipment: 'dem', Arrival: 'dem', BoardUnit: 'dem',
   ProductConfiguration: 'bom', ProductModel: 'bom', Revision: 'bom', BOMSnapshot: 'bom', BOMLine: 'bom', BOMApplication: 'bom',
   InternalItem: 'inv', PartLot: 'inv', InventoryReservation: 'inv', Reservation: 'inv', ReservationEvent: 'inv',
@@ -16,7 +16,7 @@ const AREA_OF = { Customer: 'dem', ContractLine: 'dem', DeliveryRound: 'dem', Pr
   PurchaseOrderLine: 'pro', SupplyConfirmation: 'pro', Receipt: 'pro',
   SourceDocument: 'ev', SourceSnapshot: 'ev', SourceRow: 'ev', DocumentVersion: 'ev', ApprovalGrant: 'ev', Evidence: 'ev' };
 const KEY_TYPES = new Set(['Customer', 'ContractLine', 'DeliveryRound', 'ProductionJob', 'ProductConfiguration', 'InternalItem',
-  'PartLot', 'Supplier', 'BOMSnapshot', 'PurchaseOrder', 'PurchaseRequest', 'Reservation', 'InventoryReservation', 'ReservationEvent']);
+  'PartLot', 'Supplier', 'BOMSnapshot', 'ScenarioRun', 'PurchaseOrder', 'PurchaseRequest', 'Reservation', 'InventoryReservation', 'ReservationEvent']);
 const MINOR_TYPES = new Set(['SourceRow', 'Evidence', 'DocumentVersion', 'ApprovalGrant', 'SourceSnapshot', 'BOMLine']);
 const entityType = node => node.type || node.ontology_type || node.attributes?.kind_label || '';
 

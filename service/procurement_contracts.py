@@ -142,12 +142,25 @@ class ArrivalContent(BoardsContent):
     arrival_ref: str = Field(min_length=1, max_length=100)
 
 
+class ScenarioContent(PurchaseContent):
+    """What-if schedule assumptions for one delivery round (T12). Not facts:
+    the values are entered and approved as assumptions and labelled so."""
+    kind: Literal["SCENARIO"] = "SCENARIO"
+    scenario_ref: str = Field(min_length=1, max_length=100)
+    round_id: str = Field(min_length=1, max_length=100)
+    inspection_business_days: int = Field(ge=0, le=30)
+    daily_capacity: int = Field(ge=1, le=10000)
+    ship_prep_business_days: int = Field(ge=0, le=30)
+    transit_days: int = Field(ge=0, le=60)
+    provenance: Literal["DEMO_ASSUMPTION"] = "DEMO_ASSUMPTION"
+
+
 ProcurementContent = Annotated[Union[QuoteContent, RequestContent, OrderContent, ReceiptContent,
                                     SupplyConfirmationContent, InspectionContent, CancelContent,
-                                    ProductionContent, FinishedGoodsContent, ShipmentContent, ArrivalContent], Field(discriminator="kind")]
+                                    ProductionContent, FinishedGoodsContent, ShipmentContent, ArrivalContent, ScenarioContent], Field(discriminator="kind")]
 CONTENT_TYPES = {cls.model_fields["kind"].default: cls for cls in
                  (QuoteContent, RequestContent, OrderContent, ReceiptContent, SupplyConfirmationContent, InspectionContent, CancelContent,
-                  ProductionContent, FinishedGoodsContent, ShipmentContent, ArrivalContent)}
+                  ProductionContent, FinishedGoodsContent, ShipmentContent, ArrivalContent, ScenarioContent)}
 FULFILLMENT_KINDS = {"PRODUCTION", "FG_RECEIPT", "SHIPMENT", "ARRIVAL"}
 
 

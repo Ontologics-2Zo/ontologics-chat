@@ -116,3 +116,19 @@ test('a returned draft is set aside so the author can start the step again', () 
   assert.match(view.notes.at(-1), /반려된 초안 1건/);
   assert.equal(supplyProgress([pr('DRAFT', { rejection_reason: 'x' })], snapshot(23), author).empty, true);
 });
+
+test('the schedule scenario card follows the same author/approver rule', async () => {
+  const { scenarioState } = await import('../web/mks2/procurement.js');
+  const none = scenarioState([], author);
+  assert.equal(none.status, '가정 없음'); assert.equal(none.next[0].action, 'new-scenario'); assert.equal(none.next[0].disabled, false);
+  assert.equal(scenarioState([], reviewer).next[0].disabled, true);
+  const draft = { id: 'scn-0001', kind: 'SCENARIO', status: 'DRAFT', created_by: 'actor-a',
+    content: { inspection_business_days: 1, daily_capacity: 20, ship_prep_business_days: 1, transit_days: 2 } };
+  const mine = scenarioState([draft], author);
+  assert.deepEqual(mine.next.map(entry => [entry.action, entry.disabled]), [['review-approve', true], ['reject', true]]);
+  assert.deepEqual(scenarioState([draft], reviewer).next.map(entry => entry.action), ['review-approve', 'reject']);
+  assert.deepEqual(mine.values[1], ['생산능력', '20대/영업일']);
+  const posted = scenarioState([{ ...draft, status: 'POSTED', ledger_version: 10 }], author);
+  assert.equal(posted.status, '반영됨 · 원장 v10'); assert.equal(posted.next[0].label, '새 가정 작성');
+  assert.equal(scenarioState([{ ...draft, rejection_reason: 'x' }], author).status, '가정 없음');
+});

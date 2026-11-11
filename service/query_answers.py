@@ -181,6 +181,44 @@ def _add_business_days(start, days):
     return current
 
 
+def _sub_business_days(start, days):
+    current = start
+    while days > 0:
+        current -= timedelta(days=1)
+        if current.weekday() < 5:
+            days -= 1
+    return current
+
+
+def _posted_scenario(view, round_id):
+    """Latest approved and posted schedule scenario for this round (assumptions, not facts)."""
+    rows = [row for row in view.get("procurement", {}).get("documents", [])
+            if row.get("kind") == "SCENARIO" and row.get("status") == "POSTED" and not row.get("cancelled_by")
+            and (row.get("content") or {}).get("round_id") == round_id]
+    return max(rows, key=lambda row: row.get("ledger_version") or 0) if rows else None
+
+
+def _scenario_schedule(scenario, arrival, due, planned_input):
+    """Forward from expected parts arrival and backward from the due date with the scenario's durations."""
+    c = scenario["content"]
+    parts = date.fromisoformat(arrival["date"])
+    inspected = _add_business_days(parts, c["inspection_business_days"])
+    production_days = -(-int(Decimal(str(planned_input))) // c["daily_capacity"])
+    produced = _add_business_days(inspected, production_days)
+    shipped = _add_business_days(produced, c["ship_prep_business_days"])
+    arrives = shipped + timedelta(days=c["transit_days"])
+    result = {"scenario_ref": c["scenario_ref"], "inspected": inspected.isoformat(), "production_days": production_days,
+              "produced": produced.isoformat(), "shipped": shipped.isoformat(), "arrives": arrives.isoformat(), "content": c}
+    if due:
+        deadline = date.fromisoformat(due)
+        latest_ship = deadline - timedelta(days=c["transit_days"])
+        latest_produced = _sub_business_days(latest_ship, c["ship_prep_business_days"])
+        latest_inspected = _sub_business_days(latest_produced, production_days)
+        result.update(slack=(deadline - arrives).days,
+                      latest_parts=_sub_business_days(latest_inspected, c["inspection_business_days"]).isoformat())
+    return result
+
+
 def _earliest_parts_arrival(view, focus):
     """Earliest expected arrival among quotes that meet the quantity (demo quotes, not commitments)."""
     as_of = (view["summary"].get("effective_at") or "")[:10]
@@ -208,6 +246,7 @@ def _delivery_blocks(view, plan, sections, prerequisite, requirements):
     """
     s, basis = view["summary"], requirements["basis"]
     remaining, production = number(s["promise_remaining_qty"]), number(s["production_remaining_qty"])
+    schedule_plan = None
     due = s.get("arrival_due_date")
     blocks = [QueryAnswerBlock(id="delivery_balance", title=f"“{remaining}대”가 무엇인지 확인", kind="normal", paragraphs=[
         f"{remaining}대는 남은 생산이 아니라 남은 약속(고객 미도착)입니다. 회차 {s['delivery_round_id']}, 도착기한 {due or '미확인'}.",
@@ -267,26 +306,44 @@ def _delivery_blocks(view, plan, sections, prerequisite, requirements):
             paragraphs=notes, table={"columns": ["위치", "품목", "필요", "가용", "부족"], "rows": rows, "alert_cells": alerts}))
         # Backward from the due date, one row per stage, filled from this ledger:
         # due date, boards already moving, and quote lead times for the parts.
-        # Stages with no duration evidence stay "근거 없음"; nothing is invented.
-        steps = [["고객 도착", f"도착기한 {due}" if due else "도착기한", "원장 확인" if due else "미확인"],
-                 ["운송", f"운송 기간 · 운송 중 {number(s['transit_qty'])}대는 이미 출발", "근거 없음"],
-                 ["출하 준비", f"출하 준비 기간 · 창고 {number(s['warehouse_remaining_qty'])}대 대기", "근거 없음"],
-                 [f"생산 {number(basis['planned_input_qty'])}대", "생산능력·작업 달력", "근거 없음"],
-                 ["수입검사", "검사 기간", "근거 없음"],
-                 ["부품 입하 필요일", "위 기간의 합", "계산 불가"]]
-        schedule_notes = []
+        # Stages with no duration evidence stay "근거 없음" unless an approved
+        # what-if scenario (T12) supplies assumed durations; those rows say so.
         arrival = _earliest_parts_arrival(view, focus) if focus else None
-        if arrival:
-            steps.append([f"부품 입하 예상 ({focus['item_id']})",
-                          f"{arrival['supplier_id']} 견적 {arrival['lead']}영업일 → {arrival['date']}", "시연 견적 가정"])
+        scenario = _posted_scenario(view, s.get("delivery_round_id"))
+        schedule_plan = _scenario_schedule(scenario, arrival, due, basis["planned_input_qty"]) if scenario and arrival else None
+        schedule_notes = []
+        if schedule_plan:
+            c, tag = schedule_plan["content"], f"시나리오 가정 {schedule_plan['scenario_ref']}"
+            steps = [["고객 도착", f"도착기한 {due} · 가정 도착 {schedule_plan['arrives']}" if due else f"가정 도착 {schedule_plan['arrives']}", "원장 확인" if due else "미확인"],
+                     ["운송", f"{c['transit_days']}일 → {schedule_plan['arrives']} 도착 · 운송 중 {number(s['transit_qty'])}대는 이미 출발", tag],
+                     ["출하 준비", f"{c['ship_prep_business_days']}영업일 → {schedule_plan['shipped']} 출하 · 창고 {number(s['warehouse_remaining_qty'])}대 대기", tag],
+                     [f"생산 {number(basis['planned_input_qty'])}대", f"하루 {c['daily_capacity']}대 → {schedule_plan['production_days']}영업일, {schedule_plan['produced']} 완료", tag],
+                     ["수입검사", f"{c['inspection_business_days']}영업일 → {schedule_plan['inspected']} 합격", tag],
+                     ["부품 입하 필요일", f"도착기한에서 거꾸로 → 늦어도 {schedule_plan['latest_parts']}" if due else "도착기한 미확인", tag if due else "계산 불가"],
+                     [f"부품 입하 예상 ({focus['item_id']})", f"{arrival['supplier_id']} 견적 {arrival['lead']}영업일 → {arrival['date']}", "시연 견적 가정"]]
             if due:
-                gap = (date.fromisoformat(due) - date.fromisoformat(arrival["date"])).days
-                schedule_notes.append(f"수량을 충족하는 가장 빠른 견적({arrival['quote_ref']}) 기준으로 부품이 {arrival['date']}에 오면 도착기한 {due}까지 {gap}일(달력 기준)이 남습니다. "
-                                      f"이 안에 수입검사·생산 {number(basis['planned_input_qty'])}대·출하 준비·운송이 들어가야 하지만 각 기간 근거가 원장에 없어 가능 여부는 판단하지 않습니다.")
-            schedule_notes.append(f"입하 예상일은 기준일 {arrival['as_of']}에서 주말만 제외한 영업일 계산이며(휴일 달력 없음) 공급사 확약이 아닙니다.")
+                margin = f"{schedule_plan['slack']}일 여유" if schedule_plan["slack"] >= 0 else f"{-schedule_plan['slack']}일 초과"
+                schedule_notes.append(f"승인된 일정 가정 {schedule_plan['scenario_ref']} 기준으로 부품이 {arrival['date']}에 오면 {schedule_plan['arrives']}에 도착해 도착기한 {due} 대비 {margin}입니다. "
+                                      f"부품은 늦어도 {schedule_plan['latest_parts']}까지 입하되어야 합니다.")
+            schedule_notes.append("기간 값은 사람이 입력하고 다른 계정이 승인한 시나리오 가정이며 원장 사실이 아닙니다. 영업일은 주말만 제외합니다(휴일 달력 없음).")
         else:
-            steps.append(["부품 입하 예상", "수량을 충족하는 견적 없음", "미확인"])
-            schedule_notes.append("단계별 기간 근거가 원장에 없어 부품 입하 필요일을 거꾸로 계산하지 않았습니다.")
+            steps = [["고객 도착", f"도착기한 {due}" if due else "도착기한", "원장 확인" if due else "미확인"],
+                     ["운송", f"운송 기간 · 운송 중 {number(s['transit_qty'])}대는 이미 출발", "근거 없음"],
+                     ["출하 준비", f"출하 준비 기간 · 창고 {number(s['warehouse_remaining_qty'])}대 대기", "근거 없음"],
+                     [f"생산 {number(basis['planned_input_qty'])}대", "생산능력·작업 달력", "근거 없음"],
+                     ["수입검사", "검사 기간", "근거 없음"],
+                     ["부품 입하 필요일", "위 기간의 합", "계산 불가"]]
+            if arrival:
+                steps.append([f"부품 입하 예상 ({focus['item_id']})",
+                              f"{arrival['supplier_id']} 견적 {arrival['lead']}영업일 → {arrival['date']}", "시연 견적 가정"])
+                if due:
+                    gap = (date.fromisoformat(due) - date.fromisoformat(arrival["date"])).days
+                    schedule_notes.append(f"수량을 충족하는 가장 빠른 견적({arrival['quote_ref']}) 기준으로 부품이 {arrival['date']}에 오면 도착기한 {due}까지 {gap}일(달력 기준)이 남습니다. "
+                                          f"이 안에 수입검사·생산 {number(basis['planned_input_qty'])}대·출하 준비·운송이 들어가야 하지만 각 기간 근거가 원장에 없어 가능 여부는 판단하지 않습니다.")
+                schedule_notes.append(f"입하 예상일은 기준일 {arrival['as_of']}에서 주말만 제외한 영업일 계산이며(휴일 달력 없음) 공급사 확약이 아닙니다. 일정 가정 시나리오를 승인하면 이 표를 그 가정으로 계산합니다.")
+            else:
+                steps.append(["부품 입하 예상", "수량을 충족하는 견적 없음", "미확인"])
+                schedule_notes.append("단계별 기간 근거가 원장에 없어 부품 입하 필요일을 거꾸로 계산하지 않았습니다.")
         blocks.append(QueryAnswerBlock(id="schedule_backward", title="일정 역산", tool="원장 조회 · 일정 · 견적", kind="assumption",
             table={"columns": ["단계 (도착부터 거꾸로)", "근거", "상태"], "rows": steps,
                    "alert_cells": [[r, 2] for r, row in enumerate(steps) if row[2] in {"근거 없음", "계산 불가", "미확인"}]},
@@ -311,8 +368,12 @@ def _delivery_blocks(view, plan, sections, prerequisite, requirements):
     bullets = []
     if prerequisite.bom is not None and requirements["unresolved_count"]:
         bullets.append(f"BOM 적용 미확인 {number(requirements['unresolved_count'])}행")
-    bullets += ["생산능력·작업 달력 근거 없음", "수입검사·출하 준비 기간 근거 없음", "운송·고객 수령 근거 없음",
-                "견적은 수량 조건만 확인 · 공급 확약 없음"] + missing
+    if schedule_plan and schedule_plan.get("slack") is not None:
+        margin = f"{schedule_plan['slack']}일 여유" if schedule_plan["slack"] >= 0 else f"{-schedule_plan['slack']}일 초과"
+        bullets.append(f"가정 시나리오 {schedule_plan['scenario_ref']} 기준 예상 도착 {schedule_plan['arrives']} · 기한 대비 {margin} (가정, 실제 판단 아님)")
+    else:
+        bullets += ["생산능력·작업 달력 근거 없음", "수입검사·출하 준비 기간 근거 없음", "운송·고객 수령 근거 없음"]
+    bullets += ["견적은 수량 조건만 확인 · 공급 확약 없음"] + missing
     blocks.append(QueryAnswerBlock(id="verdict", title=verdict_title, tool="판정", kind="verdict",
                                    paragraphs=[verdict_text, "조건부 판단입니다. 새 납기 약속으로 저장하지 않습니다."], bullets=bullets))
     return [block.model_dump(mode="json") for block in blocks]

@@ -106,7 +106,7 @@
 @media (max-width:700px) { .mks-graph-legend { top:88px; } .mks-graph-tools { justify-content:flex-start; } .mks-graph-status { top:126px; } }
 
 /* Business-area colours and importance sizes (presentation only) */
-.mks-graph { --area-dem: #2563eb; --area-bom: #7c3aed; --area-inv: #059669; --area-pro: #d97706; --area-ev: #94a3b8; }
+.mks-graph { --area-plan: #0d9488; --area-dem: #2563eb; --area-bom: #7c3aed; --area-inv: #059669; --area-pro: #d97706; --area-ev: #94a3b8; }
 .mks-node.mks-area-dem { --area: var(--area-dem); } .mks-node.mks-area-bom { --area: var(--area-bom); }
 .mks-node.mks-area-inv { --area: var(--area-inv); } .mks-node.mks-area-pro { --area: var(--area-pro); }
 .mks-node.mks-area-ev { --area: var(--area-ev); }
@@ -122,3 +122,5 @@
 .mks-area-chip::before { content: ""; width: 10px; height: 10px; border-radius: 3px; background: color-mix(in srgb, var(--c) 25%, transparent); border: 2px solid var(--c); }
 .mks-area-chip.mks-area-dem { --c: #2563eb; } .mks-area-chip.mks-area-bom { --c: #7c3aed; } .mks-area-chip.mks-area-inv { --c: #059669; }
 .mks-area-chip.mks-area-pro { --c: #d97706; } .mks-area-chip.mks-area-ev { --c: #94a3b8; }
+.mks-node.mks-area-plan { --area: var(--area-plan); }
+.mks-area-chip.mks-area-plan { --c: #0d9488; }

@@ -115,4 +115,8 @@ PR #4는 main `d61327b`에 병합·Mac 확인됐다. 후속 사용자는 제공�
 
 ## 검색 근거·AI 답변 문장 · DEC-H56
 
-Agent 흐름에 검색(R3) 근거와 AI 요약 문장을 붙였다. 전송 범위 A(사실 이름·출처·상태와 근거 ID만, 수량·원문 없음)이며 숫자는 자리표시로만 쓰게 하고 서버가 검증 후 채운다. 검증 실패 시 원장 답변만 보인다. `ONTO_MODEL_COMPOSE=true`인 8874에서만 켰다. 근거 검색은 Git 밖에 고정 설치한 로컬 재정렬 모델(R4)을 쓰고, 모델 파일이 없으면 R3로 동작한다. [기록](docs/handoff/SERVICE-RAG-COMPOSE-20261111.md)
+Agent 흐름에 검색(R3) 근거와 AI 요약 문장을 붙였다. 전송 범위 A(사실 이름·출처·상태와 근거 ID만, 수량·원문 없음)이며 숫자는 자리표시로만 쓰게 하고 서버가 검증 후 채운다. 검증 실패 시 원장 답변만 보인다. `ONTO_MODEL_COMPOSE=true`인 8874에서만 켰다. 근거 검색은 Git 밖에 고정 설치한 로컬 재정렬 모델(R4)을 쓰고, 모델 파일이 없으면 R3로 동작한다.
+
+## 일정 What-if 시나리오 · DEC-H57
+
+일정 기간(검사·생산능력·출하 준비·운송)은 원장 사실이 아니라 회차별 SCENARIO 가정 문서(작성·다른 계정 승인·확정)로만 넣고 T-Box의 ScenarioRun/ScenarioProfile/ScenarioAssumption/ProductionPlan으로 투영한다. 일정 카드는 그 가정으로 계산하되 판정은 "납기 판단 보류"를 유지한다. [기록](docs/handoff/SERVICE-WHATIF-SCHEDULE-20261111.md) [기록](docs/handoff/SERVICE-RAG-COMPOSE-20261111.md)

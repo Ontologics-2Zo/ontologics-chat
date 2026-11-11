@@ -311,6 +311,32 @@ class ProcurementDomainTests(unittest.TestCase):
         self.assertEqual((returned["status"], returned["rejection_reason"]), ("DRAFT", body.reason))
         self.assert_code("PROCUREMENT_LEDGER_VERSION_CHANGED", lambda: self.action("review", returned))
 
+    def test_schedule_scenario_is_an_approved_assumption_in_the_graph(self):
+        from service.procurement_contracts import ScenarioContent
+        payload = self.ledger.read(self.author)
+        round_ = next(row for row in payload["entities"] if row["type"] == "DeliveryRound")
+        content = ScenarioContent(scenario_ref="SCN-test", round_id=round_["display_id"], inspection_business_days=1,
+            daily_capacity=20, ship_prep_business_days=1, transit_days=2, note="Demo schedule assumptions for what-if")
+        draft = self.create(content)
+        self.assert_code("SELF_REVIEW_FORBIDDEN", lambda: self.action("review", draft, actor=self.author))
+        self.post(content.model_copy(update={"scenario_ref": "SCN-posted"}))
+        after = self.ledger.read(self.author)
+        types = [row["type"] for row in after["entities"] if row.get("attributes", {}).get("provenance") == "DEMO_ASSUMPTION"]
+        self.assertEqual(sorted(set(types)), ["ProductionPlan", "ScenarioAssumption", "ScenarioProfile", "ScenarioRun"])
+        self.assertEqual(types.count("ScenarioAssumption"), 4)
+        # A "label" attribute would add a second rdfs:label and fail SHACL projection.
+        self.assertFalse(any("label" in row.get("attributes", {}) for row in after["entities"]
+                             if row.get("attributes", {}).get("provenance") == "DEMO_ASSUMPTION"))
+        run = next(row for row in after["entities"] if row["type"] == "ScenarioRun")
+        self.assertEqual(run["attributes"]["assumption_status"], "APPROVED_ASSUMPTION_NOT_FACT")
+        predicates = {(rel["predicate"]) for rel in after["relationships"] if rel["source"] == run["id"]}
+        self.assertTrue({"targetsRound", "usesProfile"} <= predicates)
+        self.assertTrue(any(rel["predicate"] == "hasPlan" for rel in after["relationships"]))
+        posted = [row for row in after["procurement"]["documents"] if row["kind"] == "SCENARIO"]
+        self.assertEqual(posted[0]["content"]["daily_capacity"], 20)
+        # The opening facts are untouched: assumptions never overwrite ledger quantities.
+        self.assertEqual(after["opening_balance"], self.original)
+
     def test_activity_lists_document_steps_but_not_postings(self):
         draft = self.create(offer(quote_ref="activity-quote"))
         approved = self.action("approve", self.action("review", draft))

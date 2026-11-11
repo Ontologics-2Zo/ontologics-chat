@@ -2,7 +2,7 @@
 // this module never sends supplier messages or changes browser-only inventory.
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const kinds = { QUOTE: '견적 조건', PR: '구매 요청', PO: '내부 발주', SUPPLY_CONFIRMATION: '공급확인 · 모의', RECEIPT: '입하', IQC: '수입검사', CANCEL: '잔여 취소',
-  PRODUCTION: '생산 실적', FG_RECEIPT: '완성품 입고', SHIPMENT: '출하', ARRIVAL: '고객 도착' };
+  PRODUCTION: '생산 실적', FG_RECEIPT: '완성품 입고', SHIPMENT: '출하', ARRIVAL: '고객 도착' , SCENARIO: '일정 가정 시나리오' };
 const statuses = { DRAFT: '검토 전', REVIEWED: '검토 완료', APPROVED: '승인 · 반영 전', POSTED: '원장 반영' };
 const fields = {
   QUOTE: ['quote_ref', 'supplier_id', 'item_id', 'unit', 'unit_price', 'currency', 'moq', 'order_multiple', 'freight', 'valid_until', 'lead_business_days', 'provenance', 'note'],
@@ -17,11 +17,15 @@ const fields = {
   FG_RECEIPT: ['production_id', 'receipt_ref', 'board_serials', 'note'],
   SHIPMENT: ['fg_receipt_id', 'shipment_ref', 'board_serials', 'note'],
   ARRIVAL: ['shipment_id', 'arrival_ref', 'board_serials', 'note'],
+  // T12: what-if schedule assumptions for one delivery round.
+  SCENARIO: ['scenario_ref', 'round_id', 'inspection_business_days', 'daily_capacity', 'ship_prep_business_days', 'transit_days', 'provenance', 'note'],
 };
 const nextStep = { PRODUCTION: ['FG_RECEIPT', 'production_id', 'PRODUCED', '완성품 입고 기록'],
   FG_RECEIPT: ['SHIPMENT', 'fg_receipt_id', 'RECEIVED', '출하 기록'], SHIPMENT: ['ARRIVAL', 'shipment_id', 'SHIPPED', '고객 도착 기록'] };
-const labels = { production_ref: '생산 실적 식별자', shipment_ref: '출하 식별자', arrival_ref: '도착 식별자', board_serials: '보드 serial · 쉼표로 구분', quote_ref: '내부 견적 식별자', supplier_id: '공급사', item_id: '품목', unit: '단위', unit_price: '단가', currency: '통화', moq: '최소 주문량', order_multiple: '포장 배수', freight: '운임 · 미확인은 빈칸', valid_until: '유효기간', lead_business_days: '참고 리드타임 · 영업일', quantity: '수량', confirmation_ref: '모의 공급확인 식별자', confirmed_qty: '모의 확인 수량', receipt_ref: '입하 식별자', lot_code: '신규 LOT 식별자', inspection_ref: '검사 식별자', passed_qty: '합격 수량', failed_qty: '불합격 수량', note: '검토 근거 · 조건', reason: '반려 사유' };
-const numberFields = new Set(['moq', 'order_multiple', 'quantity', 'confirmed_qty', 'passed_qty', 'failed_qty', 'lead_business_days']);
+const labels = { production_ref: '생산 실적 식별자', shipment_ref: '출하 식별자', arrival_ref: '도착 식별자', board_serials: '보드 serial · 쉼표로 구분', quote_ref: '내부 견적 식별자', supplier_id: '공급사', item_id: '품목', unit: '단위', unit_price: '단가', currency: '통화', moq: '최소 주문량', order_multiple: '포장 배수', freight: '운임 · 미확인은 빈칸', valid_until: '유효기간', lead_business_days: '참고 리드타임 · 영업일', quantity: '수량', confirmation_ref: '모의 공급확인 식별자', confirmed_qty: '모의 확인 수량', receipt_ref: '입하 식별자', lot_code: '신규 LOT 식별자', inspection_ref: '검사 식별자', passed_qty: '합격 수량', failed_qty: '불합격 수량', note: '검토 근거 · 조건', reason: '반려 사유',
+  inspection_business_days: '수입검사 기간 · 영업일', daily_capacity: '생산능력 · 하루 대수', ship_prep_business_days: '출하 준비 · 영업일', transit_days: '운송 기간 · 일' };
+const numberFields = new Set(['moq', 'order_multiple', 'quantity', 'confirmed_qty', 'passed_qty', 'failed_qty', 'lead_business_days',
+  'inspection_business_days', 'daily_capacity', 'ship_prep_business_days', 'transit_days']);
 const button = (label, action, disabled = false, extra = '') => `<button type="button" class="mk-btn" data-purchase-action="${action}" ${extra}${disabled ? ' disabled' : ''}>${esc(label)}</button>`;
 const errors = {
   SELF_REVIEW_FORBIDDEN: '작성자와 다른 검토 계정이 필요합니다.', SELF_APPROVAL_FORBIDDEN: '작성자는 자신의 문서를 승인할 수 없습니다.',
@@ -44,7 +48,7 @@ const errors = {
 // receipt and inspection. Buttons only run the existing explicit commands.
 const unitWord = unit => unit === 'EA' || !unit ? '개' : ` ${unit}`;
 // Short readable document label from the real ID (for example PR-16BF), like the shared screen.
-const docPrefix = { PR: 'PR', PO: 'PO', SUPPLY_CONFIRMATION: 'SC', RECEIPT: 'RC', IQC: 'IQC', CANCEL: 'CX', QUOTE: 'QT',
+const docPrefix = { SCENARIO: 'SCN', PR: 'PR', PO: 'PO', SUPPLY_CONFIRMATION: 'SC', RECEIPT: 'RC', IQC: 'IQC', CANCEL: 'CX', QUOTE: 'QT',
   PRODUCTION: 'PD', FG_RECEIPT: 'FG', SHIPMENT: 'SH', ARRIVAL: 'AR' };
 export const documentLabel = (kind, id) => `${docPrefix[kind] || kind}-${String(id || '').replace(/[^0-9a-z]/gi, '').slice(0, 4).toUpperCase()}`;
 const progressSteps = ['초안', '승인 요청', '승인', '확정'];
@@ -182,6 +186,40 @@ function progressCard(progress, busy, extra = '') {
     ${extra}<p class="mk-small-note">내부 발주는 공급사 확약이 아닙니다. 외부 송신은 없습니다.</p></section>`;
 }
 
+// T12 what-if schedule card: the latest scenario document and its next step,
+// with the same author/approver separation as every other document.
+const SCENARIO_LABELS = [['inspection_business_days', '수입검사', '영업일'], ['daily_capacity', '생산능력', '대/영업일'],
+  ['ship_prep_business_days', '출하 준비', '영업일'], ['transit_days', '운송', '일']];
+export function scenarioState(documents, identity) {
+  const can = permission => (identity?.permitted_actions || []).includes(permission);
+  const rows = (documents || []).filter(row => row.kind === 'SCENARIO' && !row.cancelled_by && !(row.status === 'DRAFT' && row.rejection_reason));
+  const doc = rows.at(-1) || null, approver = can('document.approve'), mine = doc && doc.created_by === identity?.actor_id;
+  const values = doc ? SCENARIO_LABELS.map(([key, label, unit]) => [label, `${doc.content?.[key] ?? '미확인'}${unit}`]) : [];
+  const next = [], notes = [];
+  if (!doc || doc.status === 'POSTED') {
+    next.push({ label: doc ? '새 가정 작성' : '일정 가정 작성', action: 'new-scenario', disabled: approver || !can('document.create') });
+    if (approver) notes.push('일정 가정은 작성자 계정이 작성하고 이 계정이 승인합니다.');
+  } else if (doc.status === 'APPROVED') {
+    next.push({ label: '확정 (원장 반영)', action: 'post', target: doc.id, disabled: !can('document.post') });
+  } else {
+    next.push({ label: '승인', action: 'review-approve', target: doc.id, disabled: mine || !approver },
+              { label: '반려', action: 'reject', target: doc.id, disabled: mine || !can('document.review') });
+    if (mine) notes.push('작성자 본인은 승인할 수 없습니다. 상단에서 역할을 검토자로 바꾸세요.');
+  }
+  const status = !doc ? '가정 없음' : doc.status === 'POSTED' ? `반영됨 · 원장 v${doc.ledger_version ?? '?'}` : doc.status === 'APPROVED' ? '확정 대기' : '승인 진행';
+  const tone = !doc ? 'mute' : doc.status === 'POSTED' ? 'ok' : 'warn';
+  return { doc, status, tone, values, next, notes, label: doc ? documentLabel('SCENARIO', doc.id) : null };
+}
+function scenarioCard(state, busy, extra = '') {
+  const buttons = state.next.map((entry, index) => `<button type="button" class="mk-btn${index === 0 && !entry.disabled ? ' primary' : ''}" data-purchase-action="${entry.action}"${entry.target ? ` data-doc="${esc(entry.target)}"` : ''}${entry.disabled || busy ? ' disabled' : ''}>${esc(entry.label)}</button>`).join('');
+  const body = state.doc
+    ? `<dl class="mk-supply-rows">${state.values.map(([label, value]) => `<dt>${esc(label)}</dt><dd>${esc(value)}</dd>`).join('')}<dt>문서</dt><dd>${esc(state.label)}</dd></dl>`
+    : '<p class="mk-supply-empty">등록된 일정 가정이 없습니다. 가정을 승인하면 68대 질문의 일정 역산이 이 기간으로 계산됩니다.</p>';
+  return `<section class="mk-supply-progress mk-scenario-card" data-scenario-card><h3>일정 가정 시나리오<span class="mk-spacer"></span><span class="mk-pill ${toneClass[state.tone] || 'mute'}">${esc(state.status)}</span></h3>
+    ${body}<div class="mk-supply-actions">${buttons}${state.notes.map(note => `<span class="mk-small-note">${esc(note)}</span>`).join('')}</div>${extra}
+    <p class="mk-small-note">What-if 가정입니다. 원장 사실이 아니며 실제 납기 판단은 보류로 남습니다.</p></section>`;
+}
+
 export function mountProcurementFlow(container, { snapshot, api, getIdentity = () => null, onPosted = () => {}, onRefresh = () => {}, onActivity = () => {} }) {
   const abort = new AbortController(), pending = new Map();
   let documents = [], choices = [], activeId = null, editor = null, busy = false, destroyed = false;
@@ -243,13 +281,14 @@ export function mountProcurementFlow(container, { snapshot, api, getIdentity = (
     const editable = fields[kind].filter(key => !['_id', 'provenance'].includes(key) && !['quote_id', 'pr_id', 'po_id', 'receipt_id', 'target_id', 'iqc_id', 'production_id', 'fg_receipt_id', 'shipment_id', 'material_basis', 'acknowledge_partial_bom', 'acknowledge_unknown_freight'].includes(key));
     // A purchase request takes the server's recommended quantity as is (the
     // server refuses any other number), so it has no quantity or note field.
-    const shown = kind === 'PR' ? editable.filter(key => !['quantity', 'note'].includes(key)) : editable;
+    const shown = kind === 'PR' ? editable.filter(key => !['quantity', 'note'].includes(key))
+      : kind === 'SCENARIO' ? editable.filter(key => !['scenario_ref', 'round_id', 'note'].includes(key)) : editable;
     const prChoice = kind === 'PR' ? requestChoice(values) : null;
     return `<form class="mk-bom-form" data-purchase-form><h4>${esc(kinds[kind])} ${editor.revise ? '초안 수정' : '초안'}</h4>
       ${kind === 'SUPPLY_CONFIRMATION' ? '<p>실제 공급사 응답이 없는 내부 모의 확인입니다. 도착일을 확정하지 않습니다.</p>' : ''}
       ${shown.length ? `<div class="mk-bom-fields">${shown.map(key => key === 'note'
         ? `<label class="mk-bom-field">${labels[key]}<textarea name="${key}" minlength="8" maxlength="2000" required>${esc(values[key] || '')}</textarea></label>`
-        : `<label class="mk-bom-field">${esc(labels[key] || key)}<input name="${key}" type="${key === 'valid_until' ? 'date' : numberFields.has(key) ? 'number' : 'text'}" value="${esc(values[key] ?? '')}" ${numberFields.has(key) ? `min="${['passed_qty', 'failed_qty', 'lead_business_days'].includes(key) ? 0 : 1}" max="1000000000" step="1"` : ''} ${['freight', 'lead_business_days'].includes(key) ? '' : 'required'}></label>`).join('')}</div>` : ''}
+        : `<label class="mk-bom-field">${esc(labels[key] || key)}<input name="${key}" type="${key === 'valid_until' ? 'date' : numberFields.has(key) ? 'number' : 'text'}" value="${esc(values[key] ?? '')}" ${numberFields.has(key) ? `min="${['passed_qty', 'failed_qty', 'lead_business_days', 'inspection_business_days', 'ship_prep_business_days', 'transit_days'].includes(key) ? 0 : 1}" max="1000000000" step="1"` : ''} ${['freight', 'lead_business_days'].includes(key) ? '' : 'required'}></label>`).join('')}</div>` : ''}
       ${kind === 'PR' ? `<p>요청 수량: ${prChoice ? `${esc(prChoice.calculation.recommended_qty)}${esc(unitWord(prChoice.unit))} · 견적 ${esc(prChoice.quote_ref)}(${esc(prChoice.supplier_id)})의 권장 수량` : '견적 권장 수량을 다시 불러와 주세요'}</p><p>선택 기준: ${values.material_basis === 'planned' ? '계획 수율 적용안' : '기본 소요안'}</p><p class="mk-bom-ack">미확인 BOM 행과 기술검수·전체 제조 가능성은 미확인으로 남습니다. 승인 요청을 누르면 이 안내를 확인한 것으로 기록합니다.</p>` : ''}
       ${kind === 'PO' ? `<label class="mk-bom-ack"><input type="checkbox" name="acknowledge_unknown_freight" ${values.acknowledge_unknown_freight ? 'checked' : ''}>운임 미확인을 유지하는 내부 발주임을 확인합니다. 총액은 미확인으로 남습니다.</label>` : ''}
       ${kind === 'QUOTE' ? '<p>시연 가정 견적입니다. 기초 견적에 없던 조건은 직접 확인하고 입력해 주세요.</p>' : ''}
@@ -268,9 +307,13 @@ export function mountProcurementFlow(container, { snapshot, api, getIdentity = (
     if (destroyed) return;
     const status = notice && (failed || editor || needsRefresh) ? `<p role="status" aria-live="polite" class="mk-supply-notice${failed ? ' mk-bom-warning' : ''}">${esc(notice)}</p>` : `<p role="status" aria-live="polite" class="mk-supply-notice"></p>`;
     const refresh = needsRefresh ? `<p class="mk-supply-notice">원장에 새 사건이 반영되었습니다. 최신 원장 조회 후 다음 업무를 진행해 주세요. ${button('최신 원장 조회', 'refresh', busy)}</p>` : '';
-    const progress = supplyProgress(documents, snapshot, getIdentity(), editor);
-    if (progress && editor) progress.next = [];
-    container.innerHTML = progressCard(progress, busy || needsRefresh, status + refresh + form());
+    const scenarioEditing = editor?.kind === 'SCENARIO' || (editor?.kind === 'REJECT' && active()?.kind === 'SCENARIO');
+    const progress = supplyProgress(documents, snapshot, getIdentity(), scenarioEditing ? null : editor);
+    if (progress && editor && !scenarioEditing) progress.next = [];
+    const scenario = scenarioState(documents, getIdentity());
+    if (scenarioEditing) scenario.next = [];
+    container.innerHTML = progressCard(progress, busy || needsRefresh, status + refresh + (scenarioEditing ? '' : form()))
+      + scenarioCard(scenario, busy || needsRefresh, scenarioEditing ? status + form() : '');
   }
   container.addEventListener('click', event => {
     const target = event.target.closest('[data-purchase-action]');
@@ -285,6 +328,12 @@ export function mountProcurementFlow(container, { snapshot, api, getIdentity = (
     if (action === 'new-po') { start('PO', { pr_id: doc.id, quantity: doc.remaining_qty, acknowledge_unknown_freight: false }); return; }
     if (action === 'new-confirmation') { start('SUPPLY_CONFIRMATION', { po_id: doc.id, confirmed_qty: doc.quantity - (doc.confirmed_qty || 0), confirmation_ref: '' }); return; }
     if (action === 'new-receipt') { start('RECEIPT', { po_id: doc.id, quantity: doc.receivable_qty, receipt_ref: '', lot_code: '' }); return; }
+    if (action === 'new-scenario') {
+      // Demo defaults the presenter can change before asking for approval.
+      start('SCENARIO', { scenario_ref: `SCN-${Date.now().toString(36).toUpperCase()}`, round_id: snapshot.summary?.delivery_round_id,
+        inspection_business_days: 1, daily_capacity: 20, ship_prep_business_days: 1, transit_days: 2 });
+      return;
+    }
     if (action === 'new-iqc') {
       // One click, like the shared screen: an inspection draft that passes all
       // received units is saved at once and waits for another account's
@@ -338,6 +387,11 @@ export function mountProcurementFlow(container, { snapshot, api, getIdentity = (
     for (const key of numberFields) if (fields[current.kind]?.includes(key)) values[key] = values[key] === '' || values[key] == null ? null : Number(values[key]);
     if (fields[current.kind]?.includes('board_serials')) values.board_serials = String(values.board_serials || '').split(/[,\s]+/).map(value => value.trim()).filter(Boolean);
     if (current.kind === 'QUOTE') { values.freight = values.freight === '' || values.freight == null ? null : values.freight; values.provenance = 'DEMO_ASSUMPTION'; }
+    if (current.kind === 'SCENARIO') {
+      values.provenance = 'DEMO_ASSUMPTION';
+      values.round_id = current.values.round_id; values.scenario_ref = current.values.scenario_ref;
+      values.note = `일정 가정 · 검사 ${values.inspection_business_days}영업일 · 하루 ${values.daily_capacity}대 · 출하 준비 ${values.ship_prep_business_days}영업일 · 운송 ${values.transit_days}일 (What-if)`;
+    }
     if (current.kind === 'PR') {
       const choice = requestChoice(values);
       if (!choice) { message('견적 권장 수량을 확인할 수 없습니다. 화면을 새로고침한 뒤 다시 시도해 주세요.'); return; }

@@ -432,6 +432,17 @@ class QueryAnswerTests(unittest.TestCase):
 
 
 class BusinessDayTests(unittest.TestCase):
+    def test_scenario_schedule_runs_forward_from_parts_and_backward_from_the_due_date(self):
+        from service.query_answers import _scenario_schedule
+        scenario = {"content": {"scenario_ref": "SCN-1", "inspection_business_days": 1, "daily_capacity": 20,
+                                "ship_prep_business_days": 1, "transit_days": 2}}
+        plan = _scenario_schedule(scenario, {"date": "2026-11-13"}, "2026-11-27", "43")
+        self.assertEqual((plan["inspected"], plan["production_days"], plan["produced"], plan["shipped"], plan["arrives"]),
+                         ("2026-11-16", 3, "2026-11-19", "2026-11-20", "2026-11-22"))
+        self.assertEqual((plan["slack"], plan["latest_parts"]), (5, "2026-11-18"))
+        late = _scenario_schedule({"content": {**scenario["content"], "daily_capacity": 5}}, {"date": "2026-11-13"}, "2026-11-27", "43")
+        self.assertLess(late["slack"], 0)  # a slower assumption shows the overrun, not a hidden pass
+
     def test_weekends_are_skipped_like_the_ledger_quote_dates(self):
         from datetime import date
         from service.query_answers import _add_business_days

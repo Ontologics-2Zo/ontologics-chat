@@ -41,7 +41,7 @@ def apply_procurement_event(previous, event):
         raise ServiceError("PROCUREMENT_EVENT_DUPLICATE", 409)
     resolved = content["resolved"]
     parent = None
-    if kind != "QUOTE":
+    if kind not in {"QUOTE", "SCENARIO"}:
         parent_ref = resolved.get("parent", {})
         parent = documents.get(parent_ref.get("id"))
         if (not parent or any(parent[key] != parent_ref[ref] for key, ref in
@@ -210,7 +210,8 @@ def apply_procurement_event(previous, event):
             "source": start, "predicate": predicate, "target": end, "evidence": deepcopy(evidence)})
     type_ = {"QUOTE": "SupplierOffer", "PR": "PurchaseRequest", "PO": "PurchaseOrder", "SUPPLY_CONFIRMATION": "SourceDocument",
              "RECEIPT": "PartsReceiptLine", "IQC": "InspectionResult", "CANCEL": "SourceDocument",
-             "PRODUCTION": "ProductionReport", "FG_RECEIPT": "FinishedGoodsReceipt", "SHIPMENT": "Shipment", "ARRIVAL": "ArrivalRecord"}[kind]
+             "PRODUCTION": "ProductionReport", "FG_RECEIPT": "FinishedGoodsReceipt", "SHIPMENT": "Shipment", "ARRIVAL": "ArrivalRecord",
+             "SCENARIO": "ScenarioRun"}[kind]
     attributes = {"document_id": identifier, "kind": kind, "status": "POSTED", "quantity": getattr(typed, "quantity", 0),
                   "supplier_confirmation": False, "transmission_status": "NOT_SENT"}
     if kind == "IQC":
@@ -223,12 +224,16 @@ def apply_procurement_event(previous, event):
         attributes.update(cancelled_remaining_qty=resolved["cancelled_remaining_qty"])
     elif kind == "QUOTE":
         attributes.update({key: content[key] for key in ("unit_price", "currency", "moq", "order_multiple", "freight", "valid_until")})
+    elif kind == "SCENARIO":
+        attributes.update(scenario_ref=typed.scenario_ref, round_id=resolved["round_id"], provenance="DEMO_ASSUMPTION",
+                          assumption_status="APPROVED_ASSUMPTION_NOT_FACT")
     elif fulfillment is not None:
         attributes.update(board_serials=list(resolved["board_serials"]), round_id=resolved["round_id"])
         if kind == "PRODUCTION":
             attributes.update(lot_code=resolved["lot_code"], item_id=resolved["item_id"], consumed_qty=resolved["consumed_qty"],
                               quantity_per_board=resolved["quantity_per_board"], conditional_application=resolved["conditional_application"])
-    document_node = node("document", type_, attributes, kind + " " + identifier[:8])
+    document_node = node("document", type_, attributes,
+                         typed.scenario_ref if kind == "SCENARIO" else kind + " " + identifier[:8])
     revision = node("version", "DocumentVersion", {"version": value["document_version"], "payload_hash": value["payload_hash"]}, kind + " version")
     grant = node("approval", "ApprovalGrant", approval, kind + " approval")
     edge(grant, "approvalForDocumentVersion", revision)
@@ -241,7 +246,28 @@ def apply_procurement_event(previous, event):
         source = node("evidence", "Evidence", evidence, kind + " evidence")
         edge(node_id(parent["id"]), "supportedBy", source)
         edge(document_node, "supportedBy", source)
-    if kind == "QUOTE":
+    if kind == "SCENARIO":
+        # ScenarioRun → targetsRound → round; → usesProfile → profile → usesAssumption → each value.
+        # The job's ProductionPlan uses the capacity assumption. All values are assumptions.
+        edge(document_node, "targetsRound", resolved["round_entity_id"])
+        profile = node("profile", "ScenarioProfile", {"scenario_ref": typed.scenario_ref, "provenance": "DEMO_ASSUMPTION"},
+                       typed.scenario_ref + " profile")
+        edge(document_node, "usesProfile", profile)
+        assumption_ids = {}
+        for key, label, value_, unit in (("inspection_business_days", "수입검사 기간", typed.inspection_business_days, "영업일"),
+                                         ("daily_capacity", "생산능력", typed.daily_capacity, "대/영업일"),
+                                         ("ship_prep_business_days", "출하 준비 기간", typed.ship_prep_business_days, "영업일"),
+                                         ("transit_days", "운송 기간", typed.transit_days, "일")):
+            # "label" would collide with the entity's rdfs:label (one label only).
+            assumption_ids[key] = node(key, "ScenarioAssumption", {"assumption_key": key, "assumption_label": label, "value": value_,
+                                       "unit": unit, "provenance": "DEMO_ASSUMPTION"}, f"{label} {value_}{unit}")
+            edge(profile, "usesAssumption", assumption_ids[key])
+        if resolved.get("job_entity_id"):
+            plan = node("plan", "ProductionPlan", {"scenario_ref": typed.scenario_ref, "daily_capacity": typed.daily_capacity,
+                        "provenance": "DEMO_ASSUMPTION"}, typed.scenario_ref + " plan")
+            edge(resolved["job_entity_id"], "hasPlan", plan)
+            edge(plan, "usesAssumption", assumption_ids["daily_capacity"])
+    elif kind == "QUOTE":
         edge(document_node, "offersItem", resolved["item_entity_id"])
         edge(document_node, "offerFromSupplier", resolved["supplier_entity_id"])
     elif kind == "PR":
