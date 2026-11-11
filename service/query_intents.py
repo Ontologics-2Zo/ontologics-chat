@@ -41,6 +41,10 @@ class QueryPlan:
     is_what_if: bool = False
     explicit_production: bool = False
     quantity_mentions: tuple[QuantityMention, ...] = ()
+    # T12 what-if: parts arrival shifted by business days (negative = earlier)
+    # and whether the question asks to count substitute candidates.
+    supply_delay_days: int | None = None
+    substitute_assumed: bool = False
 
 
 _NUMBER = r"[+-]?(?:\d+(?:,\d{3})*(?:\.\d+)?|\.\d+)"
@@ -51,7 +55,7 @@ _QUANTITY = re.compile(
 )
 _IDENTIFIER = re.compile(r"(?<![a-z0-9])(?:IM|ORD|JOB|CFG|LOT)\s*-\s*[a-z0-9]+(?:\s*-\s*[a-z0-9]+)*", re.IGNORECASE)
 _DATES = re.compile(
-    r"\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/]\d{1,2}(?!\d)|"
+    r"\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/]\d{1,2}(?!\d)|\d+\s*영업일|"
     r"(?:\d{4}\s*년\s*)?\d{1,2}\s*월(?:\s*\d{1,2}\s*일)?|"
     r"\d+\s*(?:일|주|개월|시간|분)(?:\s*(?:안|내|후|뒤|전))?|\d{1,2}\s*시(?:\s*\d{1,2}\s*분)?"
 )
@@ -201,6 +205,32 @@ def _yield(text: str, compact: str, intents: tuple[QueryIntent, ...]) -> tuple[D
     return None, [], None
 
 
+_SUPPLY_WORDS = r"(?:공급|입하|납입|부품|자재|견적|리드타임|조달|발주|구매)"
+_LATER = r"(?:늦어|늦게|늦춰|늦으|늦는|지연|밀리|밀려|밀린|미뤄|더걸)"
+_EARLIER = r"(?:빨라|빠르게|당겨|앞당)"
+
+
+def _supply_delay(compact: str) -> tuple[int | None, str | None]:
+    """A parts-arrival shift such as '입하가 3영업일 늦어지면' (assumption only)."""
+    matches = list(re.finditer(
+        rf"{_SUPPLY_WORDS}[^0-9]{{0,10}}?(\d{{1,4}})(영업일|일|주)(?:정도|씩|만큼)?(?:더|이)?({_LATER}|{_EARLIER})", compact))
+    if not matches:
+        if re.search(rf"{_SUPPLY_WORDS}[^0-9]{{0,10}}?(?:{_LATER}|{_EARLIER})", compact) and re.search(r"(?:면|다면|경우)", compact):
+            return None, "공급 일정 가정에는 늦어지거나 빨라지는 기간을 영업일로 적어 주세요. 예: '입하가 3영업일 늦어지면'."
+        return None, None
+    if len(matches) > 1:
+        return None, "계산에 적용할 공급 일정 변경 한 가지를 명시해 주세요."
+    number, unit, direction = matches[0].groups()
+    days = int(number) * (5 if unit == "주" else 1)
+    if not 0 < days <= 60:
+        return None, "공급 일정 변경은 1~60영업일 범위로 적어 주세요."
+    return (-days if re.match(_EARLIER, direction) else days), None
+
+
+def _substitute_assumed(compact: str) -> bool:
+    return bool(re.search(r"대체[^,.?!]{0,10}?(?:쓰면|쓴다면|쓰고|사용하면|사용한다면|활용하면|활용한다면|포함하면|포함한다면|넣으면|적용하면|인정하면|까지쓰|까지사용|까지활용|까지포함)", compact))
+
+
 def _target_match(before: str, after: str) -> bool:
     """Only an explicit hypothetical good-output target can override the ledger."""
     goal_before = bool(re.search(r"(?:양품|양품목표|생산목표|추가생산목표|목표양품)(?:은|는|을|를|이|가|수량)?$", before))
@@ -272,6 +302,16 @@ def interpret_question(question: str) -> QueryPlan:
 
     yield_rate, yield_spans, yield_error = _yield(text, compact, intents)
     clarification = clarification or yield_error
+    supply_delay, delay_error = _supply_delay(compact)
+    clarification = clarification or delay_error
+    substitute = _substitute_assumed(compact)
+    if (supply_delay is not None or substitute) and "materials" not in intents:
+        intents = tuple(intent for intent in ("trace", "change", "sourcing", "quality", "position", "substitute", "transit", "delivery", "fulfillment", "production", "materials", "inventory", "ontology") if intent == "materials" or intent in intents)
+    if (yield_rate is None and supply_delay is None and not substitute and not clarification
+            and re.search(r"조건(?:을|를|이|들)?(?:바꾸|바뀌|달라|변하|변경하)", compact)
+            and _has(compact, ("수율", "공급", "입하", "대체"))):
+        clarification = ("바꿀 조건을 값과 함께 적어 주세요. 예: '수율 90%면', '부품 입하가 3영업일 늦어지면', '대체품까지 쓰면'. "
+                         "여러 조건을 한 질문에 함께 적을 수 있으며 원장은 바꾸지 않고 기준과 나란히 비교합니다.")
     excluded_spans = [match.span() for match in ids] + yield_spans + [match.span() for match in _DATES.finditer(text)]
     quantity_text = _blank_spans(text, excluded_spans)
     mentions: list[QuantityMention] = []
@@ -324,7 +364,9 @@ def interpret_question(question: str) -> QueryPlan:
         target_references=references,
         clarification=clarification,
         unsupported=not bool(intents),
-        is_what_if=yield_rate is not None or target is not None,
+        is_what_if=yield_rate is not None or target is not None or supply_delay is not None or substitute,
         explicit_production=_production_requested(compact),
         quantity_mentions=tuple(mentions),
+        supply_delay_days=supply_delay,
+        substitute_assumed=substitute,
     )

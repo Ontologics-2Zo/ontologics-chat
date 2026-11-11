@@ -191,6 +191,9 @@ def suggested_questions(summary, requirements, bom, payload, follow_ups):
         ordered = [*follow_ups, round_question, "수율을 적용하면 몇 대 투입하고 어떤 자재가 부족해?"]
         if short and not requested:
             ordered.append(f"{item} 부족을 채울 견적을 비교해줘")
+        if short:
+            # T12: same ledger, assumption only (read-only comparison).
+            ordered.append("부품 입하가 3영업일 늦어지면 결과는 어떻게 달라져?")
         ordered += ["현재 가용 재고와 예약 근거를 보여줘", "남은 약속은 몇 대고, 얼마나 더 만들어야 해?", ontology]
     return list(dict.fromkeys(ordered))[:7]
 

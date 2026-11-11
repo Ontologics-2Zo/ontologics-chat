@@ -802,6 +802,139 @@ def _transit_answer(view, plan, req):
         {"label": "출하 / 도착", "value": f"{number(s['shipped_qty'])} / {number(s['arrived_qty'])}대"}])])
 
 
+def _shift_business_days(start, days):
+    return _add_business_days(start, days) if days >= 0 else _sub_business_days(start, -days)
+
+
+def _what_if_answer(view, plan):
+    """T12: compare the ledger basis with the question's assumptions only.
+
+    Yield/target, a parts-arrival shift and counting substitutes are applied to
+    private copies; the snapshot, documents and quotes are never changed.
+    Unreviewed substitutes are not counted, and missing evidence is reported
+    as its own result instead of being filled with a guess.
+    """
+    s = view["summary"]
+    base, scen = deepcopy(view["material_requirements"]), _requirements(view, plan)
+    bb, sb = base["basis"], scen["basis"]
+    version = view["meta"].get("ledger_version")
+    if not base.get("bom_id") or not base["items"]:
+        return _result(view, plan, status="UNKNOWN", answer="적용 BOM과 계산 가능한 품목이 없어 가정 비교를 하지 않았습니다. BOM 등록·검토·반영 후 다시 물어보세요.",
+                       conclusion="BOM 근거 없음 · 가정 비교 보류")
+    asked = {value.casefold() for value in plan.item_ids}
+    def pick(req):
+        rows = [row for row in req["items"] if not asked or row["item_id"].casefold() in asked]
+        short = [row for row in rows if row.get("planned_shortage_qty") not in (None, "0")]
+        return max(short, key=lambda row: Decimal(row["planned_shortage_qty"])) if short else (rows[0] if rows else None)
+    focus = pick(base) or pick(scen)
+    if focus is None:
+        return _clarify(view, plan, "질문의 품목이 현재 BOM의 계산 가능한 품목에 없습니다. 품목코드를 확인해 주세요.")
+    item_id, unit = focus["item_id"], _unit_word(focus.get("unit") or "EA")
+    base_row = next(row for row in base["items"] if row["item_id"] == item_id)
+    scen_row = deepcopy(next(row for row in scen["items"] if row["item_id"] == item_id))
+    applied, gaps = [], []
+    if plan.target_good_qty is not None:
+        applied.append(f"양품 목표 {plan.target_good_qty}대")
+    if plan.yield_rate is not None:
+        applied.append(f"계획 수율 {percentage(plan.yield_rate)}%")
+
+    # Substitutes: only an approved candidate with an accepted quantity counts.
+    substitute_rows = [row for row in view.get("substitutes") or [] if row.get("original_item_id") == item_id]
+    counted = Decimal(0)
+    if plan.substitute_assumed:
+        applied.append("대체품 포함")
+        for row in substitute_rows:
+            if row.get("status") == "APPROVED":
+                counted += Decimal(str(row.get("counted_qty_for_selected_demand") or 0))
+            else:
+                gaps.append(f"대체 후보 {row['candidate_item_id']}(보유 {number(row['candidate_on_hand_qty'])} {row['unit']})은 기술 검토·승인 전이라 확보량에 넣지 않았습니다. 대체를 쓰려면 적용 승인이 먼저 필요합니다.")
+        if not substitute_rows:
+            gaps.append(f"{item_id}의 대체 후보가 원장에 없습니다. 대체 가능 여부는 추정하지 않습니다.")
+    scen_short = scen_row.get("planned_shortage_qty")
+    if scen_short is not None and counted:
+        scen_short = str(max(Decimal(scen_short) - counted, Decimal(0)))
+
+    # Supply schedule: earliest quantity-meeting quote, shifted by the assumption.
+    delay = plan.supply_delay_days or 0
+    if plan.supply_delay_days is not None:
+        applied.append(f"부품 입하 {abs(delay)}영업일 {'지연' if delay > 0 else '앞당김'}")
+    base_arrival = _earliest_parts_arrival(view, base_row) if base_row.get("planned_shortage_qty") not in (None, "0") else None
+    scen_need = dict(scen_row, planned_shortage_qty=scen_short)
+    scen_arrival = _earliest_parts_arrival(view, scen_need) if scen_short not in (None, "0") else None
+    if scen_arrival and delay:
+        scen_arrival = dict(scen_arrival, date=_shift_business_days(date.fromisoformat(scen_arrival["date"]), delay).isoformat())
+    due = s.get("arrival_due_date")
+    scenario = _posted_scenario(view, s.get("delivery_round_id"))
+    base_plan = _scenario_schedule(scenario, base_arrival, due, bb["planned_input_qty"]) if scenario and base_arrival else None
+    scen_plan = _scenario_schedule(scenario, scen_arrival, due, sb["planned_input_qty"]) if scenario and scen_arrival else None
+    if scen_short not in (None, "0") and not scen_arrival:
+        gaps.append(f"부족 {number(scen_short)}{unit}을 채우는 수량 조건의 견적이 없어 부품 입하 예상일을 계산하지 않았습니다.")
+    if not scenario:
+        gaps.append("승인된 일정 가정(검사·생산능력·출하 준비·운송)이 없어 예상 고객 도착을 계산하지 않았습니다. 대시보드의 일정 가정을 승인하면 비교에 쓰입니다.")
+
+    def arrival_text(arrival, short):
+        if short == "0":
+            return "부족 없음 · 입하 불필요"
+        return f"{arrival['date']} ({arrival['supplier_id']})" if arrival else "견적 없음"
+    def margin(plan_row):
+        if not plan_row:
+            return "계산 불가"
+        if plan_row.get("slack") is None:
+            return f"{plan_row['arrives']} 도착 · 기한 미확인"
+        days = plan_row["slack"]
+        return f"{plan_row['arrives']} 도착 · {days}일 여유" if days >= 0 else f"{plan_row['arrives']} 도착 · {-days}일 초과"
+    rows = [["양품 목표", f"{number(bb['production_remaining_qty'])}대", f"{number(sb['production_remaining_qty'])}대"],
+            ["계획 수율", f"{percentage(bb['plan_yield'])}%", f"{percentage(sb['plan_yield'])}%"],
+            ["계획 투입", f"{number(bb['planned_input_qty'])}대", f"{number(sb['planned_input_qty'])}대"],
+            [f"{item_id} 가용", f"{number(base_row['available_qty'])}{unit}", f"{number(scen_row['available_qty'])}{unit}"
+             + (f" + 대체 {number(counted)}{unit}" if counted else "")],
+            [f"{item_id} 계획 부족", "미확인" if base_row.get("planned_shortage_qty") is None else f"{number(base_row['planned_shortage_qty'])}{unit}",
+             "미확인" if scen_short is None else f"{number(scen_short)}{unit}"],
+            ["부품 입하 예상", arrival_text(base_arrival, base_row.get("planned_shortage_qty")), arrival_text(scen_arrival, scen_short)]]
+    if scenario:
+        rows.append([f"예상 고객 도착 ({scenario['content']['scenario_ref']})",
+                     margin(base_plan) if base_row.get("planned_shortage_qty") != "0" else "부품 입하 불필요 · 일정 별도",
+                     margin(scen_plan) if scen_short != "0" else "부품 입하 불필요 · 일정 별도"])
+    else:
+        rows.append(["예상 고객 도착", "일정 가정 없음", "일정 가정 없음"])
+    rows.append(["납기 판단", "보류", "보류"])
+    alerts = [[index, column] for index, row in enumerate(rows) for column in (1, 2)
+              if column == 2 and row[1] != row[2] and index < len(rows) - 1]
+    changes = [f"{row[0]} {row[1]} → {row[2]}" for row in rows[:-1] if row[1] != row[2]]
+    summary_text = (f"원장 v{version} 기준과 비교해 " + ", ".join(changes) + "입니다.") if changes else f"원장 v{version} 기준과 비교해 바뀐 계산 값이 없습니다."
+    assumptions = ", ".join(applied) or "추가 가정 없음"
+    blocks = [
+        QueryAnswerBlock(id="what_if_scope", title="가정만 바꿔 비교", tool="원장 계산 · 가정 비교", kind="normal", paragraphs=[
+            f"같은 원장 v{version}의 회차 {s['delivery_round_id']}·BOM·재고·견적을 그대로 두고 질문의 가정({assumptions})만 적용했습니다.",
+            "원장·초안·견적·예약은 바꾸지 않으며 이 비교를 새 계획이나 약속으로 저장하지 않습니다."]),
+        QueryAnswerBlock(id="what_if_compare", title=f"기준 vs 가정 · {item_id}", tool="원장 계산 · 가정 비교", kind="assumption",
+            paragraphs=[summary_text, "입하 예상일은 수량을 충족하는 가장 빠른 시연 견적의 리드타임에 가정 변경을 더한 영업일 계산(주말만 제외)이며 공급사 확약이 아닙니다."],
+            table={"columns": ["항목", f"기준 · 원장 v{version}", "가정"], "rows": rows, "alert_cells": alerts}),
+    ]
+    if gaps:
+        blocks.append(QueryAnswerBlock(id="what_if_gaps", title="반영하지 않은 조건 · 자료 누락", tool="원장 계산 · 가정 비교", kind="attention", paragraphs=gaps))
+    blocks.append(QueryAnswerBlock(id="verdict", title="가정 비교 · 납기 판단 보류", tool="판정", kind="verdict", paragraphs=[
+        "가정에 따른 계산 차이만 보여 줍니다. 생산·검사·출하·운송 실적 근거가 원장에 없어 도착기한 충족 여부는 판단하지 않습니다.",
+        "가정을 실제로 쓰려면 해당 문서(구매·일정 가정·대체 승인)를 작성하고 다른 계정의 승인·반영을 거쳐야 합니다."],
+        bullets=[f"적용 가정: {assumptions}"] + ([f"반영하지 않음: {len(gaps)}건"] if gaps else [])))
+    sections = [section("what_if", f"가정 비교 · 원장 v{version} 기준", "user_assumption",
+                        [item(row[0], f"{row[1]} → {row[2]}" if row[1] != row[2] else row[1], "가정 적용 후 값" if row[1] != row[2] else "변화 없음")
+                         for row in rows], "PARTIAL")]
+    if gaps:
+        sections.append(section("what_if_gaps", "반영하지 않은 조건 · 자료 누락", "unknown", [item(f"확인 {index + 1}", text) for index, text in enumerate(gaps)], "UNKNOWN"))
+    answer = f"{summary_text} 적용 가정은 {assumptions}이며 원장은 바꾸지 않았습니다." + (f" 반영하지 않은 조건 {len(gaps)}건은 따로 표시했습니다." if gaps else "") + " 납기 판단은 보류합니다."
+    result = _result(view, plan, answer=answer, status="PARTIAL", sections=sections,
+                     kinds={"DeliveryRound", "ProductionJob", "ProductConfiguration", "BOMSnapshot", "BOMLine", "BOMApplication", "InternalItem", "PartLot"},
+                     include_bom=True, selected_items=[item_id], conclusion="가정 비교 · 원장 미변경 · 납기 판단 보류")
+    result["answer_blocks"] = [block.model_dump(mode="json") for block in blocks]
+    result["calculation"] = {"basis": deepcopy(bb), "what_if_basis": deepcopy(sb), "scope_item_ids": [item_id],
+                             "what_if": {"supply_delay_business_days": plan.supply_delay_days, "substitute_assumed": plan.substitute_assumed,
+                                         "substitute_counted_qty": number(counted), "planned_shortage_before": base_row.get("planned_shortage_qty"),
+                                         "planned_shortage_after": scen_short, "schedule_scenario": scenario["content"]["scenario_ref"] if scenario else None},
+                             "actual_delivery_feasibility": "UNKNOWN", "estimated_arrival": None, "delivery_probability": None}
+    return result
+
+
 def answer_query(question, view, ontology, *, context_entity_id=None):
     plan = interpret_question(question)
     if plan.clarification:
@@ -816,6 +949,8 @@ def answer_query(question, view, ontology, *, context_entity_id=None):
 
     intents = set(plan.intents)
     s = view["summary"]
+    if plan.supply_delay_days is not None or plan.substitute_assumed:
+        return _what_if_answer(view, plan)
     req = _requirements(view, plan)
     if "trace" in intents:
         return _lot_trace_answer(question, view, plan)
