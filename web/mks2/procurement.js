@@ -353,10 +353,15 @@ function scenarioLane(state, busy, extra = '') {
     notes: state.notes, fixed: 'What-if 가정입니다. 원장 사실이 아니며 실제 납기 판단은 보류로 남습니다.', extra });
 }
 // One line above the rows when the next presses belong to the other account.
-export function flowBanner(lanes, identity, auto = false) {
+// Optional lanes (a new schedule assumption, a substitution request, board
+// moves before the purchased LOT is inspected) are a person's choice: their
+// approvals still count, but an available author button there is not "the
+// author's turn" (otherwise the banner never ends).
+export function flowBanner(lanes, identity, auto = false, optional = []) {
   const approver = (identity?.permitted_actions || []).includes('document.approve');
-  const waits = lanes.map(laneWaiting).filter(Boolean);
-  const review = waits.filter(wait => wait === 'review').length, author = waits.filter(wait => wait === 'author').length;
+  const waits = lanes.map(entries => [laneWaiting(entries), optional.includes(entries)]).filter(([wait]) => wait);
+  const review = waits.filter(([wait]) => wait === 'review').length;
+  const author = waits.filter(([wait, skip]) => wait === 'author' && !skip).length;
   if (!approver && review) return { text: `검토자 승인 대기 ${review}건`, role: 'review', action: '검토자로 전환' };
   // With auto drafts on, the author account's next press is done by the agent.
   if (approver && author) return auto ? { text: '작성자 차례 · 전환하면 Agent가 다음 초안을 작성합니다', role: 'author', action: '작성자로 전환' }
@@ -386,7 +391,7 @@ export function autoCandidate({ supply, fulfillment, documents, identity, ledger
   if (!enabled || !can('document.create') || can('document.approve')) return null;
   const waiting = (documents || []).filter(row => row.kind !== 'QUOTE' && row.status !== 'POSTED' && !row.cancelled_by && !row.rejection_reason);
   if (waiting.length) {
-    const own = waiting.find(row => row.created_by === identity?.actor_id && String(row.content?.note || '').startsWith('Agent 자동 작성')
+    const own = waiting.find(row => row.created_by === identity?.actor_id && /^(Agent )?자동 작성/.test(String(row.content?.note || ''))
       && Number.isInteger(row.content?.basis_ledger_version) && Number.isInteger(ledgerVersion) && row.content.basis_ledger_version < ledgerVersion);
     return own && can('document.update') ? { revise: own } : null;
   }
@@ -596,8 +601,10 @@ export function mountProcurementFlow(container, { snapshot, api, getIdentity = (
     if (scenarioEditing) scenario.next = [];
     fulfillment = fulfillmentState(snapshot, documents, getIdentity());
     const blocked = busy || needsRefresh;
-    const banner = flowBanner([progress && !progress.empty ? progress.next : [], substitute?.next || [], scenario.next, fulfillment.next], getIdentity(),
-      autoDraftEnabled() && Boolean(autoCandidate({ supply: progress, fulfillment, documents, identity: { ...getIdentity(), permitted_actions: ['document.create', 'document.update'] }, ledgerVersion })));
+    const supplyNext = progress && !progress.empty ? progress.next : [], substituteNext = substitute?.next || [];
+    const banner = flowBanner([supplyNext, substituteNext, scenario.next, fulfillment.next], getIdentity(),
+      autoDraftEnabled() && Boolean(autoCandidate({ supply: progress, fulfillment, documents, identity: { ...getIdentity(), permitted_actions: ['document.create', 'document.update'] }, ledgerVersion })),
+      [substituteNext, scenario.next, ...(progress?.inspected ? [] : [fulfillment.next])]);
     const autoOn = autoDraftEnabled();
     const toggle = `<button type="button" class="mk-btn mk-auto-toggle${autoOn ? ' on' : ''}" data-auto-draft aria-pressed="${autoOn}" title="작성자 계정에서 앞 단계가 원장에 반영되면 Agent가 다음 초안을 작성합니다. 승인·확정은 사람이 합니다.">Agent 자동 초안 ${autoOn ? '켜짐' : '꺼짐'}</button>`;
     container.innerHTML = `<div class="mk-flow-board"><div class="mk-flow-board-head"><h3>진행 현황</h3>${toggle}</div>${banner ? `<p class="mk-flow-banner"><span>${esc(banner.text)}</span><button type="button" class="mk-btn primary" data-switch-role="${banner.role}"${busy ? ' disabled' : ''}>${esc(banner.action)}</button></p>` : ''}${status}${refresh}`

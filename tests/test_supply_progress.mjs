@@ -172,4 +172,8 @@ test('the progress board shows whose turn it is instead of greyed-out buttons', 
   assert.deepEqual(flowBanner([approval, approval, authorTurn], author), { text: '검토자 승인 대기 2건', role: 'review', action: '검토자로 전환' });
   assert.deepEqual(flowBanner([mine, authorTurn], reviewer), { text: '작성자 차례 1건', role: 'author', action: '작성자로 전환' });
   assert.equal(flowBanner([mine, []], reviewer), null);
+  // An optional lane's author button (for example 새 시연 가정 작성) is not the author's turn,
+  // but an approval waiting there still is.
+  assert.equal(flowBanner([mine, authorTurn], reviewer, false, [authorTurn]), null);
+  assert.deepEqual(flowBanner([approval, authorTurn], author, false, [approval]), { text: '검토자 승인 대기 1건', role: 'review', action: '검토자로 전환' });
 });
