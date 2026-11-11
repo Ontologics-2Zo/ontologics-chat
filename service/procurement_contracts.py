@@ -173,12 +173,24 @@ class ScenarioContent(PurchaseContent):
     provenance: Literal["DEMO_ASSUMPTION"] = "DEMO_ASSUMPTION"
 
 
+class SubstitutionContent(PurchaseContent):
+    """Counts part of an existing substitute candidate for this round's demand (T13).
+    A demo application approval by another account, not a manufacturing technical review."""
+    kind: Literal["SUBSTITUTION"] = "SUBSTITUTION"
+    substitution_ref: str = Field(min_length=1, max_length=100)
+    round_id: str = Field(min_length=1, max_length=100)
+    original_item_id: str = Field(min_length=1, max_length=200)
+    candidate_item_id: str = Field(min_length=1, max_length=200)
+    quantity: int = Field(ge=1, le=100000)
+    provenance: Literal["DEMO_APPLICATION_APPROVAL"] = "DEMO_APPLICATION_APPROVAL"
+
+
 ProcurementContent = Annotated[Union[QuoteContent, RequestContent, OrderContent, ReceiptContent,
                                     SupplyConfirmationContent, InspectionContent, CancelContent,
-                                    ProductionContent, FinishedGoodsContent, ShipmentContent, ArrivalContent, ScenarioContent, CohortContent], Field(discriminator="kind")]
+                                    ProductionContent, FinishedGoodsContent, ShipmentContent, ArrivalContent, ScenarioContent, CohortContent, SubstitutionContent], Field(discriminator="kind")]
 CONTENT_TYPES = {cls.model_fields["kind"].default: cls for cls in
                  (QuoteContent, RequestContent, OrderContent, ReceiptContent, SupplyConfirmationContent, InspectionContent, CancelContent,
-                  ProductionContent, FinishedGoodsContent, ShipmentContent, ArrivalContent, ScenarioContent, CohortContent)}
+                  ProductionContent, FinishedGoodsContent, ShipmentContent, ArrivalContent, ScenarioContent, CohortContent, SubstitutionContent)}
 FULFILLMENT_KINDS = {"PRODUCTION", "FG_RECEIPT", "SHIPMENT", "ARRIVAL"}
 
 

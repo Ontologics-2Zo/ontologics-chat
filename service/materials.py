@@ -171,6 +171,8 @@ def requirements_for_snapshot(payload, *, plan_yield="0.94"):
             result["unresolved_count"] += 1
             row["issues"].append("APPLICATION_UNREVIEWED")
         result["rows"].append(row)
+    # Approved substitute quantities (T13) count for their original item only.
+    substitutes = payload.get("current_substitutes", balance.get("substitutes") or [])
     units_by_item = defaultdict(set)
     for item_id, unit in groups:
         units_by_item[item_id].add(unit)
@@ -183,6 +185,13 @@ def requirements_for_snapshot(payload, *, plan_yield="0.94"):
         available, scope, issues = _inventory_for_item(inventories, item["item_id"], item["unit"])
         if len(units_by_item[item["item_id"]]) != 1:
             available, scope, issues = None, "UNKNOWN", ["ITEM_UNIT_CONFLICT"]
+        stock_available = available
+        substitute_qty = sum((Decimal(str(row.get("counted_qty_for_selected_demand") or 0)) for row in substitutes
+                              if row.get("status") == "APPROVED" and row.get("original_item_id") == item["item_id"]
+                              and row.get("unit") == item["unit"]), Decimal(0))
+        if available is not None:
+            available += substitute_qty
+        item.update(stock_available_qty=_number(stock_available), substitute_qty=_number(substitute_qty))
         item.update(quantity_per_unit=_number(quantity), required_qty=_number(required),
                     planned_required_qty=_number(planned_required), available_qty=_number(available),
                     shortage_qty=_number(max(required - available, Decimal(0))) if available is not None else None,

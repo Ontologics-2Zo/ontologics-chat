@@ -77,12 +77,25 @@ class WhatIfAnswerTests(unittest.TestCase):
         gaps = next(block for block in result["answer_blocks"] if block["id"] == "what_if_gaps")["paragraphs"]
         self.assertTrue(any("item-sub" in text and "승인 전" in text for text in gaps))
 
-    def test_only_an_approved_substitute_quantity_reduces_the_shortage(self):
+    def test_an_approved_substitute_is_already_in_the_basis_and_not_counted_twice(self):
         view = deepcopy(self.view)
         view["substitutes"] = [{"original_item_id": "item-a", "candidate_item_id": "item-sub", "candidate_on_hand_qty": 100,
                                 "unit": "piece", "status": "APPROVED", "counted_qty_for_selected_demand": 2}]
-        what_if = self.answer("대체품까지 쓰면 부족은?", view)["calculation"]["what_if"]
-        self.assertEqual(float(what_if["planned_shortage_before"]) - 2, float(what_if["planned_shortage_after"]))
+        result = self.answer("대체품까지 쓰면 부족은?", view)
+        what_if = result["calculation"]["what_if"]
+        self.assertEqual(what_if["planned_shortage_before"], what_if["planned_shortage_after"])
+        gaps = next(block for block in result["answer_blocks"] if block["id"] == "what_if_gaps")["paragraphs"]
+        self.assertTrue(any("이미 승인·반영" in text for text in gaps))
+
+    def test_delivery_answer_names_an_approved_substitute_in_the_available_stock(self):
+        view = deepcopy(self.view)
+        row = next(row for row in view["material_requirements"]["items"] if row["item_id"] == "item-a")
+        row.update(stock_available_qty=row["available_qty"], substitute_qty="100",
+                   available_qty=str(float(row["available_qty"]) + 100), shortage_qty="0", planned_shortage_qty="0")
+        result = self.answer("남은 물량 납기 안에 도착 가능해?", view)
+        self.assertIn("승인된 대체 100개를 포함했습니다", result["answer"])
+        shortage = next(block for block in result["answer_blocks"] if block["id"] == "material_shortage")
+        self.assertTrue(any("승인된 대체" in text and "기술검수가 아닙니다" in text for text in shortage["paragraphs"]))
 
     def test_no_bom_means_no_comparison(self):
         result = answer_query("입하가 3영업일 늦어지면?", query_view(with_bom=False), self.ontology)
@@ -92,3 +105,16 @@ class WhatIfAnswerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SubstituteReservationTests(unittest.TestCase):
+    def test_reservation_impact_counts_the_current_approved_substitute(self):
+        from service.reservations import reservation_impacts
+        requirements = {"items": [{"item_id": "IM-1", "unit": "EA", "state": "CALCULATED", "required_qty": "40",
+                                   "planned_required_qty": "43", "substitute_qty": "23"}]}
+        reservation = {"reservation_id": "r1", "ledger_version": 11, "item_id": "IM-1", "unit": "EA", "lot_id": "LOT-1",
+                       "quantity": 5, "demand_ref": "other", "item_available_before": 20, "item_available_after": 15,
+                       "before": {"reserved_other_qty": 30, "available_qty": 20}, "after": {"on_hand_qty": 50, "reserved_other_qty": 35, "available_qty": 15}}
+        impact = reservation_impacts(requirements, [reservation])[0]
+        # 43 needed − (stock 20 + substitute 23) = 0 → after the reservation 43 − (15 + 23) = 5.
+        self.assertEqual((impact["planned_shortage_before"], impact["planned_shortage_after"], impact["substitute_qty"]), ("0", "5", "23"))
