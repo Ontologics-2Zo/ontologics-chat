@@ -865,6 +865,15 @@ async function start() {
     $('workspace').setAttribute('aria-busy', 'false'); $('versions').textContent = '서비스 미연결';
   }
 }
+// Demo shortcut from the progress board: switch to the reviewer or author
+// account in one click (the same session change as the account menu).
+const DEMO_ROLE_PROFILE = { review: 'dev-reviewer-b', author: 'dev-operator-a' };
+document.addEventListener?.('mks2:switch-role', event => {
+  const profile = DEMO_ROLE_PROFILE[event.detail?.role];
+  if (!profile || $('actor').disabled || ![...$('actor').options].some(option => option.value === profile)) return;
+  $('actor').value = profile;
+  selectIdentity(profile);
+});
 $('actor').addEventListener('change', () => {
   if ($('actor').value) selectIdentity($('actor').value);
   else if (identity) signOut();

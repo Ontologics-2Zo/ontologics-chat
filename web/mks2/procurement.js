@@ -310,9 +310,9 @@ export function flowBanner(lanes, identity) {
   const approver = (identity?.permitted_actions || []).includes('document.approve');
   const waits = lanes.map(laneWaiting).filter(Boolean);
   const review = waits.filter(wait => wait === 'review').length, author = waits.filter(wait => wait === 'author').length;
-  if (!approver && review) return `검토자 승인 대기 ${review}건 · 상단 역할을 검토자로 바꾸면 승인할 수 있습니다.`;
-  if (approver && author) return `작성자 차례 ${author}건 · 상단 역할을 작성자로 바꾸면 이어서 작성할 수 있습니다.`;
-  return '';
+  if (!approver && review) return { text: `검토자 승인 대기 ${review}건`, role: 'review', action: '검토자로 전환' };
+  if (approver && author) return { text: `작성자 차례 ${author}건`, role: 'author', action: '작성자로 전환' };
+  return null;
 }
 
 export function mountProcurementFlow(container, { snapshot, api, getIdentity = () => null, onPosted = () => {}, onRefresh = () => {}, onActivity = () => {} }) {
@@ -415,12 +415,14 @@ export function mountProcurementFlow(container, { snapshot, api, getIdentity = (
     fulfillment = fulfillmentState(snapshot, documents, getIdentity());
     const blocked = busy || needsRefresh;
     const banner = flowBanner([progress && !progress.empty ? progress.next : [], scenario.next, fulfillment.next], getIdentity());
-    container.innerHTML = `<div class="mk-flow-board"><h3>진행 현황</h3>${banner ? `<p class="mk-flow-banner">${esc(banner)}</p>` : ''}${status}${refresh}`
+    container.innerHTML = `<div class="mk-flow-board"><h3>진행 현황</h3>${banner ? `<p class="mk-flow-banner"><span>${esc(banner.text)}</span><button type="button" class="mk-btn primary" data-switch-role="${banner.role}"${busy ? ' disabled' : ''}>${esc(banner.action)}</button></p>` : ''}${status}${refresh}`
       + supplyLane(progress, blocked, scenarioEditing ? '' : form())
       + scenarioLane(scenario, blocked, scenarioEditing ? form() : '')
       + fulfillmentLane(fulfillment, blocked) + '</div>';
   }
   container.addEventListener('click', event => {
+    const switcher = event.target.closest('[data-switch-role]');
+    if (switcher && !switcher.disabled) { container.dispatchEvent(new CustomEvent('mks2:switch-role', { bubbles: true, detail: { role: switcher.dataset.switchRole } })); return; }
     const target = event.target.closest('[data-purchase-action]');
     if (!target || target.disabled || busy) return;
     if (target.dataset.doc && documents.some(row => row.id === target.dataset.doc)) activeId = target.dataset.doc;

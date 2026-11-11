@@ -169,7 +169,7 @@ test('the progress board shows whose turn it is instead of greyed-out buttons', 
   assert.equal(laneWaiting(authorTurn), 'author');
   assert.equal(laneWaiting(mine), null);
   assert.equal(laneWaiting([]), null);
-  assert.equal(flowBanner([approval, approval, authorTurn], author), '검토자 승인 대기 2건 · 상단 역할을 검토자로 바꾸면 승인할 수 있습니다.');
-  assert.equal(flowBanner([mine, authorTurn], reviewer), '작성자 차례 1건 · 상단 역할을 작성자로 바꾸면 이어서 작성할 수 있습니다.');
-  assert.equal(flowBanner([mine, []], reviewer), '');
+  assert.deepEqual(flowBanner([approval, approval, authorTurn], author), { text: '검토자 승인 대기 2건', role: 'review', action: '검토자로 전환' });
+  assert.deepEqual(flowBanner([mine, authorTurn], reviewer), { text: '작성자 차례 1건', role: 'author', action: '작성자로 전환' });
+  assert.equal(flowBanner([mine, []], reviewer), null);
 });
