@@ -74,3 +74,17 @@ test('a stale substitution or schedule draft is never re-saved by the agent', ()
   const receipt = { kind: 'RECEIPT', status: 'DRAFT', created_by: 'actor-a', content: { note: '자동 작성 · 입하', basis_ledger_version: 8 } };
   assert.equal(autoCandidate({ supply: supply(next), fulfillment: { next: [] }, documents: [receipt], identity: author, ledgerVersion: 11 }).revise, receipt);
 });
+
+test('the fulfilment plan lists the remaining steps once the purchase request is posted (DEC-H63)', async () => {
+  const { batchPlan } = await import('../web/mks2/procurement.js');
+  const snap = { summary: { promise_remaining_qty: 68, production_remaining_qty: 40 }, legacy_cohort: { good_not_received: 10, warehouse: 15, in_transit: 3 } };
+  assert.equal(batchPlan({ empty: false, requestPosted: false, requestQty: 30, postedKinds: [] }, snap), null);
+  const plan = batchPlan({ empty: false, requestPosted: true, requestQty: 30, postedKinds: ['PR'] }, snap);
+  assert.deepEqual(plan.steps.map(step => step.label), ['내부 발주 · 30개', '공급확인 · 모의 · 30개', '입하 · 30개', '수입검사 · 30개',
+    '생산 · 30대', '완성품 입고 · 30대', '출하 · 30대', '고객 도착 · 30대', '기초 보드 28대 · 입고 → 출하 → 도착',
+    '추가 생산 10대 · 생산 → 입고 → 출하 → 도착 (가용 LOT 기준)']);
+  const later = batchPlan({ empty: false, requestPosted: true, requestQty: 30, postedKinds: ['PR', 'PO', 'SUPPLY_CONFIRMATION', 'RECEIPT', 'IQC', 'PRODUCTION'] },
+    { summary: { promise_remaining_qty: 68, production_remaining_qty: 10 }, legacy_cohort: {} });
+  assert.deepEqual(later.steps.map(step => step.label), ['완성품 입고', '출하', '고객 도착', '추가 생산 10대 · 생산 → 입고 → 출하 → 도착 (가용 LOT 기준)']);
+  assert.equal(batchPlan({ empty: false, requestPosted: true, requestQty: 30, postedKinds: ['PR'] }, { summary: { promise_remaining_qty: 0 } }), null);
+});

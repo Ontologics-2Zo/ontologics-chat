@@ -16,7 +16,10 @@
   --accent-soft:#222a52; --accent-fg:#0b1220; --ok:#6ee7b7; --ok-soft:#0f2e28;
   --warn:#fcd34d; --warn-soft:#352a10; --bad:#fda4af; --bad-soft:#3a1622;
   --info:#67e8f9; --info-soft:#0e2a33; --edge:#33415c; --grid:#141e33;
-  --node:#152038; --node-line:#55657f; --v1:#86b6ef; --v2:#5598e7; --v3:#2a78d6; --v4:#1c5cab; --vtrack:#1e2a42;
+  --node:#152038; --node-line:#55657f;
+  /* Charts on a dark surface: lightest = arrived, then clearly separated steps;
+     the empty track and the sufficiency fill stay visible against #111a2e. */
+  --v1:#b6d4fb; --v2:#6aa6f2; --v3:#3d7fdc; --v4:#2f5fa8; --vtrack:#3a4968; --vgray:#8fa1bf;
 }
 * { box-sizing:border-box; }
 [hidden] { display:none !important; }

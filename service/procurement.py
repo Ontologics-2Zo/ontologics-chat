@@ -160,6 +160,33 @@ class ProcurementService(DomainService):
         if date.fromisoformat(quote["valid_until"]) < datetime.now(timezone.utc).date():
             raise ServiceError("PROCUREMENT_QUOTE_EXPIRED", 409)
 
+    def _open_request(self, conn, company, item_id, *, include_drafts=False):
+        """The live purchase request for this item that still has open quantity, or None.
+
+        A posted request is open while it, one of its posted orders or one of
+        their posted receipts still has quantity not yet used downstream. With
+        include_drafts, a saved draft that is not rejected or cancelled counts too.
+        """
+        active = conn.execute("SELECT * FROM procurement_documents WHERE company_id=%s AND kind='PR' AND status='POSTED'", (company,)).fetchall()
+        for old in active:
+            # A BOM revision must not hide still-open purchases for this
+            # same item and selected demand. Settle/cancel them first.
+            if old["content"]["resolved"]["item_id"] != item_id:
+                continue
+            pending = not old["cancelled_by"] and self._used(conn, old) < old["quantity"]
+            orders = conn.execute("SELECT * FROM procurement_documents WHERE parent_id=%s AND kind='PO' AND status='POSTED'", (old["id"],)).fetchall()
+            for order in orders:
+                pending |= not order["cancelled_by"] and self._used(conn, order) < order["quantity"]
+                receipts = conn.execute("SELECT * FROM procurement_documents WHERE parent_id=%s AND kind='RECEIPT' AND status='POSTED'", (order["id"],)).fetchall()
+                pending |= any(self._used(conn, receipt) < receipt["quantity"] for receipt in receipts)
+            if pending:
+                return old
+        if include_drafts:
+            for row in conn.execute("SELECT * FROM procurement_documents WHERE company_id=%s AND kind='PR' AND status<>'POSTED' AND cancelled_by IS NULL AND rejection_reason IS NULL", (company,)).fetchall():
+                if (row["content"].get("resolved") or {}).get("item_id") == item_id:
+                    return row
+        return None
+
     def _resolve(self, conn, company, payload, content):
         kind = content.kind
         value = content.model_dump(mode="json")
@@ -246,20 +273,8 @@ class ProcurementService(DomainService):
             if calculation["quantity_condition"] == "NOT_MET":
                 raise ServiceError("PROCUREMENT_SUPPLY_LIMIT_EXCEEDED", 409)
             # Two active requests must not procure the same selected demand twice.
-            active = conn.execute("SELECT * FROM procurement_documents WHERE company_id=%s AND kind='PR' AND status='POSTED'", (company,)).fetchall()
-            for old in active:
-                # A BOM revision must not hide still-open purchases for this
-                # same item and selected demand. Settle/cancel them first.
-                if old["content"]["resolved"]["item_id"] != quote["resolved"]["item_id"]:
-                    continue
-                pending = not old["cancelled_by"] and self._used(conn, old) < old["quantity"]
-                orders = conn.execute("SELECT * FROM procurement_documents WHERE parent_id=%s AND kind='PO' AND status='POSTED'", (old["id"],)).fetchall()
-                for order in orders:
-                    pending |= not order["cancelled_by"] and self._used(conn, order) < order["quantity"]
-                    receipts = conn.execute("SELECT * FROM procurement_documents WHERE parent_id=%s AND kind='RECEIPT' AND status='POSTED'", (order["id"],)).fetchall()
-                    pending |= any(self._used(conn, receipt) < receipt["quantity"] for receipt in receipts)
-                if pending:
-                    raise ServiceError("PROCUREMENT_DEMAND_ALREADY_REQUESTED", 409)
+            if self._open_request(conn, company, quote["resolved"]["item_id"]):
+                raise ServiceError("PROCUREMENT_DEMAND_ALREADY_REQUESTED", 409)
             return {**quote["resolved"], "parent": self._reference(parent), "quote": quote,
                     "bom_id": requirements["bom_id"], "bom_version": requirements["bom_version"],
                     "material_rule_version": requirements["rule_version"], "calculation": calculation,
@@ -593,6 +608,13 @@ class ProcurementService(DomainService):
                         "expired": date.fromisoformat(quote["valid_until"]) < datetime.now(timezone.utc).date(),
                         "partial_bom": not requirements["full_coverage"], "provenance": "DEMO_ASSUMPTION",
                         "supplier_confirmation": False, "transmission_status": "NOT_SENT"})
+            opened = {}
+            for row in choices:
+                item_id = row["item_id"]
+                if item_id not in opened:
+                    found = self._open_request(conn, company_id, item_id, include_drafts=True)
+                    opened[item_id] = {"document_id": str(found["id"]), "quantity": found["quantity"], "status": found["status"]} if found else None
+                row["open_request"] = opened[item_id]
             for basis in ("base", "planned"):
                 group = [row for row in choices if row["material_basis"] == basis]
                 for item_id in {row["item_id"] for row in group}:

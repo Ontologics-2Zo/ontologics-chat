@@ -353,3 +353,6 @@
 .mk-flow-detail .mk-supply-steps{margin:4px 0 6px}
 .mk-flow-detail .mk-small-note{margin:4px 0 0}
 .mk-flow-banner .mk-btn{margin-left:auto;flex:none}
+/* DEC-H63 fulfilment plan approval card */
+.mk-batch{border:1px solid var(--accent,#4f46e5);border-radius:10px;padding:10px 12px;margin:0 0 10px;background:var(--accent-soft,#eef0fe)}
+.mk-batch-steps{margin:6px 0 8px;padding-left:18px;font-size:12px;line-height:1.6}

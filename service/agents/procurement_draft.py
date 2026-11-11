@@ -67,6 +67,11 @@ def propose(question, port, context, principal_permissions):
     result = port.call("procurement.options", {"ledger_version": context.ledger_version})
     _check_read(result, context, "procurement.options")
     data, meta = result.data, result.data.get("meta", {})
+    opened = next((quote["open_request"] for quote in data.get("quotes", []) if quote.get("open_request")), None)
+    if opened:
+        label = "PR-" + re.sub(r"[^0-9a-z]", "", opened["document_id"], flags=re.IGNORECASE)[:4].upper()
+        return _result("UNKNOWN", f"이 품목에는 이미 진행 중인 구매 요청 {label}({opened['quantity']}개)이 있어 새 초안을 만들지 않았습니다. "
+                       "진행 현황에서 그 요청의 승인·확정을 이어가 주세요.", conclusion="진행 중인 구매 요청 있음 · 저장 없음", meta=meta)
     usable = [quote for quote in data.get("quotes", []) if quote.get("material_basis") == "planned"
               and quote.get("calculation") and quote["calculation"].get("recommended_qty")]
     if not usable:
