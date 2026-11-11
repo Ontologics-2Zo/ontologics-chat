@@ -31,9 +31,15 @@ const panels = {};
 const SCREENS = ['graph', 'dashboard', 'network', 'twin'];
 const currentScreen = () => SCREENS.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'graph';
 const labelFor = id => snapshot?.graph?.data?.nodes?.find(node => (node.node_id || node.id) === id)?.display_id || id;
-function notify(text) {
-  $('notice').textContent = text; $('notice').hidden = false;
-  clearTimeout(noticeTimer); noticeTimer = setTimeout(() => { $('notice').hidden = true; }, 4500);
+function notify(text, action = null) {
+  const notice = $('notice');
+  notice.textContent = text; notice.hidden = false;
+  if (action) {
+    const go = element('button', 'btn sm', action.label); go.type = 'button';
+    go.addEventListener('click', () => { notice.hidden = true; action.run(); });
+    notice.append(' ', go);
+  }
+  clearTimeout(noticeTimer); noticeTimer = setTimeout(() => { notice.hidden = true; }, action ? 9000 : 4500);
 }
 function cancelPendingReplay() { replayGeneration++; graph?.cancelReplay(); lane?.cancelReplay(); }
 // A completed server answer has its own presentation lifetime. Graph playback
@@ -555,7 +561,8 @@ async function loadSnapshot({ preserveMessages = false } = {}) {
   dashboard = mountDashboard($('dashboard-stage'), { snapshot, onSelect: setContext,
     onAsk: text => fillQuestion(text, 'dashboard'), onGraph: focusEvidence, api, getIdentity: () => identity,
     onShowBomGraph: showBomGraph,
-    onPosted: posted => { if (posted?.status === 'POSTED' && posted?.content?.rows) offerRerun('BOM'); refreshButton.textContent = '업무 반영 · 최신 원장 조회'; notify(liveEnabled ? '업무 사건이 원장에 반영됐습니다. 그래프 투영 후 화면이 자동으로 갱신됩니다.' : '업무 사건이 반영됐습니다. 그래프 준비 후 최신 원장을 조회해 주세요.'); pollChanges(); },
+    onPosted: posted => { if (posted?.status === 'POSTED' && posted?.content?.rows) offerRerun('BOM'); refreshButton.textContent = '업무 반영 · 최신 원장 조회'; notify(liveEnabled ? '업무 사건이 원장에 반영됐습니다. 그래프 투영 후 화면이 자동으로 갱신됩니다.' : '업무 사건이 반영됐습니다. 그래프 준비 후 최신 원장을 조회해 주세요.',
+      { label: '그래프에서 보기', run: () => { location.hash = '#graph'; } }); pollChanges(); },
     onRefresh: refreshSnapshot, live: { get: () => liveEnabled, set: value => { liveEnabled = !!value; notify(liveEnabled ? '확정 원장 사건을 자동으로 반영합니다.' : '자동 반영을 끕니다. 새 원장은 버튼으로 조회합니다.'); } } });
   lane?.destroy();
   lane = mountLaneGraph($('graph-stage'), { data: { meta: data.meta, nodes: data.entities || [], edges: data.relationships || [] },

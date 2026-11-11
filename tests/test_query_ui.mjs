@@ -1026,7 +1026,8 @@ test('a verified AI summary is shown as text with citations; a rejected one leav
     assert.ok(card);
     assert.match(card.textContent, /AI 요약.*모델 작성 · 서버 검증/);
     assert.match(card.textContent, /<b>검사 잔액<\/b>은 9입니다/);  // text, never HTML
-    assert.deepEqual(withClass(card, 'query-ai-cite').map(chip => chip.textContent), ['F1', 'E1 · BOM 원문 행']);
+    assert.deepEqual(withClass(card, 'query-ai-cite').map(chip => chip.textContent), ['서버 사실 1개', 'BOM 원문 행']);
+    assert.equal(withClass(card, 'query-ai-cite')[0].title, '검사 잔액');
     assert.equal(withClass(message, 'query-retrieval-chip').length, 1);
     const entity = new Element('div');
     renderQueryAnswer(entity, { ...data, retrieval: { hits: [{ kind: 'ledger_entity', text: 'urn:ontologics:abc-1 ContractLine CTR-1 CTR-1' }] } });
@@ -1056,5 +1057,27 @@ test('a pending AI summary shows a placeholder that is filled or replaced later 
     assert.equal(updateAiSummary(message, { status: 'UNAVAILABLE' }), false);
     assert.match(card.textContent, /원장 계산 결과만 표시/);
     assert.equal(updateAiSummary(new Element('div'), { status: 'VERIFIED' }), false);
+  } finally { restore(); }
+});
+
+test('the graph-screen answer shows materials as one table instead of repeated sentences', () => {
+  const { message, restore } = setup();
+  try {
+    const data = { ...response(),
+      sections: [{ id: 'materials', title: '자재', origin: 'conditional_demo', items: [
+        { label: 'ITEM-A', value: '소요 4 / 5 EA · 가용 9 EA · 부족 0 / 0 EA', detail: '합성 상세 A' },
+        { label: 'ITEM-B', value: '소요 4 / 5 EA · 가용 2 EA · 부족 2 / 3 EA', detail: '합성 상세 B' }] }],
+      calculation: { material_requirements: { items: [
+        { item_id: 'ITEM-A', planned_required_qty: '5', available_qty: '9', planned_shortage_qty: '0', unit: 'EA' },
+        { item_id: 'ITEM-B', planned_required_qty: '5', available_qty: '2', planned_shortage_qty: '3', unit: 'EA' }] } } };
+    renderQueryAnswer(message, data);
+    const table = withClass(message, 'query-material-table')[0];
+    assert.ok(table);
+    const rows = descendants(table).filter(item => item.tagName === 'TR').slice(1);
+    assert.equal(rows[0].children[0].textContent, 'ITEM-B');           // shortage first
+    assert.equal(rows[0].children[3].className, 'n alert');
+    assert.equal(rows[0].title, '소요 4 / 5 EA · 가용 2 EA · 부족 2 / 3 EA. 합성 상세 B');
+    assert.equal(rows[1].children[3].textContent, '—');
+    assert.ok(!message.textContent.includes('ITEM-A: 소요'));          // no per-item sentence in the body
   } finally { restore(); }
 });

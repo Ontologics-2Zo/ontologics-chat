@@ -181,8 +181,11 @@ function answerParagraphs(answer, sections) {
       || prerequisite.counts?.calculation_items === 0
       || Array.isArray(prerequisite.selected_item_ids) && prerequisite.selected_item_ids.length > 0
         && prerequisite.selected_calculation_items === 0)) return [...new Set(paragraphs)];
+  // Materials with structured server numbers become one table (materialTable);
+  // the per-item sentences stay as row hover text instead of the main answer.
+  const tabled = materialRows(answer).length > 0;
   for (const section of sections) {
-    if (!['materials', 'inventory'].includes(section.id)) continue;
+    if (!['materials', 'inventory'].includes(section.id) || (tabled && section.id === 'materials')) continue;
     for (const item of Array.isArray(section.items) ? section.items : []) {
       if (!item || !text(item.value)) continue;
       const origin = text(item.origin || section.origin);
@@ -191,6 +194,39 @@ function answerParagraphs(answer, sections) {
     }
   }
   return [...new Set(paragraphs)];
+}
+
+function materialRows(answer) {
+  const items = answer?.calculation?.material_requirements?.items;
+  if (!Array.isArray(items)) return [];
+  return items.filter(item => item && text(item.item_id) && item.planned_required_qty != null && item.available_qty != null);
+}
+// Compact table for the graph-screen answer: shortages first, planned basis,
+// with the goal-basis numbers in brackets and the server sentence on hover.
+function materialTable(answer, sections) {
+  const rows = materialRows(answer);
+  if (!rows.length) return null;
+  const sentences = new Map();
+  for (const section of sections) if (section.id === 'materials') for (const item of section.items || []) if (text(item?.label)) sentences.set(item.label, `${item.value}${text(item.detail) ? '. ' + item.detail : ''}`);
+  const sorted = [...rows].sort((a, b) => Number(b.planned_shortage_qty || 0) - Number(a.planned_shortage_qty || 0) || String(a.item_id).localeCompare(String(b.item_id)));
+  const wrap = node('div', 'query-material-table');
+  const table = node('table', 'query-mini-table');
+  const head = node('tr');
+  for (const label of ['품목', '필요', '가용', '부족']) head.append(node('th', '', label));
+  const thead = node('thead'); thead.append(head); table.append(thead);
+  const body = node('tbody');
+  for (const item of sorted) {
+    const row = node('tr');
+    const unit = item.unit && item.unit !== 'EA' ? ` ${item.unit}` : '';
+    const shortage = Number(item.planned_shortage_qty || 0);
+    row.append(node('td', 'mono', item.item_id), node('td', 'n', `${item.planned_required_qty}${unit}`), node('td', 'n', `${item.available_qty}${unit}`),
+      node('td', shortage > 0 ? 'n alert' : 'n', shortage > 0 ? `${item.planned_shortage_qty}${unit}` : '—'));
+    if (sentences.has(item.item_id)) row.title = sentences.get(item.item_id);
+    body.append(row);
+  }
+  table.append(body); wrap.append(table);
+  wrap.append(node('p', 'note', '계획 투입(수율 반영) 기준 수량입니다. 항목에 마우스를 올리면 서버 산출 근거(양품 목표 기준 수량·출처)를 볼 수 있습니다. 적용 매핑·수량은 시연 가정이며 미확인 BOM 행은 부족 0으로 보지 않습니다.'));
+  return wrap;
 }
 
 function quantityRuns(paragraph, value, runs, segmenter) {
@@ -300,12 +336,17 @@ function fillAiCard(card, summary) {
   summary.paragraphs.slice(0, 4).forEach(paragraph => {
     const p = node('p', 'query-paragraph', text(paragraph.text));
     const chips = node('span', 'query-ai-cites');
-    for (const cite of Array.isArray(paragraph.cites) ? paragraph.cites : []) {
-      const id = text(cite?.id);
-      if (!id) continue;
-      const label = cite.evidence ? `${id} · ${evidenceKinds[cite.evidence.kind] || '근거'}` : id;
-      const chip = node('span', 'query-ai-cite', label);
-      chip.title = cite.evidence ? `검색 근거 ${text(cite.evidence.evidence_id)}` : (facts.get(id) || '서버 사실');
+    // One chip for the server facts used (names on hover), one per search evidence.
+    const cites = Array.isArray(paragraph.cites) ? paragraph.cites : [];
+    const used = cites.filter(cite => text(cite?.id) && !cite.evidence).map(cite => facts.get(cite.id) || cite.id);
+    if (used.length) {
+      const chip = node('span', 'query-ai-cite', `서버 사실 ${used.length}개`);
+      chip.title = used.join('\n');
+      chips.append(chip);
+    }
+    for (const cite of cites.filter(cite => text(cite?.id) && cite.evidence)) {
+      const chip = node('span', 'query-ai-cite', evidenceKinds[cite.evidence.kind] || '근거');
+      chip.title = `검색 근거 ${text(cite.evidence.evidence_id)}`;
       chips.append(chip);
     }
     if (chips.children.length) p.append(chips);
@@ -484,6 +525,8 @@ export function renderQueryAnswer(message, answer, {
       supplement.append(review);
     }
   }
+  const materials = workflow ? null : materialTable(answer, sectionData);
+  if (materials) supplement.prepend ? supplement.prepend(materials) : supplement.append(materials);
   const chips = retrievalChips(answer);
   if (chips) supplement.append(chips);
   if (answer.ai_summary && ['REJECTED', 'UNAVAILABLE'].includes(answer.ai_summary.status)) {

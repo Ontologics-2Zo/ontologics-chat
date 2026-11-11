@@ -280,9 +280,17 @@ export function mountDashboard(container, { snapshot, onSelect = () => {}, onAsk
   }
   function materialKpi() {
     if (!bomPosted || !focusItem) return `<article class="mk-kpi">${headerCard('자재', summary.item_id)}<div class="mk-big mk-warning">${calculationLabel}<small>소요 계산</small></div><div class="mk-kpi-sub">${esc(statusText)}</div><div class="mk-kpi-sub">현재 가용 ${num(summary.available_qty)}개</div>${bomButton(false)}</article>`;
-    const need = Number(focusItem.required_qty), available = Number(focusItem.available_qty), short = Number(focusItem.shortage_qty);
+    // Same basis as the answer and the supply card: planned input (yield applied).
+    const planned = focusItem.planned_shortage_qty != null;
+    const need = Number(planned ? focusItem.planned_required_qty : focusItem.required_qty), available = Number(focusItem.available_qty);
+    const short = Number(planned ? focusItem.planned_shortage_qty : focusItem.shortage_qty);
     const cover = need > 0 && Number.isFinite(available) ? Math.min(100, Math.round(available / need * 100)) : 0;
-    return `<article class="mk-kpi">${headerCard('자재', summary.item_id)}<div class="mk-big${short > 0 ? ' mk-warning' : ''}">${short > 0 ? num(focusItem.shortage_qty) : '부족 없음'}<small>${short > 0 ? '개 부족' : ''}</small></div><div class="mk-inspection-meter"><i style="width:${cover}%"></i></div><div class="mk-small-legend"><span>가용 ${num(focusItem.available_qty)} / 필요 ${num(focusItem.required_qty)}</span><span>${cover}%</span></div><div class="mk-kpi-sub">남은 생산 ${num(summary.production_remaining_qty)}대 기준 · ${calculationLabel}</div></article>`;
+    // Ordered but not yet usable: a posted order is not stock until receipt and inspection pass.
+    const ordered = Number(summary.purchase_order_qty) || 0, received = Number(summary.inspection_total_qty) || 0;
+    const waiting = Number(summary.inspection_pending_qty) || 0, incoming = Math.max(0, ordered - received);
+    const pipeline = [incoming > 0 ? `발주 ${num(incoming)}개 입하 전` : '', waiting > 0 ? `입하 ${num(waiting)}개 검사 대기` : ''].filter(Boolean);
+    const basisNote = planned ? `계획 투입 기준${Number(focusItem.shortage_qty) !== short ? ` · 수율 미반영 시 ${num(focusItem.shortage_qty)}개` : ''}` : `남은 생산 ${num(summary.production_remaining_qty)}대 기준`;
+    return `<article class="mk-kpi">${headerCard('자재', summary.item_id)}<div class="mk-big${short > 0 ? ' mk-warning' : ''}">${short > 0 ? num(short) : '부족 없음'}<small>${short > 0 ? '개 부족' : ''}</small></div><div class="mk-inspection-meter"><i style="width:${cover}%"></i></div><div class="mk-small-legend"><span>가용 ${num(focusItem.available_qty)} / 필요 ${num(need)}</span><span>${cover}%</span></div><div class="mk-kpi-sub">${esc(basisNote)} · ${calculationLabel}</div>${pipeline.length ? `<div class="mk-kpi-sub mk-kpi-pipeline">${esc(pipeline.join(' · '))} · 검사 합격 후 가용 반영</div>` : ''}</article>`;
   }
   function renderKpis() {
     return `<section class="mk-kpis" aria-label="운영 지표">
