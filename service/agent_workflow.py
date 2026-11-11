@@ -49,13 +49,14 @@ class TaskState(TypedDict, total=False):
 
 class AgentWorkflow:
     def __init__(self, db, identity, gateway, context_provider, *, route_model=None,
-                 observer=None, max_tool_calls=8, deadline_seconds=3600):
+                 compose_model=None, observer=None, max_tool_calls=8, deadline_seconds=3600):
         if type(max_tool_calls) is not int or not 1 <= max_tool_calls <= 100:
             raise ValueError("INVALID_AGENT_BUDGET")
         if type(deadline_seconds) is not int or not 1 <= deadline_seconds <= 86400:
             raise ValueError("INVALID_AGENT_DEADLINE")
         self.db, self.identity, self.gateway = db, identity, gateway
         self.context_provider, self.route_model, self.observer = context_provider, route_model, observer
+        self.compose_model = compose_model
         self.max_tool_calls, self.deadline_seconds = max_tool_calls, deadline_seconds
         self.store = AgentStore(db)
         self.runtime_versions = {name: version(name) for name in
@@ -310,6 +311,49 @@ class AgentWorkflow:
                 raise ServiceError("AGENT_RESULT_INVALID", 409)
             return {"needs_clarification": result["status"] == "NEEDS_CLARIFICATION"}
 
+        def extend(state, stage, field, make):
+            """Adds one field to the result as a new immutable artifact (cached per input)."""
+            base = state.get("result_ref")
+            result = self.store.result(execution_id, base)
+            if result is None or state.get("capability") not in MODEL_CAPABILITIES:
+                return {}
+            key = content_hash({"stage": stage, "base": base})
+            prior = self.store.artifact(execution_id, key)
+            if prior:
+                self.store.result(execution_id, prior["artifact_id"])
+                return {"result_ref": str(prior["artifact_id"])}
+            ref = self.store.put_artifact(execution_id, lease, key, {**result, field: make(result)})
+            return {"result_ref": ref}
+
+        def retrieve(state):
+            # Snapshot-local hybrid search (R3) as supporting evidence. A search
+            # failure never fails the answer; it is recorded as unavailable.
+            def search(result):
+                request, _ = effective_input()
+                try:
+                    port = self.gateway.bind(principal=principal, context=context, budget=budget,
+                                             allowed_tools={"retrieval.search"})
+                    found = port.call("retrieval.search", {"query": request.question, "profile": "R3",
+                                                           "limit": 8, "ledger_version": context.ledger_version}).data
+                except ServiceError as error:
+                    return {"status": "UNAVAILABLE", "reason_code": error.code, "hits": []}
+                except ValueError:
+                    return {"status": "UNAVAILABLE", "reason_code": "RETRIEVAL_TOOL_UNAVAILABLE", "hits": []}
+                hits = [{"evidence_id": hit["evidence_id"], "kind": hit["kind"], "origin": hit["origin"],
+                         "review_status": hit["review_status"], "node_ids": hit["node_ids"][:4],
+                         "match_modes": hit["match_modes"], "text": hit["text"][:120]} for hit in found.get("hits", [])]
+                return {"status": found.get("status"), "profile": found.get("profile", "R3"),
+                        "corpus_version": (found.get("meta") or {}).get("corpus_version"), "hits": hits}
+            return extend(state, "retrieve", "retrieval", search)
+
+        def compose(state):
+            if self.compose_model is None:
+                return {}
+            def summarize(result):
+                hits = (result.get("retrieval") or {}).get("hits") or []
+                return self.compose_model(principal, context, segment_id, result, hits[:5], budget)
+            return extend(state, "compose", "ai_summary", summarize)
+
         graph = StateGraph(TaskState)
         graph.add_node("route", observed("route", route))
         graph.add_node("clarify", clarify)
@@ -321,11 +365,15 @@ class AgentWorkflow:
             graph.add_node(capability, child.compile(name=capability))
             graph.add_edge(capability, "validate")
         graph.add_node("validate", observed("validate", validate))
+        graph.add_node("retrieve", observed("retrieve", retrieve))
+        graph.add_node("compose", observed("compose", compose))
         choices = {**{name: name for name in CAPABILITIES}, "clarify": "clarify"}
         graph.add_edge(START, "route")
         graph.add_conditional_edges("route", lambda state: state.get("capability") or "clarify", choices)
         graph.add_conditional_edges("clarify", lambda state: state["capability"], {name: name for name in CAPABILITIES})
-        graph.add_conditional_edges("validate", lambda state: "clarify" if state["needs_clarification"] else "end", {"clarify": "clarify", "end": END})
+        graph.add_conditional_edges("validate", lambda state: "clarify" if state["needs_clarification"] else "retrieve", {"clarify": "clarify", "retrieve": "retrieve"})
+        graph.add_edge("retrieve", "compose")
+        graph.add_edge("compose", END)
         return graph.compile(checkpointer=saver, name=WORKFLOW_VERSION)
 
     def run(self, principal, execution_id, *, expected_revision=None):

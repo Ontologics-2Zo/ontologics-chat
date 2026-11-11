@@ -274,6 +274,50 @@ function quoteCard(quote, onChooseQuote) {
   return card;
 }
 
+const evidenceKinds = { ledger_entity: '원장 개체', source_row: 'BOM 원문 행', application_review: 'BOM 적용 검토', development_document: '개발 문서' };
+// Model-written summary that passed the server's checks. Numbers in it were
+// filled by the server from its own results; the model only wrote sentences.
+function aiSummaryCard(answer) {
+  const summary = answer.ai_summary;
+  if (!summary || summary.status !== 'VERIFIED' || !Array.isArray(summary.paragraphs) || !summary.paragraphs.length) return null;
+  const card = node('section', 'query-answer-card query-ai-summary');
+  card.dataset.blockId = 'ai_summary';
+  const heading = node('div', 'query-answer-heading');
+  heading.append(node('h3', '', 'AI 요약'), node('span', 'query-answer-tool', summary.execution_mode === 'live' ? '모델 작성 · 서버 검증' : '시험 모델 · 서버 검증'));
+  card.append(heading);
+  const facts = new Map((summary.facts || []).map(fact => [fact.id, text(fact.name)]));
+  summary.paragraphs.slice(0, 4).forEach(paragraph => {
+    const p = node('p', 'query-paragraph', text(paragraph.text));
+    const chips = node('span', 'query-ai-cites');
+    for (const cite of Array.isArray(paragraph.cites) ? paragraph.cites : []) {
+      const id = text(cite?.id);
+      if (!id) continue;
+      const label = cite.evidence ? `${id} · ${evidenceKinds[cite.evidence.kind] || '근거'}` : id;
+      const chip = node('span', 'query-ai-cite', label);
+      chip.title = cite.evidence ? `검색 근거 ${text(cite.evidence.evidence_id)}` : (facts.get(id) || '서버 사실');
+      chips.append(chip);
+    }
+    if (chips.children.length) p.append(chips);
+    card.append(p);
+  });
+  card.append(node('p', 'note', '숫자는 서버 계산값이며 AI는 문장만 작성했습니다. 판정은 아래 원장 답변을 따릅니다.'));
+  return card;
+}
+function retrievalChips(answer) {
+  const found = answer.retrieval;
+  if (!found || !Array.isArray(found.hits) || !found.hits.length) return null;
+  const wrap = node('div', 'query-retrieval');
+  wrap.append(node('span', 'query-retrieval-label', '검색 근거'));
+  found.hits.slice(0, 5).forEach(hit => {
+    // Ledger entity text starts with its internal URN; show the readable part.
+    const label = text(hit.text).replace(/^urn:\S+\s*/, '').slice(0, 36);
+    const chip = node('span', 'query-retrieval-chip', `${evidenceKinds[hit.kind] || '근거'} · ${label}`);
+    chip.title = `${text(hit.origin)} · ${text(hit.review_status)} · ${(hit.match_modes || []).join('+')}`;
+    wrap.append(chip);
+  });
+  return wrap;
+}
+
 function confirmedAnswerBlocks(answer, mode) {
   const blocks = answer.answer_blocks;
   if (mode !== 'workflow' || !Array.isArray(blocks) || !blocks.length || blocks.length > 12) return null;
@@ -389,6 +433,8 @@ export function renderQueryAnswer(message, answer, {
       visibleBody.append(card);
     });
   } else appendParagraphs(visibleBody, paragraphs);
+  const aiCard = aiSummaryCard(answer);
+  if (aiCard) verdict.append(aiCard);
   verdict.append(visibleBody);
   const typingControls = node('div', 'query-typing-controls'), typingStatus = node('span', 'query-typing-status');
   typingStatus.setAttribute('role', 'status'); typingStatus.setAttribute('aria-live', 'polite'); typingStatus.setAttribute('aria-atomic', 'true');
@@ -411,6 +457,11 @@ export function renderQueryAnswer(message, answer, {
       review.dataset.queryAction = 'bom-review';
       supplement.append(review);
     }
+  }
+  const chips = retrievalChips(answer);
+  if (chips) supplement.append(chips);
+  if (answer.ai_summary && ['REJECTED', 'UNAVAILABLE'].includes(answer.ai_summary.status)) {
+    supplement.append(node('p', 'note query-ai-fallback', 'AI 요약이 서버 검증을 통과하지 못해 원장 계산 결과만 표시합니다.'));
   }
   const scope = [];
   if (status) scope.push(status.textContent);

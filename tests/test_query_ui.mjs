@@ -1013,3 +1013,30 @@ test('a BOM-missing card carries the only registration entry', () => {
     assert.equal(controls.length, 1); controls[0].click(); assert.equal(opens, 1);
   } finally { restore(); }
 });
+
+test('a verified AI summary is shown as text with citations; a rejected one leaves only the server answer', () => {
+  const { message, restore } = setup();
+  try {
+    const data = { ...response(),
+      ai_summary: { status: 'VERIFIED', execution_mode: 'live', facts: [{ id: 'F1', name: '검사 잔액' }],
+        paragraphs: [{ text: '<b>검사 잔액</b>은 9입니다. 판단은 보류합니다.', cites: [{ id: 'F1' }, { id: 'E1', evidence: { evidence_id: 'retrieval:x', kind: 'source_row' } }] }] },
+      retrieval: { status: 'HIT', hits: [{ kind: 'source_row', text: '합성 행', origin: 'actual_source', review_status: 'SOURCE_ONLY', match_modes: ['lexical'] }] } };
+    renderQueryAnswer(message, data);
+    const card = withClass(message, 'query-ai-summary')[0];
+    assert.ok(card);
+    assert.match(card.textContent, /AI 요약.*모델 작성 · 서버 검증/);
+    assert.match(card.textContent, /<b>검사 잔액<\/b>은 9입니다/);  // text, never HTML
+    assert.deepEqual(withClass(card, 'query-ai-cite').map(chip => chip.textContent), ['F1', 'E1 · BOM 원문 행']);
+    assert.equal(withClass(message, 'query-retrieval-chip').length, 1);
+    const entity = new Element('div');
+    renderQueryAnswer(entity, { ...data, retrieval: { hits: [{ kind: 'ledger_entity', text: 'urn:ontologics:abc-1 ContractLine CTR-1 CTR-1' }] } });
+    assert.equal(withClass(entity, 'query-retrieval-chip')[0].textContent, '원장 개체 · ContractLine CTR-1 CTR-1');
+    assert.equal(withClass(message, 'query-ai-fallback').length, 0);
+    for (const status of ['REJECTED', 'UNAVAILABLE']) {
+      const other = new Element('div');
+      renderQueryAnswer(other, { ...data, ai_summary: { status, reason_code: 'SUMMARY_NUMBER_UNPLACED', paragraphs: data.ai_summary.paragraphs } });
+      assert.equal(withClass(other, 'query-ai-summary').length, 0);
+      assert.equal(withClass(other, 'query-ai-fallback').length, 1);
+    }
+  } finally { restore(); }
+});

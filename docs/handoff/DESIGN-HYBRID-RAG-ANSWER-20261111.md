@@ -1,6 +1,6 @@
 # 하이브리드 검색·재정렬·AI 답변 문장 설계안
 
-상태: **NOT_STARTED (설계 제안)** · 구현·외부 전송 범위 확대는 사용자 결정 후 진행
+상태: P0·P1·P3·P4 **VERIFIED**(전송 범위 A, 8874 격리) · P2 재정렬 NOT_STARTED(모델 다운로드 승인 대기) · P5 미진행 · 기록: [P0](SERVICE-RETRIEVAL-P0-20261111.md), [P1·P3·P4](SERVICE-RAG-COMPOSE-20261111.md)
 
 ## 목표와 경계
 

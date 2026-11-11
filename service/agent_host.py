@@ -13,6 +13,8 @@ from service.errors import ServiceError
 from service.model_gateway import (FakeRouteProvider, GatewayPolicy, ModelContext,
                                    ModelGateway, ModelRequest, OpenRouterRouteProvider)
 from service.model_store import PostgresModelStore
+from service.answer_compose import (ComposeContext, ComposeGateway, FakeComposeProvider,
+                                    OpenRouterComposeProvider, compose_summary)
 from service.observability import LangfuseConfig, LangfuseExporter, MetadataObserver
 from service.langsmith_exporter import LangSmithConfig, LangSmithMetadataExporter
 
@@ -124,11 +126,14 @@ def build_agent_host(db, identity, gateway, context_provider, settings, *, recei
                                                        max_output_tokens=256))
         prompt, completion, endpoint_digest = verified_zdr_endpoint(settings.model, input_token_bound=bound)
         provider.configure_price_caps(prompt, completion)
+        composer = OpenRouterComposeProvider(settings.openrouter_api_key, model_id=settings.model,
+            canonical_model_id=canonical, provider_slug=ROUTE_TAG, output_token_parameter="max_completion_tokens")
         options.update(live_enabled=True, transmission_approved=True,
                        input_usd_per_token=prompt, output_usd_per_token=completion,
                        pricing_version=content_hash({"catalog": digest, "endpoint": endpoint_digest}))
     else:
         provider = FakeRouteProvider()
+        composer = FakeComposeProvider()
     exporter = (LangfuseExporter(LangfuseConfig(settings.langfuse_base_url,
                   settings.langfuse_public_key, settings.langfuse_secret_key))
                 if settings.langfuse_enabled else None)
@@ -156,8 +161,20 @@ def build_agent_host(db, identity, gateway, context_provider, settings, *, recei
         return models.bind(principal=principal, context=model_context,
                            budget=_ModelGuard(budget, context.execution_id)).complete(request).capability
 
+    compose_gateway = ComposeGateway(store, composer, identity.authorize, GatewayPolicy(**options), observer=observer)
+
+    def compose(principal, context, segment_id, result, hits, budget):
+        # Scope A packet only (names, origins, states, IDs); the server fills
+        # every quantity and discards a summary that fails verification.
+        compose_context = ComposeContext(**context.model_dump(), segment_id=segment_id,
+            parent_span_id=segment_id, budget_id=settings.budget_id,
+            workflow_version=WORKFLOW_VERSION, deadline_at=budget.deadline_at)
+        return compose_summary(compose_gateway, result, hits, principal=principal, context=compose_context,
+                               budget=_ModelGuard(budget, context.execution_id))
+
     workflow = AgentWorkflow(db, identity, gateway, context_provider,
-                             route_model=route, observer=observer)
+                             route_model=route, compose_model=compose if settings.compose_enabled else None,
+                             observer=observer)
     try:
         workflow.setup()
     except Exception:

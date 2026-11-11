@@ -53,11 +53,11 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(state['status'], 'COMPLETED', state)
         self.assertEqual(state['model']['live_calls'], 0)
         self.assertEqual(state['model']['fake_calls'], 1)
-        self.assertEqual(state['tool_calls'], 1)
+        self.assertEqual(state['tool_calls'], 2)  # answer lookup + supporting search
         self.assertEqual(state['result']['meta']['ledger_version'], 1)
         again = self.client.post(path + '/run', json={}).json()
         self.assertEqual(again['model'], state['model'])
-        self.assertEqual(again['tool_calls'], 1)
+        self.assertEqual(again['tool_calls'], 2)
         events = self.client.get(path + '/events')
         self.assertIn('text/event-stream', events.headers['content-type'])
         self.assertIn('event: progress', events.text)
@@ -89,6 +89,31 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(other['status'], 'COMPLETED', {k: other.get(k) for k in ('status', 'error_code', 'interrupt')})
         self.assertNotIn('delivery', other['result']['intent'])
         cue.delivery_answered.assert_called_once()
+
+    def test_answers_carry_retrieval_and_a_verified_summary_only_when_enabled(self):
+        state = self.create('납기 안에 고객에게 도착할 수 있어?', capability='fulfillment_read')
+        state = self.client.post('/api/mks2/agent/executions/' + state['execution_id'] + '/run', json={}).json()
+        self.assertEqual(state['status'], 'COMPLETED', state)
+        self.assertIn('retrieval', state['result'])
+        self.assertNotIn('ai_summary', state['result'])
+        app = create_app(self.db, private_root=str(self.private), origin=ORIGIN, dev_mode=True, catalog=self.catalog,
+            projector=self.projector, agent_settings=AgentSettings(compose_enabled=True))
+        client = TestClient(app, base_url=ORIGIN)
+        self.addCleanup(client.close)
+        auth = client.post('/api/mks2/session', json={'profile_id': 'dev-operator-a'}, headers=self.headers()).json()
+        client.headers.update(self.headers(auth))
+        created = client.post('/api/mks2/agent/executions', json={'question': '납기 안에 고객에게 도착할 수 있어?',
+            'ledger_version': 1, 'idempotency_key': 'compose-1', 'capability': 'fulfillment_read'}).json()
+        state = client.post('/api/mks2/agent/executions/' + created['execution_id'] + '/run', json={}).json()
+        self.assertEqual(state['status'], 'COMPLETED', state)
+        summary = state['result']['ai_summary']
+        self.assertEqual(summary['status'], 'VERIFIED', summary)
+        self.assertEqual(summary['execution_mode'], 'fake')
+        self.assertTrue(summary['paragraphs'])
+        self.assertEqual(state['model']['live_calls'], 0)
+        # The same run again replays artifacts; no second compose attempt is made.
+        again = client.post('/api/mks2/agent/executions/' + created['execution_id'] + '/run', json={}).json()
+        self.assertEqual(again['result']['ai_summary'], summary)
 
     def test_model_records_can_live_in_a_shared_budget_database(self):
         schema = "test_budget_" + uuid4().hex
