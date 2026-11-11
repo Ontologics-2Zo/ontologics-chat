@@ -46,3 +46,12 @@ test('a rejected draft is set aside and the request can be made again', () => {
   const rejected = { ...doc('DRAFT'), rejection_reason: 'Need a technical review first' };
   assert.equal(substituteState(snapshot(23), [rejected], author).next[0].action, 'new-substitution');
 });
+
+test('the progress board does not offer a new substitution; an existing one stays visible', () => {
+  const snap = { summary: { item_id: 'IM-0016' }, substitutes: [{ original_item_id: 'IM-0016', candidate_item_id: 'IM-0017', candidate_on_hand_qty: 120, counted_qty_for_selected_demand: 0, unit: 'EA' }],
+    material_requirements: { items: [{ item_id: 'IM-0016', planned_shortage_qty: '28' }] } };
+  const author = { actor_id: 'actor-a', permitted_actions: ['document.create'] };
+  assert.equal(substituteState(snap, [], author, { offer: false }), null);
+  const draft = { kind: 'SUBSTITUTION', status: 'DRAFT', created_by: 'actor-a', content: { original_item_id: 'IM-0016', quantity: 28 } };
+  assert.ok(substituteState(snap, [draft], author, { offer: false }));
+});
