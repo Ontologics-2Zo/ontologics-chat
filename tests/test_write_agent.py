@@ -44,6 +44,7 @@ class WriteAgentTests(unittest.TestCase):
         self.db = Database(os.environ["TEST_DATABASE_URL"], schema=self.schema); self.db.migrate()
         self.model_calls, self.writes, self.documents, self.tamper = [], [], {}, {}
         self.version = [1]
+        self.recommended = "SUP-A"
         self.workflow, self.identity = build_host(self.db, route_model=lambda *args: self.model_calls.append(args),
                                                   selected_version=self.version)
         self.identity.provision_dev_accounts()
@@ -55,7 +56,9 @@ class WriteAgentTests(unittest.TestCase):
             quote = lambda supplier, qty, condition: {"quote_id": f"quote-{supplier}", "quote_ref": f"Q-{supplier}", "supplier_id": supplier,
                 "item_id": "item-x", "material_basis": "planned", "unit": "EA", "moq": 10, "order_multiple": 10, "expired": False,
                 "partial_bom": True, "calculation": {"shortage_qty": "23", "recommended_qty": qty, "quantity_condition": condition,
-                "supply_limit_qty": 25 if condition == "NOT_MET" else 40, "total": None, "currency": "USD"}}
+                "supply_limit_qty": 25 if condition == "NOT_MET" else 40, "total": None, "currency": "USD"},
+                "recommended": supplier == self.recommended,
+                "recommendation_reason": "수량 조건을 충족하는 유효 견적이 이것 하나입니다." if supplier == self.recommended else None}
             return ToolOutput(snapshot=ctx, data={"quotes": [quote("SUP-A", 30, "MET"), quote("SUP-B", 30, "NOT_MET")],
                 "model_calls": 0, "ledger_mutations": 0, "meta": {"company_id": ctx.company_id, "snapshot_id": ctx.read_snapshot_id,
                 "ledger_version": ctx.ledger_version, "projection_version": ctx.projection_version}})
@@ -87,10 +90,10 @@ class WriteAgentTests(unittest.TestCase):
         created = self.workflow.create(actor, AgentRequest(question=question, ledger_version=self.version[0], idempotency_key=str(uuid4())))
         return self.workflow.run(actor, created["execution_id"])
 
-    def decide(self, waiting, decision, proposal_hash=None, actor=None):
+    def decide(self, waiting, decision, proposal_hash=None, actor=None, question=QUESTION):
         return self.workflow.resume(actor or self.author, waiting["execution_id"], {
             "expected_revision": waiting["revision"], "idempotency_key": str(uuid4()), "capability": "procurement_draft",
-            "question": QUESTION, "decision": decision, "proposal_hash": proposal_hash or waiting["interrupt"]["proposal_hash"]})
+            "question": question, "decision": decision, "proposal_hash": proposal_hash or waiting["interrupt"]["proposal_hash"]})
 
     def test_nothing_is_written_before_approval_and_the_approved_draft_is_reconciled(self):
         waiting = self.start()
@@ -127,7 +130,17 @@ class WriteAgentTests(unittest.TestCase):
         self.assertEqual(error.exception.code, "AGENT_SNAPSHOT_CHANGED")
         self.assertEqual(self.writes, [])
 
+    def test_an_unnamed_supplier_proposes_the_recommended_quote_for_approval(self):
+        waiting = self.start("추천 견적으로 구매 요청 초안 만들어줘")
+        self.assertEqual((waiting["status"], waiting["interrupt"]["kind"]), ("WAITING", "write_approval"), waiting["error_code"])
+        self.assertIn("추천 견적인 SUP-A", waiting["interrupt"]["message"])
+        self.assertEqual(self.writes, [])
+        final = self.decide(waiting, "approve", question="추천 견적으로 구매 요청 초안 만들어줘")
+        self.assertEqual(final["result"]["reconciliation"]["status"], "MATCHED", final["error_code"])
+        self.assertEqual(next(iter(self.documents.values()))["content"]["quote_id"], "quote-SUP-A")
+
     def test_unsafe_or_unclear_requests_never_reach_the_write_tool(self):
+        self.recommended = None
         unclear = self.start("구매 요청 초안 만들어줘")
         self.assertEqual((unclear["status"], unclear["interrupt"]["kind"]), ("WAITING", "clarification"))
         self.assertIn("SUP-A 30개(충족)", unclear["interrupt"]["message"])
@@ -141,6 +154,7 @@ class WriteAgentTests(unittest.TestCase):
         self.assertEqual(self.writes, [])
 
     def test_a_clarified_request_continues_to_the_same_approval_and_write(self):
+        self.recommended = None
         unclear = self.start("구매 요청 초안 만들어줘")
         waiting = self.workflow.resume(self.author, unclear["execution_id"], {"expected_revision": unclear["revision"],
             "idempotency_key": str(uuid4()), "capability": "procurement_draft", "question": QUESTION})

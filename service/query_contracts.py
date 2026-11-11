@@ -67,6 +67,10 @@ class QueryQuoteCard(Contract):
     lead_business_days: int | None
     valid_until: str | None
     reason: str
+    # Fixed-rule suggestion (lead time → subtotal among valid quantity-meeting quotes).
+    # A person still selects; nothing is chosen or sent automatically.
+    recommended: bool = False
+    recommendation_reason: str | None = None
 
 
 # Labels name what produced each card inside this one deterministic query.

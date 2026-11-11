@@ -6,11 +6,12 @@ from the same authorized snapshot and the shared material calculation tool.
 """
 
 from copy import deepcopy
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+import re
 
 from service.materials import requirements_for_snapshot
-from service.procurement import quote_calculation
+from service.procurement import quote_calculation, recommend_quote
 from service.reservations import reservation_impacts
 from service.query_contracts import (PrerequisiteCounts, QueryAnswerBlock, QueryBomReference, QueryQuoteCard,
                                      QueryNextAction, QueryPrerequisite)
@@ -145,6 +146,21 @@ def _ratio_text(numerator, denominator):
     return format(value.normalize(), "f")
 
 
+def _serial_list(serials, limit=4):
+    """Board serials for a sentence (the caller states the count): a contiguous
+    run such as …-B001-X … …-B030-X becomes 'first – last'; other long lists
+    show the first few and how many more."""
+    serials = sorted(serials)
+    if len(serials) <= limit:
+        return ", ".join(serials)
+    parts = [re.match(r"^(.*?)(\d+)(\D*)$", serial) for serial in serials]
+    if all(parts) and len({(m.group(1), m.group(3), len(m.group(2))) for m in parts}) == 1:
+        numbers = [int(m.group(2)) for m in parts]
+        if numbers == list(range(numbers[0], numbers[0] + len(numbers))):
+            return f"{serials[0]} – {serials[-1]}"
+    return f"{', '.join(serials[:limit])} 외 {len(serials) - limit}대"
+
+
 def _designators(requirements, row):
     by_id = {entry["row_id"]: entry for entry in requirements["rows"]}
     names = [name for row_id in row["row_ids"] for name in (by_id.get(row_id, {}).get("designators") or [])]
@@ -160,9 +176,11 @@ def _designators(requirements, row):
 
 def _quote_cards(view, item, planned_shortage):
     cards = []
-    for row in _quote_rows(view, item["item_id"], item["unit"]):
-        entry = _quote_view(row, planned_shortage)
+    entries = [_quote_view(row, planned_shortage) for row in _quote_rows(view, item["item_id"], item["unit"])]
+    picked = recommend_quote(entries)
+    for entry in entries:
         c = entry["calculation"]
+        chosen = bool(picked) and str(entry["quote_id"]) == picked["quote_id"]
         cards.append(QueryQuoteCard(
             quote_id=entry["quote_id"], quote_ref=entry["quote_ref"], supplier_id=entry["supplier_id"],
             material_basis="planned", quantity_condition=c["quantity_condition"],
@@ -171,7 +189,8 @@ def _quote_cards(view, item, planned_shortage):
             unit_price=None if entry["unit_price"] is None else str(entry["unit_price"]), currency=entry["currency"],
             freight=None if entry["freight"] is None else str(entry["freight"]), total=c.get("total"),
             lead_business_days=entry["lead_business_days"], valid_until=entry["valid_until"],
-            reason=_quote_sentence(entry, item["unit"])))
+            reason=_quote_sentence(entry, item["unit"]),
+            recommended=chosen, recommendation_reason=picked["reason"] if chosen else None))
     return cards
 
 
@@ -362,7 +381,9 @@ def _delivery_blocks(view, plan, sections, prerequisite, requirements):
             quotes = _quote_cards(view, focus, focus["planned_shortage_qty"])
             if quotes:
                 blocks.append(QueryAnswerBlock(id="supply_candidates", title="공급 후보 비교", tool="원장 조회 · 견적 → 공급사", kind="normal", quotes=quotes, paragraphs=[
-                    f"{focus['item_id']}에 연결된 유효 견적 {len(quotes)}건입니다. 가장 싼 곳을 자동으로 고르지 않습니다. 아래에서 사람이 선택하세요.",
+                    f"{focus['item_id']}에 연결된 유효 견적 {len(quotes)}건입니다. " + next(
+                        (f"고정 기준(유효 · 공급한도 확인 · 수량 충족 중 리드타임 → 소계)으로 {q.quote_ref}({q.supplier_id})를 추천합니다. 선택과 승인은 사람이 합니다."
+                         for q in quotes if q.recommended), "수량 조건을 충족하는 견적이 없어 추천하지 않습니다. 아래에서 사람이 검토하세요."),
                     "수량 조건만 판정했습니다. 납기·비용·공급 확약은 별도이며 공급사에 보내지 않습니다."]))
             verdict_title = f"자재 부족 {number(focus['planned_shortage_qty'])}개 · 납기 판단 보류"
             verdict_text = f"{focus['item_id']}이 {number(focus['planned_shortage_qty'])}개 부족합니다. 확보 경로를 정하고 생산·검사·출하·운송 근거가 원장에 들어오기 전에는 도착기한 충족 여부를 판단하지 않습니다."
@@ -578,6 +599,7 @@ def _quote_view(row, shortage):
             "unit_price": quote["unit_price"], "currency": quote["currency"], "freight": quote["freight"],
             "lead_business_days": quote.get("lead_business_days"), "valid_until": quote["valid_until"],
             "calculation": calculation, "schedule_status": "UNCONFIRMED", "supplier_confirmation": False,
+            "expired": date.fromisoformat(quote["valid_until"]) < datetime.now(timezone.utc).date(),
             "transmission_status": "NOT_SENT", "ledger_version": row["ledger_version"], "payload_hash": row["payload_hash"]}
 
 
@@ -652,6 +674,12 @@ def _material_change_answer(view, plan, req):
             else:
                 answers.append(f"현재 계획 부족은 {number(current_planned)}{word}입니다.")
             answers.extend(_quote_sentence(entry, unit) for entry in now)
+            picked = recommend_quote(now)
+            pick_entry = next((entry for entry in now if picked and str(entry["quote_id"]) == picked["quote_id"]), None)
+            if pick_entry:
+                answers.append(f"현재 기준 추천은 {pick_entry['quote_ref']}({pick_entry['supplier_id']}) 주문 {pick_entry['calculation']['recommended_qty']}{word}입니다. {picked['reason']}")
+            else:
+                answers.append("현재 수량 조건을 충족하는 유효 견적이 없어 추천하지 않습니다.")
             answers.append("수량 조건은 납기·비용·공급 확약과 별개입니다. 공급사 선택·초안 변경·분할 주문·발주는 자동으로 하지 않으며 사람이 비교 후 선택합니다.")
             entries = []
             for index, entry in enumerate(now):
@@ -661,7 +689,7 @@ def _material_change_answer(view, plan, req):
                     p = previous[index]["calculation"]
                     change = f" · 기존 부족 {number(first['planned_shortage_before'])} 기준: 주문 {p['recommended_qty']} · {p['quantity_condition']}"
                 cost = (f"{number(c['total'])} {c['currency']}" if c["total"] is not None else f"상품 {number(c['subtotal'])} {c['currency']} · 운송비 미확인")
-                entries.append(item(f"{entry['quote_ref']} · {entry['supplier_id']}",
+                entries.append(item(f"{entry['quote_ref']} · {entry['supplier_id']}{' · 추천' if pick_entry is entry else ''}",
                     f"주문 {c['recommended_qty']}{word} · {dict(MET='수량 충족', NOT_MET='수량 미충족', UNKNOWN='판단 보류')[c['quantity_condition']]}",
                     f"MOQ {entry['moq']} · 배수 {entry['order_multiple']} · 공급한도 {entry['supply_limit_qty'] if entry['supply_limit_qty'] is not None else '미확인'} · 여유 {c['margin_qty']}{change} · 비용 {cost} · 리드타임 {entry['lead_business_days'] if entry['lead_business_days'] is not None else '미확인'}영업일(가정) · 일정·공급 확약 미확인",
                     "development_workflow"))
@@ -671,7 +699,7 @@ def _material_change_answer(view, plan, req):
                 item("납기·비용·확약", "별도 확인", "리드타임은 견적 가정이며 공급 확약·입하·검사 합격이 아닙니다."),
                 item("자동 처리", "없음", "공급사 선택·초안 수량 변경·분할·발주는 사람이 명시적으로 진행합니다."),
             ], "UNKNOWN"))
-            result_quotes = {"current": now, "previous": previous}
+            result_quotes = {"current": now, "previous": previous, "recommendation": picked}
             offer_documents = [row["id"] for row in quotes]
     result = _result(view, plan, answer=" ".join(answers), status=status, sections=sections, kinds=kinds,
                      include_bom=True, selected_items=[focus_item], conclusion=conclusion,
@@ -720,11 +748,11 @@ def _lot_trace_answer(question, view, plan):
         produced = sorted(boards)
         production_ids = sorted({value["production_id"] for value in boards.values()})
         per_board = next((by_id[pid]["content"]["resolved"]["quantity_per_board"] for pid in production_ids if pid in by_id), "미확인")
-        answers.append(f"{lot}에서 소비된 부품이 보드 {len(produced)}대({', '.join(produced)})에 장착 기록됐고, 작업 {s['production_job_id']}의 생산 실적으로 회차 {s['delivery_round_id']}에 귀속됩니다(보드당 {number(per_board)}{'개' if stock.get('unit') == 'EA' else ''}).")
+        answers.append(f"{lot}에서 소비된 부품이 보드 {len(produced)}대({_serial_list(produced)})에 장착 기록됐고, 작업 {s['production_job_id']}의 생산 실적으로 회차 {s['delivery_round_id']}에 귀속됩니다(보드당 {number(per_board)}{'개' if stock.get('unit') == 'EA' else ''}).")
         reached_fg = len(counts["RECEIVED"]) + len(counts["SHIPPED"]) + len(counts["ARRIVED"])
         reached_ship = len(counts["SHIPPED"]) + len(counts["ARRIVED"])
         answers.append(f"그중 완성품 입고 {reached_fg}대, 출하 {reached_ship}대, 고객 도착 {len(counts['ARRIVED'])}대입니다"
-                       + (f"(도착 {', '.join(counts['ARRIVED'])})" if counts["ARRIVED"] else "") + ".")
+                       + (f"(도착 {_serial_list(counts['ARRIVED'])})" if counts["ARRIVED"] else "") + ".")
         answers.append(f"회차 {s['delivery_round_id']}의 누적 고객 도착은 {number(s['arrived_qty'])}대, 남은 약속은 {number(s['promise_remaining_qty'])}대입니다. 장착은 BOM 적용 시연 가정에 근거한 기록이며 제조 기술검수가 아닙니다.")
         sections.append(section("trace", f"{lot} 추적 · 기록된 관계", "development_workflow", [
             item(serial, {"PRODUCED": "생산", "RECEIVED": "완성품 입고", "SHIPPED": "출하", "ARRIVED": "고객 도착"}[value["status"]],

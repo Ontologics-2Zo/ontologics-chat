@@ -75,9 +75,14 @@ def propose(question, port, context, principal_permissions):
     choices = ", ".join(f"{quote['supplier_id']} {quote['calculation']['recommended_qty']}개"
                         f"({ {'MET': '충족', 'NOT_MET': '공급한도 미충족'}.get(quote['calculation'].get('quantity_condition'), '한도 미확인') })"
                         for quote in usable)
-    picked = [quote for quote in usable if quote["supplier_id"] == request["supplier_id"]]
+    if request["supplier_id"] is None:
+        # No supplier named: propose the server's fixed-rule recommendation.
+        # The user still approves the exact draft before anything is saved.
+        picked = [quote for quote in usable if quote.get("recommended")]
+    else:
+        picked = [quote for quote in usable if quote["supplier_id"] == request["supplier_id"]]
     if len(picked) != 1:
-        return _result("NEEDS_CLARIFICATION", f"어느 견적으로 초안을 만들지 지정해 주세요. 현재 견적: {choices}. 예: '견적 A로 구매 요청 초안 만들어줘'.",
+        return _result("NEEDS_CLARIFICATION", f"{'수량 조건을 충족하는 추천 견적이 없습니다. ' if request['supplier_id'] is None else ''}어느 견적으로 초안을 만들지 지정해 주세요. 현재 견적: {choices}. 예: '견적 A로 구매 요청 초안 만들어줘'.",
                        conclusion="견적 지정 필요 · 저장 없음", meta=meta)
     quote = picked[0]
     calculation = quote["calculation"]
@@ -90,13 +95,16 @@ def propose(question, port, context, principal_permissions):
                "acknowledge_partial_bom": bool(quote.get("partial_bom")),
                "note": f"Agent 제안 · 사용자 승인 후 저장 · {quote['supplier_id']} 견적 {quote.get('quote_ref') or ''} 계획 투입 기준 부족 {calculation['shortage_qty']}개 → MOQ·배수 적용 {calculation['recommended_qty']}개"}
     proposal = {"content": content, "ledger_version": context.ledger_version, "snapshot_id": context.read_snapshot_id}
-    display = [["견적", f"{quote['supplier_id']} · {quote.get('quote_ref') or quote['quote_id'][:8]}"],
+    display = [["견적", f"{quote['supplier_id']} · {quote.get('quote_ref') or quote['quote_id'][:8]}{' · 추천' if quote.get('recommended') else ''}"],
                ["품목", quote["item_id"]],
                ["부족 → 주문 수량", f"{calculation['shortage_qty']} → {calculation['recommended_qty']}개 (MOQ {quote.get('moq')} · 배수 {quote.get('order_multiple')})"],
                ["공급한도", "충족" if calculation.get("quantity_condition") == "MET" else "미확인"],
                ["총액", f"{calculation['total']} {calculation.get('currency') or ''}" if calculation.get("total") is not None else "운임 미확인 · 총액 미확인"],
                ["기준 원장", f"v{context.ledger_version}"]]
-    return _result("PROPOSED", f"{quote['supplier_id']} 견적으로 {quote['item_id']} {calculation['recommended_qty']}개 구매 요청 초안을 제안합니다. 승인하면 초안만 저장합니다.",
+    if quote.get("recommended") and quote.get("recommendation_reason"):
+        display.insert(1, ["추천 이유", quote["recommendation_reason"]])
+    lead = "추천 견적인 " if request["supplier_id"] is None else ""
+    return _result("PROPOSED", f"{lead}{quote['supplier_id']} 견적으로 {quote['item_id']} {calculation['recommended_qty']}개 구매 요청 초안을 제안합니다. 승인하면 초안만 저장합니다.",
                    conclusion="초안 저장 승인 대기", meta=meta,
                    extra={"proposal": proposal, "proposal_hash": content_hash(proposal), "proposal_rows": display})
 

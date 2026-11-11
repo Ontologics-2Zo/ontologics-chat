@@ -171,6 +171,7 @@ export function supplyProgress(documents, snapshot, identity, editor = null) {
     progressRows.splice(3, 0, ['보드 이행', `생산 ${boards.length} · 출하 ${count('SHIPPED') + count('ARRIVED')} · 도착 ${count('ARRIVED')}대`]);
   }
   return {
+    inspected: Boolean(iqc && iqc.status === 'POSTED'),
     item, status, tone, steps: stepsAt(focus ? reachedStep[focus.status] ?? 0 : 4), focusId: focus?.id || null,
     focusLabel: focus && focus !== pr ? kindLabel[focus.kind] : null,
     focusSummary: focus ? `${kindLabel[focus.kind] || focus.kind} ${docLabel(focus.kind, focus.id)}${focus.quantity != null ? ` · ${focus.quantity}${['PRODUCTION', 'FG_RECEIPT', 'SHIPMENT', 'ARRIVAL'].includes(focus.kind) ? '대' : unit}` : ''}` : null, next, shortfall, needed: Number.isFinite(needed) ? needed : null, stale, rows: progressRows,
@@ -232,7 +233,7 @@ export function scenarioState(documents, identity) {
   const values = doc ? SCENARIO_LABELS.map(([key, label, unit]) => [label, `${doc.content?.[key] ?? '미확인'}${unit}`]) : [];
   const next = [], notes = [];
   if (!doc || doc.status === 'POSTED') {
-    next.push({ label: doc ? '새 가정 작성' : '일정 가정 작성', action: 'new-scenario', disabled: approver || !can('document.create') });
+    next.push({ label: doc ? '새 시연 가정 작성' : '시연 일정 가정 작성', action: 'new-scenario', disabled: approver || !can('document.create') });
     if (approver) notes.push('일정 가정은 작성자 계정이 작성하고 이 계정이 승인합니다.');
   } else if (doc.status === 'APPROVED') {
     next.push({ label: '확정 (원장 반영)', action: 'post', target: doc.id, disabled: !can('document.post') });
@@ -352,28 +353,63 @@ function scenarioLane(state, busy, extra = '') {
     notes: state.notes, fixed: 'What-if 가정입니다. 원장 사실이 아니며 실제 납기 판단은 보류로 남습니다.', extra });
 }
 // One line above the rows when the next presses belong to the other account.
-export function flowBanner(lanes, identity) {
+export function flowBanner(lanes, identity, auto = false) {
   const approver = (identity?.permitted_actions || []).includes('document.approve');
   const waits = lanes.map(laneWaiting).filter(Boolean);
   const review = waits.filter(wait => wait === 'review').length, author = waits.filter(wait => wait === 'author').length;
   if (!approver && review) return { text: `검토자 승인 대기 ${review}건`, role: 'review', action: '검토자로 전환' };
-  if (approver && author) return { text: `작성자 차례 ${author}건`, role: 'author', action: '작성자로 전환' };
+  // With auto drafts on, the author account's next press is done by the agent.
+  if (approver && author) return auto ? { text: '작성자 차례 · 전환하면 Agent가 다음 초안을 작성합니다', role: 'author', action: '작성자로 전환' }
+    : { text: `작성자 차례 ${author}건`, role: 'author', action: '작성자로 전환' };
   return null;
+}
+
+// AX auto drafts (DEC-H62): on the author account, the next one-click draft is
+// written as soon as the previous step is posted. It is only a draft: another
+// account still reviews, approves and posts. Purchase requests (the quote
+// choice), substitutions and schedule assumptions stay a person's decision.
+export const AUTO_ACTIONS = new Set(['new-po', 'new-confirmation', 'new-receipt', 'new-iqc', 'new-production', 'new-next', 'cohort', 'lot-production', 'board-next']);
+const autoDrafts = new Map(), autoTried = new Set();
+const AUTO_KEY = 'ontologics-mks2-auto-draft';
+export function autoDraftEnabled() { try { return globalThis.localStorage?.getItem(AUTO_KEY) !== '0'; } catch { return true; } }
+function setAutoDraft(on) { try { globalThis.localStorage?.setItem(AUTO_KEY, on ? '1' : '0'); } catch { /* preference only */ } }
+// What the agent does next on the author account, or null:
+// - one draft at a time: while any document waits for approval, nothing new
+//   is written (two drafts on one ledger version would make the second stale
+//   once the first is posted);
+// - its own waiting draft whose basis version is old is re-saved on the
+//   current version (same content; approvals of the old version are gone);
+// - otherwise the next one-click draft. Material steps come first; board
+//   moves start only after the purchased LOT has passed inspection.
+export function autoCandidate({ supply, fulfillment, documents, identity, ledgerVersion = null, enabled = true }) {
+  const can = permission => (identity?.permitted_actions || []).includes(permission);
+  if (!enabled || !can('document.create') || can('document.approve')) return null;
+  const waiting = (documents || []).filter(row => row.kind !== 'QUOTE' && row.status !== 'POSTED' && !row.cancelled_by && !row.rejection_reason);
+  if (waiting.length) {
+    const own = waiting.find(row => row.created_by === identity?.actor_id && String(row.content?.note || '').startsWith('Agent 자동 작성')
+      && Number.isInteger(row.content?.basis_ledger_version) && Number.isInteger(ledgerVersion) && row.content.basis_ledger_version < ledgerVersion);
+    return own && can('document.update') ? { revise: own } : null;
+  }
+  const pick = (entries, lane) => (entries || []).map((entry, index) => ({ entry, index, lane }))
+    .find(({ entry }) => AUTO_ACTIONS.has(entry.action) && !entry.disabled);
+  const material = supply && !supply.empty ? pick(supply.next, 'supply') : null;
+  if (material) return material;
+  return supply?.inspected ? pick(fulfillment?.next, 'fulfillment') || null : null;
 }
 
 export function mountProcurementFlow(container, { snapshot, api, getIdentity = () => null, onPosted = () => {}, onRefresh = () => {}, onActivity = () => {} }) {
   const abort = new AbortController(), pending = new Map();
   let documents = [], choices = [], activeId = null, editor = null, busy = false, destroyed = false, fulfillment = null, supply = null, substitute = null;
-  let notice = '', failed = false, needsRefresh = false;
+  let notice = '', failed = false, needsRefresh = false, lastAuto = null;
   const ledgerVersion = snapshot.meta?.ledger_version;
   const active = () => documents.find(row => row.id === activeId);
   const can = permission => (getIdentity()?.permitted_actions || []).includes(permission);
   const author = doc => doc?.created_by === getIdentity()?.actor_id;
   function message(text, error = false) { notice = text; failed = error; }
   function exact(doc) { return { expected_version: doc.version, payload_hash: doc.payload_hash }; }
-  async function command(path, body) {
+  async function command(path, body, fixedKey = null) {
     const signature = JSON.stringify([path, body]);
-    if (!pending.has(signature)) pending.set(signature, `purchase-ui-${crypto.randomUUID()}`);
+    if (!pending.has(signature)) pending.set(signature, fixedKey || `purchase-ui-${crypto.randomUUID()}`);
     const result = await api(path, { ...body, idempotency_key: pending.get(signature) });
     pending.delete(signature);
     return result;
@@ -391,7 +427,7 @@ export function mountProcurementFlow(container, { snapshot, api, getIdentity = (
         : error.status === 409 ? '문서 상태나 기준이 변경되었습니다. 서버 문서를 다시 확인해 주세요.'
         : error.status === 422 ? '입력 수량·단위·조건과 필수 근거를 확인해 주세요.'
         : '결과를 확인하지 못했습니다. 같은 입력으로 재시도하면 동일 요청 키를 사용합니다.'), true);
-    } finally { if (!destroyed) { busy = false; render(); } }
+    } finally { if (!destroyed) { busy = false; render(); autoStep(); } }
   }
   async function reload(preferred = activeId) {
     const response = await api('/api/mks2/procurement/documents');
@@ -449,9 +485,105 @@ export function mountProcurementFlow(container, { snapshot, api, getIdentity = (
   function boardsFor(doc, [, link, state]) {
     return Object.entries(snapshot.fulfillment?.boards || {}).filter(([, value]) => value.status === state && value[link] === doc.id).map(([serial]) => serial).sort();
   }
+  // Content for one one-click draft. Record numbers, LOT codes and board serials
+  // are generated; quantities are what the parent document still allows (the
+  // server checks every limit again). Nothing here approves or posts.
+  function draftContent(entry, auto) {
+    const stamp = Date.now().toString(36).toUpperCase(), round = snapshot.summary?.delivery_round_id;
+    const by = auto ? 'Agent 자동 작성' : '자동 작성';
+    const doc = documents.find(row => row.id === entry.target);
+    const label = doc ? documentLabel(doc.kind, doc.id) : '';
+    switch (entry.action) {
+      case 'new-po': {
+        const freight = doc.content?.resolved?.quote?.freight;
+        return { kind: 'PO', pr_id: doc.id, quantity: doc.remaining_qty, acknowledge_unknown_freight: freight == null,
+          note: `${by} · ${label} 잔여 ${doc.remaining_qty}개 내부 발주${freight == null ? ' · 운임 미확인 유지(총액 미확인)' : ''} · 공급사 송신 없음` };
+      }
+      case 'new-confirmation': {
+        const quantity = doc.quantity - (doc.confirmed_qty || 0);
+        return { kind: 'SUPPLY_CONFIRMATION', po_id: doc.id, confirmed_qty: quantity, confirmation_ref: `SC-${label}-${stamp}`,
+          note: `${by} · ${label} ${quantity}개 내부 모의 공급확인 · 공급사 응답 아님 · 도착일 미확정` };
+      }
+      case 'new-receipt': {
+        // Digits only, so a question that names the LOT is not read as an item ID (IM…/ORD…).
+        const item = String(doc.content?.resolved?.item_id || snapshot.summary?.item_id || '').replace(/\D/g, '') || '0';
+        const serial = String(Date.now()).slice(-6);
+        return { kind: 'RECEIPT', po_id: doc.id, quantity: doc.receivable_qty, receipt_ref: `RC-${label}-${stamp}`, lot_code: `LOT-${item}-${serial}`,
+          note: `${by} · ${label} 입하 ${doc.receivable_qty}개 · 검사 전이라 가용 재고 아님` };
+      }
+      case 'new-iqc': {
+        const quantity = doc.remaining_qty ?? doc.quantity;
+        return { kind: 'IQC', receipt_id: doc.id, passed_qty: quantity, failed_qty: 0, inspection_ref: `${documentLabel('IQC', doc.id)}-${stamp}`,
+          note: `${by} · 수입검사 합격 · ${label} 입하 ${quantity}개 전량 · 승인 요청` };
+      }
+      case 'new-production':
+        return { kind: 'PRODUCTION', iqc_id: doc.id, production_ref: `PRD-${stamp}`, board_serials: boardSerials(entry.quantity, stamp),
+          note: `${by} · ${entry.lot || '입하 LOT'}로 양품 ${entry.quantity}대 생산 실적 (serial 자동 생성)` };
+      case 'new-next': {
+        const [kind, link, , stepLabel] = nextStep[doc.kind], refs = { FG_RECEIPT: 'receipt_ref', SHIPMENT: 'shipment_ref', ARRIVAL: 'arrival_ref' };
+        const serials = boardsFor(doc, nextStep[doc.kind]);
+        return serials.length ? { kind, [link]: doc.id, [refs[kind]]: `${kind}-${stamp}`, board_serials: serials,
+          note: `${by} · ${label} 보드 ${serials.length}대 ${stepLabel}` } : null;
+      }
+      case 'cohort':
+        return { kind: 'COHORT', cohort_ref: `CH-${entry.stage}-${stamp}`, round_id: round, stage: entry.stage, quantity: entry.quantity,
+          note: `${by} · 기초 보드 ${entry.quantity}대 ${entry.stage} 기록 (serial 없음)` };
+      case 'lot-production':
+        return { kind: 'PRODUCTION', lot_code: entry.lot, production_ref: `PRD-${stamp}`, board_serials: boardSerials(entry.quantity, stamp),
+          note: `${by} · ${entry.lot}로 양품 ${entry.quantity}대 생산 실적 (serial 자동 생성)` };
+      case 'board-next': {
+        const refField = { FG_RECEIPT: 'receipt_ref', SHIPMENT: 'shipment_ref', ARRIVAL: 'arrival_ref' }[entry.kind];
+        return { kind: entry.kind, [entry.link]: entry.target, [refField]: `${entry.kind}-${stamp}`, board_serials: entry.serials,
+          note: `${by} · 보드 ${entry.serials.length}대 ${entry.kind} 기록` };
+      }
+      default: return null;
+    }
+  }
+  // An auto draft reuses the same content and request key for the same step on
+  // the same ledger version, so a remount or retry cannot write it twice.
+  function saveDraft(entry, auto) {
+    const signature = `${ledgerVersion}|${entry.action}|${entry.target || ''}|${entry.stage || entry.kind || ''}`;
+    let plan = auto ? autoDrafts.get(signature) : null;
+    if (!plan) {
+      const content = draftContent(entry, auto);
+      if (!content) return;
+      plan = { content, key: auto ? `auto-draft-${crypto.randomUUID()}` : null };
+      if (auto) autoDrafts.set(signature, plan);
+    }
+    work(async () => {
+      const result = await command('/api/mks2/procurement/documents', { expected_ledger_version: ledgerVersion, content: plan.content }, plan.key);
+      if (destroyed) return;
+      await reload(result.id);
+      message(`${auto ? 'Agent가 ' : ''}${kinds[plan.content.kind]} 초안을 저장했습니다. 작성자와 다른 계정에서 승인·확정해 주세요.`);
+      lastAuto = auto ? { kind: plan.content.kind, id: result.id } : null;
+    });
+  }
+  function autoStep() {
+    if (destroyed || busy || editor || needsRefresh) return;
+    const found = autoCandidate({ supply, fulfillment, documents, identity: getIdentity(), ledgerVersion, enabled: autoDraftEnabled() });
+    if (!found) return;
+    const step = found.revise ? `revise|${found.revise.id}|${found.revise.version}` : `${found.entry.action}|${found.entry.target || ''}|${found.entry.stage || found.entry.kind || ''}`;
+    const signature = `${getIdentity()?.actor_id}|${ledgerVersion}|${step}`;
+    if (autoTried.has(signature)) return; // one attempt per step; a failure waits for a person
+    autoTried.add(signature);
+    if (found.revise) refreshDraft(found.revise); else saveDraft(found.entry, true);
+  }
+  // Re-save the agent's own stale draft on the current ledger version with the
+  // same typed fields. The server re-checks every limit; earlier approvals are cleared.
+  function refreshDraft(doc) {
+    const content = Object.fromEntries((fields[doc.kind] || []).filter(key => doc.content?.[key] !== undefined).map(key => [key, doc.content[key]]));
+    work(async () => {
+      const result = await command(`/api/mks2/procurement/documents/${encodeURIComponent(doc.id)}/revise`,
+        { ...exact(doc), expected_ledger_version: ledgerVersion, content: { ...content, kind: doc.kind } });
+      if (destroyed) return;
+      await reload(result.id);
+      lastAuto = { kind: doc.kind, id: result.id };
+      message(`Agent가 ${kinds[doc.kind]} 초안을 최신 원장 v${ledgerVersion} 기준으로 다시 저장했습니다. 다른 계정에서 승인·확정해 주세요.`);
+    });
+  }
   function render() {
     if (destroyed) return;
-    const status = notice && (failed || editor || needsRefresh) ? `<p role="status" aria-live="polite" class="mk-supply-notice${failed ? ' mk-bom-warning' : ''}">${esc(notice)}</p>` : `<p role="status" aria-live="polite" class="mk-supply-notice"></p>`;
+    const status = notice && (failed || editor || needsRefresh || lastAuto) ? `<p role="status" aria-live="polite" class="mk-supply-notice${failed ? ' mk-bom-warning' : ''}">${esc(notice)}</p>` : `<p role="status" aria-live="polite" class="mk-supply-notice"></p>`;
     const refresh = needsRefresh ? `<p class="mk-supply-notice">원장에 새 사건이 반영되었습니다. 최신 원장 조회 후 다음 업무를 진행해 주세요. ${button('최신 원장 조회', 'refresh', busy)}</p>` : '';
     const scenarioEditing = editor?.kind === 'SCENARIO' || (editor?.kind === 'REJECT' && active()?.kind === 'SCENARIO');
     const substituteEditing = editor?.kind === 'REJECT' && active()?.kind === 'SUBSTITUTION';
@@ -464,14 +596,18 @@ export function mountProcurementFlow(container, { snapshot, api, getIdentity = (
     if (scenarioEditing) scenario.next = [];
     fulfillment = fulfillmentState(snapshot, documents, getIdentity());
     const blocked = busy || needsRefresh;
-    const banner = flowBanner([progress && !progress.empty ? progress.next : [], substitute?.next || [], scenario.next, fulfillment.next], getIdentity());
-    container.innerHTML = `<div class="mk-flow-board"><h3>진행 현황</h3>${banner ? `<p class="mk-flow-banner"><span>${esc(banner.text)}</span><button type="button" class="mk-btn primary" data-switch-role="${banner.role}"${busy ? ' disabled' : ''}>${esc(banner.action)}</button></p>` : ''}${status}${refresh}`
+    const banner = flowBanner([progress && !progress.empty ? progress.next : [], substitute?.next || [], scenario.next, fulfillment.next], getIdentity(),
+      autoDraftEnabled() && Boolean(autoCandidate({ supply: progress, fulfillment, documents, identity: { ...getIdentity(), permitted_actions: ['document.create', 'document.update'] }, ledgerVersion })));
+    const autoOn = autoDraftEnabled();
+    const toggle = `<button type="button" class="mk-btn mk-auto-toggle${autoOn ? ' on' : ''}" data-auto-draft aria-pressed="${autoOn}" title="작성자 계정에서 앞 단계가 원장에 반영되면 Agent가 다음 초안을 작성합니다. 승인·확정은 사람이 합니다.">Agent 자동 초안 ${autoOn ? '켜짐' : '꺼짐'}</button>`;
+    container.innerHTML = `<div class="mk-flow-board"><div class="mk-flow-board-head"><h3>진행 현황</h3>${toggle}</div>${banner ? `<p class="mk-flow-banner"><span>${esc(banner.text)}</span><button type="button" class="mk-btn primary" data-switch-role="${banner.role}"${busy ? ' disabled' : ''}>${esc(banner.action)}</button></p>` : ''}${status}${refresh}`
       + supplyLane(progress, blocked, otherEditing ? '' : form())
       + substituteLane(substitute, blocked, substituteEditing ? form() : '')
       + scenarioLane(scenario, blocked, scenarioEditing ? form() : '')
       + fulfillmentLane(fulfillment, blocked) + '</div>';
   }
   container.addEventListener('click', event => {
+    if (event.target.closest('[data-auto-draft]')) { setAutoDraft(!autoDraftEnabled()); render(); autoStep(); return; }
     const switcher = event.target.closest('[data-switch-role]');
     if (switcher && !switcher.disabled) { container.dispatchEvent(new CustomEvent('mks2:switch-role', { bubbles: true, detail: { role: switcher.dataset.switchRole } })); return; }
     const target = event.target.closest('[data-purchase-action]');
@@ -496,89 +632,30 @@ export function mountProcurementFlow(container, { snapshot, api, getIdentity = (
       });
       return;
     }
+    if (AUTO_ACTIONS.has(action)) {
+      const lanes = { supply: supply?.next || [], fulfillment: fulfillment?.next || [] };
+      const index = target.dataset.fulfillIndex;
+      const entry = index != null ? lanes.fulfillment[Number(index)]
+        : lanes.supply.find(row => row.action === action && row.target === target.dataset.doc);
+      if (entry && !entry.disabled) saveDraft(entry, false);
+      return;
+    }
     if (!doc) return;
     if (action === 'revise') { start(doc.kind, Object.fromEntries(fields[doc.kind].map(key => [key, doc.content[key]])), doc); return; }
     if (action === 'reject') { start('REJECT', { reason: '' }); return; }
-    if (action === 'new-po') { start('PO', { pr_id: doc.id, quantity: doc.remaining_qty, acknowledge_unknown_freight: false }); return; }
-    if (action === 'new-confirmation') { start('SUPPLY_CONFIRMATION', { po_id: doc.id, confirmed_qty: doc.quantity - (doc.confirmed_qty || 0), confirmation_ref: '' }); return; }
-    if (action === 'new-receipt') { start('RECEIPT', { po_id: doc.id, quantity: doc.receivable_qty, receipt_ref: '', lot_code: '' }); return; }
-    if (['cohort', 'lot-production', 'board-next'].includes(action)) {
-      const entry = fulfillment?.next[Number(target.dataset.fulfillIndex)];
-      if (!entry || entry.disabled) return;
-      const stamp = Date.now().toString(36).toUpperCase(), round = snapshot.summary?.delivery_round_id;
-      let content;
-      if (action === 'cohort') content = { kind: 'COHORT', cohort_ref: `CH-${entry.stage}-${stamp}`, round_id: round, stage: entry.stage, quantity: entry.quantity,
-        note: `자동 작성 · 기초 보드 ${entry.quantity}대 ${entry.stage} 기록 (serial 없음)` };
-      else if (action === 'lot-production') {
-        const serials = boardSerials(entry.quantity, stamp);
-        content = { kind: 'PRODUCTION', lot_code: entry.lot, production_ref: `PRD-${stamp}`, board_serials: serials,
-          note: `자동 작성 · ${entry.lot}로 양품 ${entry.quantity}대 생산 실적 (serial 자동 생성)` };
-      } else {
-        const refField = { FG_RECEIPT: 'receipt_ref', SHIPMENT: 'shipment_ref', ARRIVAL: 'arrival_ref' }[entry.kind];
-        content = { kind: entry.kind, [entry.link]: entry.target, [refField]: `${entry.kind}-${stamp}`, board_serials: entry.serials,
-          note: `자동 작성 · 보드 ${entry.serials.length}대 ${entry.kind} 기록` };
-      }
-      work(async () => {
-        const result = await command('/api/mks2/procurement/documents', { expected_ledger_version: ledgerVersion, content });
-        if (destroyed) return;
-        await reload(result.id);
-        message('초안을 저장했습니다. 작성자와 다른 계정에서 승인·확정해 주세요.');
-      });
-      return;
-    }
     if (action === 'new-scenario') {
-      // Demo defaults the presenter can change before asking for approval.
-      start('SCENARIO', { scenario_ref: `SCN-${Date.now().toString(36).toUpperCase()}`, round_id: snapshot.summary?.delivery_round_id,
-        inspection_business_days: 1, daily_capacity: 20, ship_prep_business_days: 1, transit_days: 2 });
-      return;
-    }
-    if (action === 'new-iqc') {
-      // One click, like the shared screen: an inspection draft that passes all
-      // received units is saved at once and waits for another account's
-      // approval and posting (no self-approval, nothing posted here).
-      const quantity = doc.remaining_qty ?? doc.quantity;
-      const content = { kind: 'IQC', receipt_id: doc.id, passed_qty: quantity, failed_qty: 0,
-        inspection_ref: `${documentLabel('IQC', doc.id)}-${Date.now().toString(36).toUpperCase()}`,
-        note: `자동 작성 · 수입검사 합격 · ${documentLabel('RECEIPT', doc.id)} 입하 ${quantity}개 전량 · 승인 요청(버튼)` };
+      // One click: the demo assumption values are recorded as DEMO_ASSUMPTION
+      // (not ledger facts). Another account approves and posts; the delivery
+      // verdict stays on hold. A revision can change the values before approval.
+      const values = { inspection_business_days: 1, daily_capacity: 20, ship_prep_business_days: 1, transit_days: 2 };
+      const content = { kind: 'SCENARIO', scenario_ref: `SCN-${Date.now().toString(36).toUpperCase()}`, round_id: snapshot.summary?.delivery_round_id,
+        ...values, provenance: 'DEMO_ASSUMPTION',
+        note: `시연 일정 가정 · 검사 ${values.inspection_business_days}영업일 · 하루 ${values.daily_capacity}대 · 출하 준비 ${values.ship_prep_business_days}영업일 · 운송 ${values.transit_days}일 (What-if)` };
       work(async () => {
         const result = await command('/api/mks2/procurement/documents', { expected_ledger_version: ledgerVersion, content });
         if (destroyed) return;
         await reload(result.id);
-        message('수입검사 합격 초안을 저장했습니다. 작성자와 다른 계정에서 승인·확정하면 가용 재고에 반영됩니다.');
-      });
-      return;
-    }
-    if (action === 'new-production') {
-      // One click: the record number and board serials are generated, the
-      // quantity is what the inspected LOT can still build. Another account
-      // approves and posts it (nothing is posted here).
-      const entry = supply?.next?.find(row => row.action === 'new-production' && row.target === doc.id);
-      if (!entry || entry.disabled) return;
-      const stamp = Date.now().toString(36).toUpperCase();
-      const content = { kind: 'PRODUCTION', iqc_id: doc.id, production_ref: `PRD-${stamp}`, board_serials: boardSerials(entry.quantity, stamp),
-        note: `자동 작성 · ${entry.lot || '입하 LOT'}로 양품 ${entry.quantity}대 생산 실적 (serial 자동 생성)` };
-      work(async () => {
-        const result = await command('/api/mks2/procurement/documents', { expected_ledger_version: ledgerVersion, content });
-        if (destroyed) return;
-        await reload(result.id);
-        message('생산 실적 초안을 저장했습니다. 작성자와 다른 계정에서 승인·확정해 주세요.');
-      });
-      return;
-    }
-    if (action === 'new-next') {
-      // One click: the record number is generated and the boards are the ones
-      // still waiting for this step. Another account approves and posts it.
-      const [kind, link, , stepLabel] = nextStep[doc.kind], refs = { FG_RECEIPT: 'receipt_ref', SHIPMENT: 'shipment_ref', ARRIVAL: 'arrival_ref' };
-      const serials = boardsFor(doc, nextStep[doc.kind]);
-      if (!serials.length) return;
-      const stamp = Date.now().toString(36).toUpperCase();
-      const content = { kind, [link]: doc.id, [refs[kind]]: `${kind}-${stamp}`, board_serials: serials,
-        note: `자동 작성 · ${documentLabel(doc.kind, doc.id)} 보드 ${serials.length}대 ${stepLabel}` };
-      work(async () => {
-        const result = await command('/api/mks2/procurement/documents', { expected_ledger_version: ledgerVersion, content });
-        if (destroyed) return;
-        await reload(result.id);
-        message(`${kinds[kind]} 초안을 저장했습니다. 작성자와 다른 계정에서 승인·확정해 주세요.`);
+        message('시연 일정 가정을 저장했습니다. 다른 계정에서 승인·확정하면 68대 질문의 일정 역산에 쓰입니다.');
       });
       return;
     }
@@ -638,7 +715,7 @@ export function mountProcurementFlow(container, { snapshot, api, getIdentity = (
       message(current.kind === 'REJECT' ? '반려 사유를 기록했습니다. 이전 승인은 해제되었습니다.' : '검토할 초안을 저장했습니다. 작성자와 다른 계정에서 검토·승인을 진행해 주세요.');
     });
   }, { signal: abort.signal });
-  render(); const loaded = work(() => reload());
+  render(); const loaded = work(() => reload());  // work() runs autoStep() when the documents are loaded
   // Opens the same PR draft form as the comparison card's button. Nothing is saved until the user submits.
   async function startPurchaseRequest(quoteId, basis = 'planned') {
     await loaded;
