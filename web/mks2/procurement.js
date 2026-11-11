@@ -43,6 +43,10 @@ const errors = {
 // (saved draft, waiting for another account) → 승인 → 확정 (ledger posting), then
 // receipt and inspection. Buttons only run the existing explicit commands.
 const unitWord = unit => unit === 'EA' || !unit ? '개' : ` ${unit}`;
+// Short readable document label from the real ID (for example PR-16BF), like the shared screen.
+const docPrefix = { PR: 'PR', PO: 'PO', SUPPLY_CONFIRMATION: 'SC', RECEIPT: 'RC', IQC: 'IQC', CANCEL: 'CX', QUOTE: 'QT',
+  PRODUCTION: 'PD', FG_RECEIPT: 'FG', SHIPMENT: 'SH', ARRIVAL: 'AR' };
+export const documentLabel = (kind, id) => `${docPrefix[kind] || kind}-${String(id || '').replace(/[^0-9a-z]/gi, '').slice(0, 4).toUpperCase()}`;
 const progressSteps = ['초안', '승인 요청', '승인', '확정'];
 const reachedStep = { DRAFT: 1, REVIEWED: 2, APPROVED: 3, POSTED: 4 };
 export function supplyProgress(documents, snapshot, identity, editor = null) {
@@ -52,8 +56,7 @@ export function supplyProgress(documents, snapshot, identity, editor = null) {
   const pr = rows.filter(row => row.kind === 'PR' && row.content?.resolved?.item_id === item
     && !(row.status === 'DRAFT' && row.rejection_reason)).at(-1) || null;
   const can = permission => (identity?.permitted_actions || []).includes(permission);
-  // Short readable document label from the real ID (for example PR-0857), like the shared screen.
-  const docLabel = (kind, id) => `${kind}-${String(id || '').replace(/[^0-9a-z]/gi, '').slice(0, 4).toUpperCase()}`;
+  const docLabel = documentLabel;
   const short = id => String(id || '').slice(0, 8);
   const quoteOf = id => (documents || []).find(row => row.id === id);
   const stepsAt = reached => progressSteps.map((label, index) => ({ label, state: index < reached ? 'done' : index === reached ? 'current' : 'pending' }));
@@ -121,7 +124,7 @@ export function supplyProgress(documents, snapshot, identity, editor = null) {
     if (!po) { status = '발주 작성 필요'; stages.push({ label: '내부 발주 초안', action: 'new-po', target: pr.id, disabled: create || !(pr.remaining_qty > 0) }); }
     else if ((po.confirmed_qty || 0) < po.quantity && !receipt) { status = '입하 예정'; tone = 'info'; stages.push({ label: '공급확인 · 모의', action: 'new-confirmation', target: po.id, disabled: create }); }
     else if (po.receivable_qty > 0 && !receipt) { status = '입하 예정'; tone = 'info'; stages.push({ label: `입하 기록 · ${po.receivable_qty}${unit}`, action: 'new-receipt', target: po.id, disabled: create }); }
-    else if (receipt && !iqc) { status = '검사 대기'; stages.push({ label: `수입검사 기록 · ${receipt.remaining_qty ?? receipt.quantity}${unit}`, action: 'new-iqc', target: receipt.id, disabled: create }); notes.push('입하했지만 검사 전이라 가용 재고 아님'); }
+    else if (receipt && !iqc) { status = '검사 대기'; stages.push({ label: `수입검사 합격 · ${receipt.remaining_qty ?? receipt.quantity}${unit}`, action: 'new-iqc', target: receipt.id, disabled: create }); notes.push('입하했지만 검사 전이라 가용 재고 아님'); }
     else if (iqc) {
       const fulfilled = chain.filter(row => ['PRODUCTION', 'FG_RECEIPT', 'SHIPMENT', 'ARRIVAL'].includes(row.kind));
       const last = fulfilled.at(-1);
@@ -179,7 +182,7 @@ function progressCard(progress, busy, extra = '') {
     ${extra}<p class="mk-small-note">내부 발주는 공급사 확약이 아닙니다. 외부 송신은 없습니다.</p></section>`;
 }
 
-export function mountProcurementFlow(container, { snapshot, api, getIdentity = () => null, onPosted = () => {}, onRefresh = () => {} }) {
+export function mountProcurementFlow(container, { snapshot, api, getIdentity = () => null, onPosted = () => {}, onRefresh = () => {}, onActivity = () => {} }) {
   const abort = new AbortController(), pending = new Map();
   let documents = [], choices = [], activeId = null, editor = null, busy = false, destroyed = false;
   let notice = '', failed = false, needsRefresh = false;
@@ -215,6 +218,8 @@ export function mountProcurementFlow(container, { snapshot, api, getIdentity = (
     const response = await api('/api/mks2/procurement/documents');
     if (destroyed) return;
     documents = response.documents || [];
+    // Document steps (draft, approval, ...) shown in the ledger events list.
+    api('/api/mks2/procurement/activity').then(result => { if (!destroyed) onActivity(result.activity || []); }, () => {});
     activeId = documents.some(row => row.id === preferred) ? preferred : documents.at(-1)?.id || null;
     needsRefresh ||= documents.some(row => (row.ledger_version || 0) > ledgerVersion);
     if (!needsRefresh) {
@@ -280,7 +285,22 @@ export function mountProcurementFlow(container, { snapshot, api, getIdentity = (
     if (action === 'new-po') { start('PO', { pr_id: doc.id, quantity: doc.remaining_qty, acknowledge_unknown_freight: false }); return; }
     if (action === 'new-confirmation') { start('SUPPLY_CONFIRMATION', { po_id: doc.id, confirmed_qty: doc.quantity - (doc.confirmed_qty || 0), confirmation_ref: '' }); return; }
     if (action === 'new-receipt') { start('RECEIPT', { po_id: doc.id, quantity: doc.receivable_qty, receipt_ref: '', lot_code: '' }); return; }
-    if (action === 'new-iqc') { start('IQC', { receipt_id: doc.id, passed_qty: 0, failed_qty: 0, inspection_ref: '' }); return; }
+    if (action === 'new-iqc') {
+      // One click, like the shared screen: an inspection draft that passes all
+      // received units is saved at once and waits for another account's
+      // approval and posting (no self-approval, nothing posted here).
+      const quantity = doc.remaining_qty ?? doc.quantity;
+      const content = { kind: 'IQC', receipt_id: doc.id, passed_qty: quantity, failed_qty: 0,
+        inspection_ref: `${documentLabel('IQC', doc.id)}-${Date.now().toString(36).toUpperCase()}`,
+        note: `자동 작성 · 수입검사 합격 · ${documentLabel('RECEIPT', doc.id)} 입하 ${quantity}개 전량 · 승인 요청(버튼)` };
+      work(async () => {
+        const result = await command('/api/mks2/procurement/documents', { expected_ledger_version: ledgerVersion, content });
+        if (destroyed) return;
+        await reload(result.id);
+        message('수입검사 합격 초안을 저장했습니다. 작성자와 다른 계정에서 승인·확정하면 가용 재고에 반영됩니다.');
+      });
+      return;
+    }
     if (action === 'new-production') { start('PRODUCTION', { iqc_id: doc.id, production_ref: '', board_serials: '' }); return; }
     if (action === 'new-next') {
       const [kind, link] = nextStep[doc.kind], refs = { FG_RECEIPT: 'receipt_ref', SHIPMENT: 'shipment_ref', ARRIVAL: 'arrival_ref' };

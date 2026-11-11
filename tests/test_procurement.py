@@ -311,6 +311,17 @@ class ProcurementDomainTests(unittest.TestCase):
         self.assertEqual((returned["status"], returned["rejection_reason"]), ("DRAFT", body.reason))
         self.assert_code("PROCUREMENT_LEDGER_VERSION_CHANGED", lambda: self.action("review", returned))
 
+    def test_activity_lists_document_steps_but_not_postings(self):
+        draft = self.create(offer(quote_ref="activity-quote"))
+        approved = self.action("approve", self.action("review", draft))
+        self.action("post", approved)
+        steps = self.service.activity(self.reviewer, self.company)
+        mine = [step for step in steps if step["document_id"] == str(draft["id"])]
+        self.assertEqual([step["action"] for step in mine], ["approve", "review", "create"])  # newest first
+        self.assertTrue(all(step["kind"] == "QUOTE" and step["recorded_at"] for step in mine))
+        self.assertNotIn("post", {step["action"] for step in steps})
+        self.assert_code("INVALID_PAGE_LIMIT", lambda: self.service.activity(self.reviewer, self.company, limit=0))
+
     def test_independent_rejection_revokes_grant_and_cannot_reject_posted(self):
         draft = self.create(offer())
         approved = self.action("approve", self.action("review", draft))

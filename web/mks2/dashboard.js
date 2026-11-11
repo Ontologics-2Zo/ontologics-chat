@@ -1,7 +1,7 @@
 // Presentation only. Every displayed fact is supplied by the authenticated ledger read model.
 // Explicit BOM commands are delegated to the authenticated server through the BOM drawer.
 import { createBomDrawer } from './bom.js';
-import { mountProcurementFlow } from './procurement.js';
+import { documentLabel, mountProcurementFlow } from './procurement.js';
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 export function formatQuantity(value) {
   if (typeof value === 'number') return Number.isFinite(value)
@@ -63,16 +63,39 @@ export function ledgerEventFreshIds(previous, snapshot) {
     && event.ledger_version > previous.ledger_version && event.ledger_version <= current.ledger_version).map(event => event.event_id));
 }
 
-export function renderLedgerEvents(snapshot, { freshIds = new Set() } = {}) {
+const activityKinds = { PR: '구매 요청', PO: '내부 발주', SUPPLY_CONFIRMATION: '공급확인', RECEIPT: '입하', IQC: '수입검사',
+  CANCEL: '잔여 취소', QUOTE: '견적', PRODUCTION: '생산 실적', FG_RECEIPT: '완성품 입고', SHIPMENT: '출하', ARRIVAL: '고객 도착' };
+const actorName = id => String(id || '').replace(/^actor-dev-/, '').toUpperCase() || '미확인';
+// A document step is an approval-side record, not a ledger commit: no version.
+export function activitySummary(item) {
+  const label = `${documentLabel(item.kind, item.document_id)} ${activityKinds[item.kind] || '문서'}`;
+  const qty = Number.isFinite(item.quantity) ? ` · ${item.quantity}개` : '';
+  const who = actorName(item.actor_id);
+  // Only an approval whose document is not posted yet is "not in the ledger yet".
+  const pending = item.document_status === 'POSTED' ? '' : ' (아직 원장 미반영)';
+  return { create: `${label} 초안${qty} · 승인 요청 (작성 ${who})`, revise: `${label} 초안 수정 · 승인 요청 (작성 ${who})`,
+    review: `${label} 검토 · ${who}${pending}`, approve: `${label} 승인 · ${who}${pending}`,
+    reject: `${label} 반려 · ${who}` }[item.action] || `${label} ${item.action}`;
+}
+export function renderLedgerEvents(snapshot, { freshIds = new Set(), activity = [] } = {}) {
   const version = snapshot.meta?.ledger_version;
   const supplied = Array.isArray(snapshot.events) ? snapshot.events : [];
   const events = supplied.filter(event => event && typeof event === 'object'
     && !(eventVersion(version) && eventVersion(event.ledger_version) && event.ledger_version > version));
   const total = Number.isSafeInteger(snapshot.event_count) && snapshot.event_count >= events.length ? snapshot.event_count : null;
   const detail = (name, value) => `<dt>${esc(name)}</dt><dd>${esc(value ?? '미확인')}</dd>`;
-  const rows = events.map(event => {
+  const valid = (Array.isArray(activity) ? activity : []).filter(item => item && typeof item.audit_id === 'string');
+  // One 승인 button records review then approval; show only the approval when the same person did both.
+  const approvedBy = new Set(valid.filter(item => item.action === 'approve').map(item => `${item.document_id}|${item.actor_id}`));
+  const steps = valid.filter(item => !(item.action === 'review' && approvedBy.has(`${item.document_id}|${item.actor_id}`))).map(item => {
+    const time = formatLedgerEventTime(item.recorded_at);
+    return { at: item.recorded_at, html: `<li class="mk-event-step" data-activity-id="${esc(item.audit_id)}"><time class="mk-event-time"${time.datetime ? ` datetime="${esc(time.datetime)}"` : ''} title="${esc(time.full)}">${esc(time.short)}</time><span class="mk-event-version mk-event-doc" title="문서 단계 · 원장 버전 없음">문서</span><span class="mk-event-step-text">${esc(activitySummary(item))}</span></li>` };
+  });
+  const ledgerRows = events.map(event => {
     const time = formatLedgerEventTime(event.recorded_at);
-    const summary = typeof event.summary === 'string' && event.summary.trim() ? event.summary
+    const posted = event.document_ref?.id && Object.hasOwn(activityKinds, event.document_kind)
+      ? `${documentLabel(event.document_kind, event.document_ref.id)} ${activityKinds[event.document_kind]} 확정 · 원장 반영` : null;
+    const summary = posted || (typeof event.summary === 'string' && event.summary.trim()) ? posted || event.summary
       : eventLabel(eventLabels, event.event_type) || `원장 사건 · ${event.event_type || '유형 미확인'}`;
     const document = event.document_ref;
     const reference = document && typeof document === 'object' ? detail('문서 종류', eventLabel(eventDocumentLabels, event.document_kind) || event.document_kind || document.type)
@@ -83,14 +106,18 @@ export function renderLedgerEvents(snapshot, { freshIds = new Set() } = {}) {
       + detail('예약 수량', event.reservation.quantity) + detail('가용 변화', `${event.reservation.available_before} → ${event.reservation.available_after}`)
       + detail('예약 hash', event.reservation.payload_hash) : '';
     return `<li data-ledger-event-id="${esc(event.event_id)}"${freshIds.has(event.event_id) ? ' class="mk-event-fresh"' : ''}><time class="mk-event-time"${time.datetime ? ` datetime="${esc(time.datetime)}"` : ''} title="${esc(time.full)}" aria-label="${esc(time.full)}">${esc(time.short)}</time><span class="mk-event-version" aria-label="원장 버전 ${esc(eventVersion(event.ledger_version) ? event.ledger_version : '미확인')}">${eventVersion(event.ledger_version) ? `v${event.ledger_version}` : '미확인'}</span><details class="mk-event-detail"><summary aria-label="${esc(summary)} · 사건 근거 보기">${esc(summary)}</summary><dl>${detail('사건 ID', event.event_id)}${detail('사건 유형', event.event_type)}${detail('기록 시각', time.full)}${detail('출처', eventLabel(eventOriginLabels, event.origin) || '출처 확인 필요')}${reference}${reservation}</dl></details></li>`;
-  }).join('');
+  });
+  // Newest first, ledger commits and document steps together by recorded time.
+  const merged = [...events.map((event, index) => ({ at: event.recorded_at, html: ledgerRows[index] })), ...steps]
+    .sort((left, right) => String(right.at || '').localeCompare(String(left.at || '')));
+  const rows = merged.map(entry => entry.html).join('');
   return `<section class="mk-card" data-ledger-events><h3>원장 사건 ${tag(`${events.length} / ${total === null ? '미확인' : num(total)}`)}<span class="mk-spacer"></span>${tag(`원장 v${eventVersion(version) ? num(version) : '미확인'}`, 'info')}</h3><ul class="mk-event-list" data-ledger-event-list aria-label="확정 원장 사건">${rows || '<li class="mk-event-empty"><span>—</span><span>—</span><span>조회된 원장 사건이 없습니다.</span></li>'}</ul>${total !== null && total > events.length ? `<p class="mk-small-note">최근 ${num(events.length)}건 표시 · 전체 ${num(total)}건</p>` : ''}${supplied.length !== events.length ? '<p class="mk-small-note">조회 버전에 포함되지 않은 사건은 표시하지 않았습니다.</p>' : ''}</section>`;
 }
 
 export function createLedgerEventRenderer(snapshot, previous) {
   let freshIds = ledgerEventFreshIds(previous, snapshot);
-  return () => {
-    const result = renderLedgerEvents(snapshot, { freshIds });
+  return (activity = []) => {
+    const result = renderLedgerEvents(snapshot, { freshIds, activity });
     // Local repainting must not announce an old ledger commit as new again.
     freshIds = new Set();
     return result;
@@ -370,7 +397,13 @@ export function mountDashboard(container, { snapshot, onSelect = () => {}, onAsk
   }, { signal });
   render();
   const supplyRoot = container.querySelector?.('[data-region="procurement"]');
-  if (supplyRoot) procurement = mountProcurementFlow(supplyRoot, { snapshot, api, getIdentity, onPosted, onRefresh });
+  let activity = [];
+  const onActivity = items => {
+    activity = items;
+    const card = container.querySelector?.('[data-ledger-events]');
+    if (card) card.outerHTML = renderEvents(activity);
+  };
+  if (supplyRoot) procurement = mountProcurementFlow(supplyRoot, { snapshot, api, getIdentity, onPosted, onRefresh, onActivity });
   return { select(id) { selected = id; container.querySelector('[data-region="rounds"]').innerHTML = roundContent(); }, openBom,
     startPurchaseRequest: quote => procurement ? procurement.startPurchaseRequest(quote.quote_id, quote.material_basis) : Promise.resolve(false),
     destroy() { bom.destroy(); procurement?.destroy(); abort.abort(); container.replaceChildren(); container.classList.remove('mk-dashboard'); } };

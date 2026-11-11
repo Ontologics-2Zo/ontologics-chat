@@ -51,6 +51,7 @@ test('after posting, the card follows the order through receipt and inspection',
   const receipt = { id: 'rc-1', kind: 'RECEIPT', status: 'POSTED', parent_id: 'po-00000002-x', quantity: 23, remaining_qty: 23, content: {} };
   const waiting = supplyProgress([pr('POSTED'), po('POSTED', { confirmed_qty: 23 }), receipt], snapshot(0), author);
   assert.deepEqual([waiting.status, actions(waiting)[0]], ['검사 대기', 'new-iqc']);
+  assert.equal(waiting.next[0].label, '수입검사 합격 · 23개');
   const iqc = { id: 'iqc-1', kind: 'IQC', status: 'POSTED', parent_id: 'rc-1', quantity: 23, content: {} };
   const done = supplyProgress([pr('POSTED'), po('POSTED', { confirmed_qty: 23 }), receipt, iqc], snapshot(0), author);
   assert.equal(done.status, '가용'); assert.deepEqual(done.next, []);

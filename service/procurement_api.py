@@ -76,6 +76,11 @@ def mount_procurement_api(app, *, db, identity, ledger, gateway, principal, cont
         return gateway.execute("procurement." + action, args, principal=actor, context=ctx,
             budget=ExecutionBudget(ctx.execution_id, max_tool_calls=1)).data
 
+    @app.get("/api/mks2/procurement/activity")
+    def list_activity(request: Request):
+        actor = principal(request)
+        return {"activity": service.activity(actor, actor.company_id)}
+
     @app.get("/api/mks2/procurement/documents")
     def list_documents(request: Request):
         actor = principal(request)

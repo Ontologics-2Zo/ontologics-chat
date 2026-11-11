@@ -330,3 +330,8 @@
 .mk-supply-rows dd{font-size:12px}
 .mk-supply-warn{border-left:3px solid var(--warn,#d97706);padding:6px 10px;background:var(--warn-soft,#fff7e6);border-radius:0 8px 8px 0;font-size:12.5px;margin:0 0 8px}
 .mk-supply-actions .mk-btn.primary{background:var(--accent,#4f46e5);border-color:var(--accent,#4f46e5);color:var(--accent-fg,#fff)}
+
+/* Document steps in the ledger events list (approval records, no ledger version) */
+.mk-event-list li.mk-event-step{color:var(--fg2,#475569)}
+.mk-event-version.mk-event-doc{color:var(--fg3,#94a3b8);font-weight:500}
+.mk-event-step-text{font-size:12.5px}

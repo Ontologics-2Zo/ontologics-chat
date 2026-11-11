@@ -439,6 +439,26 @@ class ProcurementService(DomainService):
             self.identity.require(principal, "document.read", conn, company_id=company_id)
             return _public(self._document(conn, company_id, document_id))
 
+    def activity(self, principal, company_id, limit=30):
+        """Recent document steps from the audit trail (draft, revise, review, approve, reject).
+
+        Posting is not listed here: it is a ledger event with its own version.
+        These steps are approvals only and never change the ledger.
+        """
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ServiceError("INVALID_PAGE_LIMIT", 422)
+        with self.db.connect() as conn:
+            self.identity.require(principal, "document.read", conn, company_id=company_id)
+            rows = conn.execute("""SELECT a.audit_id, a.recorded_at, a.action, a.actor_id, d.kind, d.id AS document_id, d.status AS document_status,
+                    d.quantity, d.content->'resolved'->>'item_id' AS item_id, d.content->'resolved'->>'supplier_id' AS supplier_id
+                FROM procurement_audit a JOIN procurement_documents d ON d.id=a.document_id
+                WHERE a.company_id=%s AND a.action <> 'procurement.post'
+                ORDER BY a.recorded_at DESC, a.audit_id LIMIT %s""", (company_id, limit)).fetchall()
+        return [{"audit_id": str(row["audit_id"]), "recorded_at": row["recorded_at"].isoformat(),
+                 "action": row["action"].removeprefix("procurement."), "actor_id": row["actor_id"], "kind": row["kind"],
+                 "document_id": str(row["document_id"]), "quantity": row["quantity"], "item_id": row["item_id"],
+                 "supplier_id": row["supplier_id"], "document_status": row["document_status"]} for row in rows]
+
     def list(self, principal, company_id, limit=200):
         if type(limit) is not int or not 1 <= limit <= 500:
             raise ServiceError("INVALID_PAGE_LIMIT", 422)
