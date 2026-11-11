@@ -44,7 +44,7 @@ function stateAt(snapshot, { execution_id = 'synthetic-execution', revision = 2,
     result: status === 'COMPLETED' ? { answer: '합성 조회 결과', status: 'ANSWERED', meta: { ...snapshot.meta } } : null };
 }
 async function setup({ animated = false, reduced = false, agent = 'fake' } = {}) {
-  const elements = new Map(), requests = [], twins = [], answers = [], bomOpens = [], bomOpenArguments = [], documentEvents = {};
+  const elements = new Map(), requests = [], twins = [], twins2 = [], answers = [], bomOpens = [], bomOpenArguments = [], documentEvents = {};
   let data = snapshotAt(), handler = null, serial = 0;
   const get = id => { if (!elements.has(id)) elements.set(id, new Element('div')); return elements.get(id); };
   const context = vm.createContext({
@@ -66,6 +66,13 @@ async function setup({ animated = false, reduced = false, agent = 'fake' } = {})
         destroy() { this.destroyed = true; }, setActive(value) { this.active.push(value); },
         highlight(value) { this.highlights.push(value); }, reset() { this.resets++; } };
       twins.push(instance); return instance;
+    },
+    // Digital twin 2 (#twin2): same contract, recorded apart so twin-1 checks stay exact.
+    mountTwin2: (stage, options) => {
+      const instance = { options, highlights: [], active: [], destroyed: false, resets: 0,
+        destroy() { this.destroyed = true; }, setActive(value) { this.active.push(value); },
+        highlight(value) { this.highlights.push(value); }, reset() { this.resets++; } };
+      twins2.push(instance); return instance;
     },
     updateAiSummary: () => true,
     renderQueryAnswer: (message, answer, options) => {
@@ -103,7 +110,7 @@ async function setup({ animated = false, reduced = false, agent = 'fake' } = {})
       route: name => { location.hash = '#' + name; route(); }, invalidate: invalidateView,
       load: loadSnapshot, setContext, setTwinContext, twinActive: updateTwinActivity,
       poll: pollChanges, panels: () => panels, current: () => snapshot, setLive: value => { liveEnabled = value; } };`, context);
-  return { requests, app: context.app, twins, answers, bomOpens, bomOpenArguments, document: context.document, window: context.window, location: context.location,
+  return { requests, app: context.app, twins, twins2, answers, bomOpens, bomOpenArguments, document: context.document, window: context.window, location: context.location,
     documentEvents, element: get, setHandler(value) { handler = value; },
     snapshot: () => data, setNextSnapshot(value) { data = value; } };
 }
@@ -212,6 +219,19 @@ test('digital twin mounts the same authorized snapshot and preserves separate dr
   assert.match(h.app.twinPanel().context.textContent, /synthetic-twin-context/);
   assert.match(h.app.graphPanel().context.textContent, /synthetic-graph-context/);
   assert.equal(h.requests.length, count); assert.equal(JSON.stringify(h.snapshot()), original);
+});
+
+test('digital twin 2 mounts the same snapshot, uses the read API and receives the same evidence highlight', async () => {
+  const h = await setup(); await h.app.load();
+  const twin2 = h.twins2.at(-1);
+  assert.equal(twin2.options.snapshot, h.snapshot());
+  h.app.route('twin2'); assert.equal(twin2.active.at(-1), true); assert.equal(h.twins.at(-1).active.at(-1), false);
+  h.app.route('graph'); assert.equal(twin2.active.at(-1), false);
+  h.app.setTwinContext('synthetic-twin-context');
+  h.setHandler(request => { assert.equal(request.path, '/api/mks2/query'); return twinAnswer(h); });
+  await h.app.askTwin('합성 원장 질문');
+  assert.deepEqual(JSON.parse(JSON.stringify(twin2.highlights[0])), JSON.parse(JSON.stringify(h.twins.at(-1).highlights[0])));
+  assert.equal(apiCalls(h).length, 0);
 });
 
 test('digital twin queries the read API and forwards exact answer evidence and identity to highlight', async () => {
