@@ -26,6 +26,10 @@ class RejectCall(ProcurementReject):
     document_id: str = Field(min_length=1, max_length=100)
 
 
+class DocumentRead(Contract):
+    document_id: str = Field(min_length=1, max_length=100)
+
+
 def mount_procurement_api(app, *, db, identity, ledger, gateway, principal, context, verified_payload):
     service = ProcurementService(db, identity)
     app.state.procurement = service
@@ -46,6 +50,12 @@ def mount_procurement_api(app, *, db, identity, ledger, gateway, principal, cont
             content_hash=payload["metadata"]["source_sha256"])])
 
     gateway.register(ToolSpec("procurement.options", "query.read", False, ProcurementOptions, options_handler))
+
+    def document_handler(actor, args, ctx):
+        # Read-back for write reconciliation; the same document view as the UI.
+        return ToolOutput(data=service.get(actor, actor.company_id, args.document_id), snapshot=ctx)
+
+    gateway.register(ToolSpec("procurement.document", "document.read", False, DocumentRead, document_handler))
 
     def handler(action, model):
         def call(actor, args, ctx):
