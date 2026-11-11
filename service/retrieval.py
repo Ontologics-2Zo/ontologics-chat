@@ -2,7 +2,8 @@
 
 R0 uses exact identifiers and BM25; R1 adds local pretrained multilingual dense
 vectors and reciprocal-rank fusion; R3 also follows bounded, recorded edges.
-R2/R4/R5 are explicitly unimplemented. No global corpus, DB write, model API,
+R4 reorders R3 candidates with a pinned local cross-encoder. R2/R5 are
+explicitly unimplemented. No global corpus, DB write, model API,
 generated rewrite, automatic mapping or approval exists in this module.
 """
 
@@ -26,12 +27,13 @@ from service.imports import ENTITY_FIELDS
 from service.procurement_contracts import CONTENT_TYPES
 
 
-INDEX_VERSION = "snapshot-hybrid/2"
+INDEX_VERSION = "snapshot-hybrid/3"
 PROFILES = {"R0": "IMPLEMENTED", "R1": "IMPLEMENTED", "R2": "NOT_IMPLEMENTED",
-            "R3": "IMPLEMENTED", "R4": "NOT_IMPLEMENTED", "R5": "NOT_IMPLEMENTED"}
+            "R3": "IMPLEMENTED", "R4": "IMPLEMENTED", "R5": "NOT_IMPLEMENTED"}
 MAX_DOCUMENTS = 2500
 MAX_CORPUS_BYTES = 4 * 1024 * 1024
 MIN_COSINE = 0.45
+RERANK_POOL, RERANK_GRAPH = 20, 10
 _HASH = re.compile(r"^[0-9a-f]{64}$")
 _BOM_NODES = {"SourceDocument", "SourceSnapshot", "SourceRow", "BOMSnapshot", "BOMLine",
               "BOMApplication", "DocumentVersion", "ApprovalGrant"}
@@ -74,6 +76,12 @@ def lexical_tokens(text):
     words = re.findall(r"\w+(?:[-./:+]\w+)*|[%Ωµμ±]", _normal(text))
     result = list(words)
     for word in words:
+        # Spec strings such as value/voltage/tolerance/package stay whole and
+        # are also indexed by part, so "100nF" finds "100nF/16V/10%/X7R".
+        parts = [part for part in word.split("/") if part]
+        if len(parts) > 1:
+            result.extend(parts)
+    for word in words:
         for run in re.findall(r"[가-힣]{2,}", word):
             result.extend("ko:" + run[i:i + 2] for i in range(len(run) - 1))
     return result
@@ -84,6 +92,25 @@ def _time(value):
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise ValueError
     return parsed
+
+
+# Korean names of the T-Box classes and fields already shown on the screen
+# (web/mks2/lanegraph.js TYPE_KO). They are search cues only, never facts.
+TYPE_KO = {"Customer": "고객", "ContractLine": "계약 라인", "DeliveryRound": "납품 회차", "ProductionJob": "작업지시 생산 작업",
+           "ProductConfiguration": "제품 구성", "InternalItem": "사내 품목", "PartLot": "재고 LOT 로트",
+           "SupplierOffer": "견적", "Supplier": "공급사 업체"}
+FIELD_KO = {"customer_id": "고객", "supplier_id": "공급사", "item_id": "품목", "location": "보관 위치",
+            "substitute_status": "대체 후보", "technical_mapping_status": "기술 매핑", "unit_price": "단가",
+            "freight": "운송비", "lead_business_days": "리드타임", "promised_qty": "약속 수량", "moq": "최소 주문 수량"}
+STATUS_KO = {"NOT_REVIEWED": "검토 전 검토되지 않음", "UNREVIEWED": "미검토 검토되지 않음", "CANDIDATE": "후보"}
+
+
+def _korean_hints(original):
+    attributes = original.get("attributes") or {}
+    words = [TYPE_KO.get(original.get("type"), "")]
+    words += [FIELD_KO[key] for key in sorted(attributes) if key in FIELD_KO and attributes[key] not in (None, "")]
+    words += [STATUS_KO[value] for value in sorted({v for v in attributes.values() if isinstance(v, str)}) if value in STATUS_KO]
+    return " ".join(word for word in words if word)
 
 
 def _text(value):
@@ -201,7 +228,7 @@ def _build_corpus(payload, context):
         add("ledger_entity", original, {"sha256": entity["evidence"]["source_sha256"],
             "locator": entity["evidence"]["source_locator"], "source_version": meta.get("source_snapshot_id")},
             [entity["id"]], [entity["id"], entity["display_id"]], "synthetic_operation", "CANONICAL_SYNTHETIC",
-            _text(original))
+            (_text(original) + " " + _korean_hints(original)).strip())
 
     if bom:
         if _time(bom["registered_at"]) > context.known_as_of:
@@ -383,10 +410,11 @@ class _Index:
 
 
 class RetrievalService:
-    def __init__(self, authorize, embedding=None, *, cache_size=4):
+    def __init__(self, authorize, embedding=None, *, reranker=None, cache_size=4):
         if not callable(authorize) or type(cache_size) is not int or not 1 <= cache_size <= 8:
             raise ValueError("RETRIEVAL_CONFIGURATION_INVALID")
         self.authorize, self.embedding, self.cache_size = authorize, embedding, cache_size
+        self.reranker = reranker
         self._cache, self._lock = OrderedDict(), Lock()
 
     def _authorize(self, principal, payload, context):
@@ -431,6 +459,7 @@ class RetrievalService:
                     "corpus_version": index.corpus.version if index else None, "index_version": INDEX_VERSION,
                     "document_count": len(index.corpus.documents) if index else None,
                     "embedding": deepcopy(self.embedding.provenance) if self.embedding else None,
+                    "reranker": deepcopy(self.reranker.provenance) if self.reranker and profile == "R4" else None,
                     "lexical": "BM25 k1=1.2 b=0.75; unicode-parts-korean-bigrams/1",
                     "fusion": "weighted_reciprocal_rank k=60; exact=3 lexical=1 vector=1",
                     "vector_min_cosine": MIN_COSINE, "external_model_calls": 0},
@@ -455,6 +484,8 @@ class RetrievalService:
         corpus = index.corpus
         if request.context_entity_id and request.context_entity_id not in corpus.node_ids:
             raise ServiceError("RETRIEVAL_CONTEXT_UNAVAILABLE", 404)
+        if request.profile == "R4" and self.reranker is None:
+            return self._result(context, request.profile, index=index, status="INDEX_INCOMPLETE", code="RETRIEVAL_RERANKER_UNAVAILABLE")
         if request.profile != "R0" and self.embedding is None:
             return self._result(context, request.profile, index=index, status="INDEX_INCOMPLETE", code="RETRIEVAL_EMBEDDING_UNAVAILABLE")
         allowed = corpus.node_ids
@@ -470,11 +501,40 @@ class RetrievalService:
         except Exception:
             return self._result(context, request.profile, index=index, status="INDEX_ERROR", code="RETRIEVAL_INDEX_FAILED")
         result = self._result(context, request.profile, index=index, status="HIT" if ranked else "NO_HIT")
+        if request.profile == "R4" and ranked:
+            # Candidates: the fused direct matches plus documents reached
+            # through recorded edges from the top three. The local
+            # cross-encoder orders them; graph-only candidates compete on the
+            # same score instead of filling leftover slots.
+            seeds = {node for i in ranked[:3] for node in corpus.documents[i]["node_ids"]}
+            reached, edges = _neighbors(seeds, corpus.edges)
+            result["graph"] = {"node_ids": sorted(reached), "edges": deepcopy(edges), "max_hops": 2}
+            pool = list(ranked[:RERANK_POOL])
+            for i in indices:
+                if len(pool) >= RERANK_POOL + RERANK_GRAPH:
+                    break
+                if i not in pool and set(corpus.documents[i]["node_ids"]) & reached:
+                    pool.append(i)
+                    modes[i] = ["graph"]
+            try:
+                values = self.reranker.score(request.query, [corpus.documents[i]["text"][:2000] for i in pool])
+            except ServiceError:
+                return self._result(context, request.profile, index=index, status="INDEX_ERROR", code="RETRIEVAL_RERANK_FAILED")
+            order = {i: n for n, i in enumerate(pool)}
+            ranked = sorted(pool, key=lambda i: (-values[order[i]], order[i]))
+            for i in pool:
+                scores[i] = values[order[i]]
+                modes[i] = list(modes.get(i, [])) + ["rerank"]
         selected = ranked[:request.limit]
         if request.profile == "R3" and ranked:
             seeds = {node for i in ranked[:3] for node in corpus.documents[i]["node_ids"]}
             reached, edges = _neighbors(seeds, corpus.edges)
             result["graph"] = {"node_ids": sorted(reached), "edges": deepcopy(edges), "max_hops": 2}
+            # Graph-reached documents only fill free slots. Measured on the P0
+            # cases (SERVICE-RETRIEVAL-P0), fusing graph credit into the score
+            # reordered near-tied sibling documents (quotes sharing one item)
+            # and lowered MRR at every weight tried; ranking them is left to
+            # the P2 reranker.
             for i in indices:
                 if i not in selected and set(corpus.documents[i]["node_ids"]) & reached and len(selected) < request.limit:
                     selected.append(i)

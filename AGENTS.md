@@ -108,3 +108,23 @@ PR #4는 main `d61327b`에 병합·Mac 확인됐다. 후속 사용자는 제공�
 ## PR #7 병합·8870 적용 · DEC-H50~H51
 
 PR #7은 main `65fec1e`로 병합됐고 8870은 main 코드로 재시작됐다. 승인된 Azure ZDR 경로가 공급자 측에서 사용 불가라 8870은 현재 **모델 호출 비활성**이다. 경로 변경·예산·`.env`는 그대로이며, 경로 복구 후 기존 launcher로 live 재시작한다. [기록](docs/handoff/SERVICE-PR7-REVIEW-20261110.md)
+
+## 68대 답변 원형 카드·시연 자동 예약 · DEC-H52
+
+68대 질문 답변은 공유 원형의 카드 순서(의미→불량률→부족 표→일정 가정→견적 선택→판정)를 따르며 모든 숫자는 서버 조회 값이다. 근거 없는 일정 기간은 채우지 않는다. 다른 주문 예약의 자동 개입은 `ONTO_DEMO_AUTO_RESERVATION=1`인 격리 8874에서만 기존 예약 명령으로 1회 실행한다. 원래 8870 원장·모델 호출·배포·새 main 병합은 포함하지 않는다. [기록](docs/handoff/SERVICE-DASHBOARD-RESERVATION-20261110.md)
+
+## 모델 경로 Azure US·전체 AI 연결 · DEC-H54~55
+
+기본 `azure` 경로 사용 불가로 같은 승인 모델의 `azure/us` 단일 경로로 고정했다(fallback OFF, 경로 자체 가격으로 예산 계산). 원인 기록이 없던 예산 잠금은 사용자 승인으로 해제했고 과거 기록은 수정하지 않았다. 8874 격리 시연도 live이며 모델 기록은 8870 DB의 같은 US$10 예산 계정에 남긴다(복제·초기화 없음). 디지털 트윈 외 화면 질문은 AI 경로를 사용한다. 새 main 병합·배포·업무 쓰기는 포함하지 않는다. [기록](docs/handoff/SERVICE-MODEL-AZURE-US-20261111.md)
+
+## 검색 근거·AI 답변 문장 · DEC-H56
+
+Agent 흐름에 검색(R3) 근거와 AI 요약 문장을 붙였다. 전송 범위 A(사실 이름·출처·상태와 근거 ID만, 수량·원문 없음)이며 숫자는 자리표시로만 쓰게 하고 서버가 검증 후 채운다. 검증 실패 시 원장 답변만 보인다. `ONTO_MODEL_COMPOSE=true`인 8874에서만 켰다. 근거 검색은 Git 밖에 고정 설치한 로컬 재정렬 모델(R4)을 쓰고, 모델 파일이 없으면 R3로 동작한다.
+
+## 일정 What-if 시나리오 · DEC-H57
+
+일정 기간(검사·생산능력·출하 준비·운송)은 원장 사실이 아니라 회차별 SCENARIO 가정 문서(작성·다른 계정 승인·확정)로만 넣고 T-Box의 ScenarioRun/ScenarioProfile/ScenarioAssumption/ProductionPlan으로 투영한다. 일정 카드는 그 가정으로 계산하되 판정은 "납기 판단 보류"를 유지한다. [기록](docs/handoff/SERVICE-WHATIF-SCHEDULE-20261111.md) [기록](docs/handoff/SERVICE-RAG-COMPOSE-20261111.md)
+
+## 회차 전량 도착 이행 · DEC-H58
+
+기초 보드(일련번호 없음)는 COHORT 문서로 입고·출하·도착 수량만 옮기며 초기 이관 잔량을 넘지 않는다. 생산 실적은 수입검사 또는 재고 LOT 하나를 근거로 한다. 기존 문서 흐름·T-Box를 유지하고 전량 도착 답변도 도착기한 준수는 판단하지 않는다. 8874 격리 시연만 해당하며 8870 원장·main 병합·배포는 포함하지 않는다. [기록](docs/handoff/SERVICE-FULFILLMENT-T10-20261111.md)

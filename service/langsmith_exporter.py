@@ -103,7 +103,7 @@ class MetadataObservation(_Strict):
     name: Literal["agent_execution_summary", "agent_segment", "route", "specialist", "validate", "model.route",
                   "workflow.node", "ledger.query", "material.requirements", "product.review", "procurement.options",
                   "retrieval.search", "retrieval.evidence", "tool.gateway", "fulfillment_read", "material_analysis",
-                  "product_review", "procurement_review"]
+                  "product_review", "procurement_review", "retrieve", "compose", "model.compose"]
     kind: Literal["span", "generation", "event", "agent", "tool", "chain", "retriever", "guardrail", "evaluator"]
     status: Literal["completed", "failed", "needs_review", "cancelled", "ok", "success", "error", "interrupted", "waiting", "unknown"]
     start_ns: int = Field(ge=0, le=2**63 - 1)

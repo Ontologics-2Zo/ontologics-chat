@@ -11,6 +11,8 @@
 .mk-config-banner{display:flex;align-items:center;gap:10px;min-height:47px;flex-shrink:0;background:var(--warn-soft,#fff5e2);border:1px solid #f1b675;border-radius:10px;padding:10px 14px;font-size:13px}
 .mk-config-banner>b{font-size:11.5px;color:var(--warn,#bc5700);padding:0 7px;white-space:nowrap}
 .mk-config-banner>span{flex:1}
+.mk-config-banner.ok{background:var(--ok-soft,#e9f7ef);border-color:#8fd0a8}
+.mk-config-banner.ok>b{color:var(--ok,#1f7a46)}
 .mk-btn{display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--line,#d3dcef);border-radius:6px;padding:2px 8px;background:var(--surface,#fff);font-size:12px!important;font-weight:600!important;line-height:1.5;white-space:nowrap;color:var(--fg,#0f172a)}
 .mk-btn:hover:not(:disabled){border-color:var(--accent,#5546ff);color:var(--accent,#5546ff)}
 .mk-btn.primary{background:var(--accent,#5546ff);color:#fff;border-color:var(--accent,#5546ff)}
@@ -301,3 +303,35 @@
 .mk-drawer h3 .mk-spacer{flex:1}
 .mk-drawer h3 small{font-weight:400;font-size:11.5px;color:var(--fg3,#64748b)}
 .mk-drawer-steps button[data-progress=noted]{background:color-mix(in srgb,var(--ok,#16805d) 10%,var(--surface,#fff));border-color:var(--ok,#16805d);color:var(--ok,#16805d);border-style:dashed}
+.mk-supply-progress{margin:0}
+.mk-supply-progress>h3{margin:0 0 4px}
+.mk-supply-empty{margin:6px 0 0;font-size:12.5px;color:var(--fg2,#667)}
+.mk-supply-actions{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:8px}
+.mk-supply-steps small{margin-left:6px;color:var(--fg2,#667)}
+.mk-supply-steps{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:10px 0}
+.mk-supply-steps i{font-style:normal}
+.mk-supply-steps span{background:transparent;border:1px solid var(--line2,#d9dde7);border-radius:999px;padding:2px 10px;font-size:12px;color:var(--fg2,#667)}
+.mk-supply-steps span.mk-step-done{background:var(--accent-soft,#eef0fe);border-color:var(--accent,#4f46e5);color:var(--accent,#4f46e5)}
+.mk-supply-steps span.mk-step-current{border:1.5px solid var(--accent,#4f46e5);color:var(--accent,#4f46e5);font-weight:600}
+.mk-supply-rows{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0 0 12px;font-size:13px}
+.mk-supply-rows dt{color:var(--fg2,#667)}.mk-supply-rows dd{margin:0;font-family:var(--mono,ui-monospace,monospace)}
+.mk-supply-notice{margin:0 0 8px;font-size:12px;color:var(--fg2,#667)}.mk-supply-notice:empty{display:none}
+.mk-supply-progress .mk-bom-form{margin:4px 0 10px}
+
+/* Supply card in the shared MK-S2 style (flow3 / kv / warnbox) */
+.mk-supply-progress>h3{display:flex;align-items:center;gap:6px;margin:0 0 6px;font-size:14px}
+.mk-supply-steps{gap:4px;margin:6px 0 8px;font-size:11.5px}
+.mk-supply-steps i{color:var(--fg3,#94a3b8)}
+.mk-supply-steps span{padding:0 8px;font-size:11.5px;color:var(--fg3,#94a3b8);border-color:var(--line,#d9dde7);background:transparent}
+.mk-supply-steps span.mk-step-done{background:transparent;border-color:var(--ok,#16a34a);color:var(--ok,#16a34a)}
+.mk-supply-steps span.mk-step-current{border:1px solid var(--accent,#4f46e5);color:var(--accent,#4f46e5);font-weight:600}
+.mk-supply-rows{gap:3px 12px;margin:2px 0 8px;font-size:12.5px}
+.mk-supply-rows dt{color:var(--fg3,#94a3b8)}
+.mk-supply-rows dd{font-size:12px}
+.mk-supply-warn{border-left:3px solid var(--warn,#d97706);padding:6px 10px;background:var(--warn-soft,#fff7e6);border-radius:0 8px 8px 0;font-size:12.5px;margin:0 0 8px}
+.mk-supply-actions .mk-btn.primary{background:var(--accent,#4f46e5);border-color:var(--accent,#4f46e5);color:var(--accent-fg,#fff)}
+
+/* Document steps in the ledger events list (approval records, no ledger version) */
+.mk-event-list li.mk-event-step{color:var(--fg2,#475569)}
+.mk-event-version.mk-event-doc{color:var(--fg3,#94a3b8);font-weight:500}
+.mk-event-step-text{font-size:12.5px}

@@ -46,7 +46,7 @@ _STATES = frozenset({"completed", "failed", "needs_review", "cancelled", "ok",
 EXECUTION_ROOT_SPAN = "agent-execution-summary-v1"
 FEATURE_NAMES = ("fulfillment", "production", "materials", "inventory", "delivery", "ontology", "unknown")
 ObservedCapability = Literal["fulfillment_read", "material_analysis", "product_review", "procurement_review"]
-ObservedStage = Literal["execution", "segment", "route", "validate", "fulfillment_read", "material_analysis", "product_review", "procurement_review"]
+ObservedStage = Literal["execution", "segment", "route", "validate", "fulfillment_read", "material_analysis", "product_review", "procurement_review", "retrieve", "compose"]
 
 
 class _SafeIO(BaseModel):
@@ -122,8 +122,30 @@ class WorkflowObservationOutput(_SafeIO):
     clarification: str | None = None
 
 
-_IO_TYPES = (ModelObservationInput, ModelObservationOutput, WorkflowObservationInput, WorkflowObservationOutput)
-_CONTENT_LIMITS = {"question": 2000, "initial_question": 2000, "answer": 6000, "conclusion": 2000, "clarification": 2000}
+class ComposeObservationInput(_SafeIO):
+    """Answer packet sent to the model (scope A: no quantities or BOM text)."""
+    io_schema: Literal["model-compose-input/1"] = "model-compose-input/1"
+    execution_mode: Literal["fake", "live"]
+    fact_count: int = Field(ge=0, le=100)
+    evidence_count: int = Field(ge=0, le=10)
+    delivery_on_hold: bool
+    packet: str | None = None
+
+
+class ComposeObservationOutput(_SafeIO):
+    io_schema: Literal["model-compose-output/1"] = "model-compose-output/1"
+    status: Literal["completed", "failed", "outcome_unknown"]
+    paragraph_count: int = Field(ge=0, le=20)
+    usage: ObservedUsage
+    error_code: str | None = Field(default=None, pattern=r"^[A-Z][A-Z0-9_]{0,79}$")
+    summary: str | None = None
+
+
+_IO_TYPES = (ModelObservationInput, ModelObservationOutput, WorkflowObservationInput, WorkflowObservationOutput,
+             ComposeObservationInput, ComposeObservationOutput)
+# Content fields are kept only when local content recording is on (DEC-H43).
+_CONTENT_LIMITS = {"question": 2000, "initial_question": 2000, "answer": 6000, "conclusion": 2000, "clarification": 2000,
+                   "packet": 8000, "summary": 4000}
 
 
 def _redacted_text(value: str, limit: int, secrets: tuple[str, ...]) -> str:

@@ -9,7 +9,7 @@ from service.product_contracts import ProductReviewInput
 
 
 Capability = Literal["fulfillment_read", "material_analysis", "product_review", "procurement_review"]
-WORKFLOW_VERSION = "readonly-agent-v2"
+WORKFLOW_VERSION = "readonly-agent-v4"
 CHECKPOINT_VERSION = "agent-state-v1"
 
 

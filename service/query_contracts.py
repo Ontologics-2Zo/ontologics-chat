@@ -40,10 +40,49 @@ class QueryPrerequisite(Contract):
     next_action: QueryNextAction
 
 
+class QueryAnswerTable(Contract):
+    """Rows already computed by the same query; cells are display text."""
+    columns: list[str] = Field(min_length=1, max_length=8)
+    rows: list[list[str]] = Field(max_length=60)
+    alert_cells: list[list[int]] = Field(default_factory=list)  # [row, column]
+
+
+class QueryQuoteCard(Contract):
+    """A posted internal quote judged against the planned shortage. Selecting
+    one only opens the purchase-request draft form; nothing is sent."""
+    quote_id: str
+    quote_ref: str
+    supplier_id: str
+    material_basis: Literal["planned", "production_remaining"]
+    quantity_condition: Literal["MET", "NOT_MET", "UNKNOWN"]
+    recommended_qty: int | None
+    margin_qty: int | None
+    supply_limit_qty: int | None
+    moq: int | None
+    order_multiple: int | None
+    unit_price: str | None
+    currency: str | None
+    freight: str | None
+    total: str | None
+    lead_business_days: int | None
+    valid_until: str | None
+    reason: str
+
+
+# Labels name what produced each card inside this one deterministic query.
+# They are not separate agent tool executions.
+BlockSource = Literal["원장 조회", "원장 계산 · 생산실적", "원장 계산 · BOM 전개", "시연 가정 · 일정",
+                      "원장 조회 · 일정 · 견적", "원장 조회 · 견적 → 공급사", "판정"]
+
+
 class QueryAnswerBlock(Contract):
     """Sections of one completed query, not separate agent/tool executions."""
     id: str = Field(pattern=r"^[a-z][a-z0-9_]{0,79}$")
     title: str = Field(min_length=1, max_length=160)
-    tool: Literal["원장 조회"] = "원장 조회"
+    tool: BlockSource = "원장 조회"
     paragraphs: list[str] = Field(min_length=1)
-    kind: Literal["normal", "attention"]
+    kind: Literal["normal", "attention", "assumption", "verdict"]
+    table: QueryAnswerTable | None = None
+    quotes: list[QueryQuoteCard] | None = None
+    bullets: list[str] | None = None
+    action: Literal["REGISTER_BOM", "REVIEW_BOM_APPLICATION"] | None = None

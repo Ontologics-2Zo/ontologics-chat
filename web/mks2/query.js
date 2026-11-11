@@ -181,8 +181,11 @@ function answerParagraphs(answer, sections) {
       || prerequisite.counts?.calculation_items === 0
       || Array.isArray(prerequisite.selected_item_ids) && prerequisite.selected_item_ids.length > 0
         && prerequisite.selected_calculation_items === 0)) return [...new Set(paragraphs)];
+  // Materials with structured server numbers become one table (materialTable);
+  // the per-item sentences stay as row hover text instead of the main answer.
+  const tabled = materialRows(answer).length > 0;
   for (const section of sections) {
-    if (!['materials', 'inventory'].includes(section.id)) continue;
+    if (!['materials', 'inventory'].includes(section.id) || (tabled && section.id === 'materials')) continue;
     for (const item of Array.isArray(section.items) ? section.items : []) {
       if (!item || !text(item.value)) continue;
       const origin = text(item.origin || section.origin);
@@ -191,6 +194,39 @@ function answerParagraphs(answer, sections) {
     }
   }
   return [...new Set(paragraphs)];
+}
+
+function materialRows(answer) {
+  const items = answer?.calculation?.material_requirements?.items;
+  if (!Array.isArray(items)) return [];
+  return items.filter(item => item && text(item.item_id) && item.planned_required_qty != null && item.available_qty != null);
+}
+// Compact table for the graph-screen answer: shortages first, planned basis,
+// with the goal-basis numbers in brackets and the server sentence on hover.
+function materialTable(answer, sections) {
+  const rows = materialRows(answer);
+  if (!rows.length) return null;
+  const sentences = new Map();
+  for (const section of sections) if (section.id === 'materials') for (const item of section.items || []) if (text(item?.label)) sentences.set(item.label, `${item.value}${text(item.detail) ? '. ' + item.detail : ''}`);
+  const sorted = [...rows].sort((a, b) => Number(b.planned_shortage_qty || 0) - Number(a.planned_shortage_qty || 0) || String(a.item_id).localeCompare(String(b.item_id)));
+  const wrap = node('div', 'query-material-table');
+  const table = node('table', 'query-mini-table');
+  const head = node('tr');
+  for (const label of ['품목', '필요', '가용', '부족']) head.append(node('th', '', label));
+  const thead = node('thead'); thead.append(head); table.append(thead);
+  const body = node('tbody');
+  for (const item of sorted) {
+    const row = node('tr');
+    const unit = item.unit && item.unit !== 'EA' ? ` ${item.unit}` : '';
+    const shortage = Number(item.planned_shortage_qty || 0);
+    row.append(node('td', 'mono', item.item_id), node('td', 'n', `${item.planned_required_qty}${unit}`), node('td', 'n', `${item.available_qty}${unit}`),
+      node('td', shortage > 0 ? 'n alert' : 'n', shortage > 0 ? `${item.planned_shortage_qty}${unit}` : '—'));
+    if (sentences.has(item.item_id)) row.title = sentences.get(item.item_id);
+    body.append(row);
+  }
+  table.append(body); wrap.append(table);
+  wrap.append(node('p', 'note', '계획 투입(수율 반영) 기준 수량입니다. 항목에 마우스를 올리면 서버 산출 근거(양품 목표 기준 수량·출처)를 볼 수 있습니다. 적용 매핑·수량은 시연 가정이며 미확인 BOM 행은 부족 0으로 보지 않습니다.'));
+  return wrap;
 }
 
 function quantityRuns(paragraph, value, runs, segmenter) {
@@ -236,13 +272,125 @@ function evidencePreview(ids, suppliedNodes) {
   return { visible, remaining: ids.filter(id => !selected.has(id)) };
 }
 
+const quoteConditions = { MET: ['수량 충족', 'ok'], NOT_MET: ['수량 미충족', 'bad'], UNKNOWN: ['판단 보류 · 공급한도 미확인', 'warn'] };
+function answerTable(table) {
+  if (!table || !Array.isArray(table.columns) || !Array.isArray(table.rows)) return null;
+  const alerts = new Set((Array.isArray(table.alert_cells) ? table.alert_cells : []).map(cell => `${cell?.[0]}:${cell?.[1]}`));
+  const element = node('table', 'query-mini-table');
+  const head = node('tr'); table.columns.forEach(column => head.append(node('th', '', text(column))));
+  const thead = node('thead'); thead.append(head);
+  const body = node('tbody');
+  table.rows.forEach((row, r) => {
+    const tr = node('tr');
+    (Array.isArray(row) ? row : []).forEach((cell, c) => tr.append(node('td', `${c >= 2 ? 'n' : 'mono'}${alerts.has(`${r}:${c}`) ? ' alert' : ''}`, text(cell))));
+    body.append(tr);
+  });
+  element.append(thead, body);
+  return element;
+}
+function quoteCard(quote, onChooseQuote) {
+  const card = node('article', 'query-quote-card');
+  card.dataset.quoteId = text(quote.quote_id);
+  const head = node('div', 'query-quote-head');
+  head.append(node('b', '', text(quote.supplier_id)), node('span', 'chip', text(quote.quote_ref)));
+  const [label, tone] = quoteConditions[quote.quantity_condition] || ['미확인', 'mute'];
+  head.append(node('span', `pill ${tone}`, label));
+  if (quote.freight == null) head.append(node('span', 'pill warn', '운송비 미확인'));
+  const value = v => v == null || v === '' ? '미확인' : String(v);
+  const metrics = node('dl', 'query-quote-metrics');
+  for (const [name, v] of [['주문 수량', quote.recommended_qty], ['단가', quote.unit_price], ['공급한도', quote.supply_limit_qty],
+    ['MOQ / 배수', `${value(quote.moq)} / ${value(quote.order_multiple)}`], ['총액', quote.total], ['리드타임(견적)', quote.lead_business_days == null ? null : `${quote.lead_business_days}영업일`]]) {
+    metrics.append(node('dt', '', name), node('dd', '', value(v)));
+  }
+  card.append(head, metrics, node('p', 'query-quote-reason', text(quote.reason)));
+  const choose = action('이 견적으로 구매 요청 초안', () => onChooseQuote(quote), 'btn pri sm');
+  choose.dataset.queryAction = 'choose-quote';
+  if (quote.quantity_condition === 'NOT_MET' || !quote.recommended_qty) choose.disabled = true;
+  card.append(choose);
+  return card;
+}
+
+const evidenceKinds = { ledger_entity: '원장 개체', source_row: 'BOM 원문 행', application_review: 'BOM 적용 검토', development_document: '개발 문서' };
+// Model-written summary that passed the server's checks. Numbers in it were
+// filled by the server from its own results; the model only wrote sentences.
+// PENDING shows a placeholder that updateAiSummary() fills after the answer.
+function fillAiCard(card, summary) {
+  const heading = node('div', 'query-answer-heading');
+  if (summary?.status === 'PENDING') {
+    card.className = 'query-answer-card query-ai-summary query-ai-pending';
+    heading.append(node('h3', '', 'AI 요약'), node('span', 'query-answer-tool', '작성 중'));
+    const line = node('p', 'query-paragraph');
+    line.append(node('span', 'mk-spinner'), node('span', '', 'AI가 요약을 작성하고 있습니다. 원장 답변은 아래에 이미 표시되어 있습니다.'));
+    card.replaceChildren(heading, line);
+    return true;
+  }
+  if (!summary || summary.status !== 'VERIFIED' || !Array.isArray(summary.paragraphs) || !summary.paragraphs.length) {
+    card.className = 'query-answer-card query-ai-summary-fallback';
+    card.replaceChildren(node('p', 'note query-ai-fallback', 'AI 요약이 서버 검증을 통과하지 못해 원장 계산 결과만 표시합니다.'));
+    return false;
+  }
+  card.className = 'query-answer-card query-ai-summary';
+  heading.append(node('h3', '', 'AI 요약'), node('span', 'query-answer-tool', summary.execution_mode === 'live' ? '모델 작성 · 서버 검증' : '시험 모델 · 서버 검증'));
+  const children = [heading];
+  const facts = new Map((summary.facts || []).map(fact => [fact.id, text(fact.name)]));
+  summary.paragraphs.slice(0, 4).forEach(paragraph => {
+    const p = node('p', 'query-paragraph', text(paragraph.text));
+    const chips = node('span', 'query-ai-cites');
+    // One chip for the server facts used (names on hover), one per search evidence.
+    const cites = Array.isArray(paragraph.cites) ? paragraph.cites : [];
+    const used = cites.filter(cite => text(cite?.id) && !cite.evidence).map(cite => facts.get(cite.id) || cite.id);
+    if (used.length) {
+      const chip = node('span', 'query-ai-cite', `서버 사실 ${used.length}개`);
+      chip.title = used.join('\n');
+      chips.append(chip);
+    }
+    for (const cite of cites.filter(cite => text(cite?.id) && cite.evidence)) {
+      const chip = node('span', 'query-ai-cite', evidenceKinds[cite.evidence.kind] || '근거');
+      chip.title = `검색 근거 ${text(cite.evidence.evidence_id)}`;
+      chips.append(chip);
+    }
+    if (chips.children.length) p.append(chips);
+    children.push(p);
+  });
+  children.push(node('p', 'note', '숫자는 서버 계산값이며 AI는 문장만 작성했습니다. 판정은 아래 원장 답변을 따릅니다.'));
+  card.replaceChildren(...children);
+  return true;
+}
+function aiSummaryCard(answer) {
+  const summary = answer.ai_summary;
+  if (!summary || !['VERIFIED', 'PENDING'].includes(summary.status)) return null;
+  const card = node('section', 'query-answer-card');
+  card.dataset.blockId = 'ai_summary';
+  return fillAiCard(card, summary) ? card : null;
+}
+// Fills the placeholder card of an answer already on screen; the answer itself is unchanged.
+export function updateAiSummary(message, summary) {
+  const card = message?.aiSummaryCard;
+  if (!card) return false;
+  return fillAiCard(card, summary);
+}
+function retrievalChips(answer) {
+  const found = answer.retrieval;
+  if (!found || !Array.isArray(found.hits) || !found.hits.length) return null;
+  const wrap = node('div', 'query-retrieval');
+  wrap.append(node('span', 'query-retrieval-label', '검색 근거'));
+  found.hits.slice(0, 5).forEach(hit => {
+    // Ledger entity text starts with its internal URN; show the readable part.
+    const label = text(hit.text).replace(/^urn:\S+\s*/, '').slice(0, 36);
+    const chip = node('span', 'query-retrieval-chip', `${evidenceKinds[hit.kind] || '근거'} · ${label}`);
+    chip.title = `${text(hit.origin)} · ${text(hit.review_status)} · ${(hit.match_modes || []).join('+')}`;
+    wrap.append(chip);
+  });
+  return wrap;
+}
+
 function confirmedAnswerBlocks(answer, mode) {
   const blocks = answer.answer_blocks;
   if (mode !== 'workflow' || !Array.isArray(blocks) || !blocks.length || blocks.length > 12) return null;
   const ids = new Set();
   for (const block of blocks) {
     if (!block || !text(block.id) || ids.has(block.id) || !text(block.title) || !text(block.tool)
-        || !['normal', 'attention'].includes(block.kind) || !Array.isArray(block.paragraphs)
+        || !['normal', 'attention', 'assumption', 'verdict'].includes(block.kind) || !Array.isArray(block.paragraphs)
         || !block.paragraphs.length || !block.paragraphs.every(value => text(value).trim())) return null;
     ids.add(block.id);
   }
@@ -251,7 +399,7 @@ function confirmedAnswerBlocks(answer, mode) {
 
 export function renderQueryAnswer(message, answer, {
   evidenceIds = [], evidenceEdges = [], evidenceNodes = [], labelFor = id => id, onEvidence = () => {},
-  onReplay = () => {}, onCancel = () => {}, onOpenBom = () => {}, onReviewBom = () => {}, animate = false,
+  onReplay = () => {}, onCancel = () => {}, onOpenBom = () => {}, onReviewBom = () => {}, onChooseQuote = () => {}, animate = false,
   mode = 'graph', beforeBody, onProgress = () => {},
 } = {}) {
   let disposed = false, typingComplete = false, frame = null, startedAt = null, settled = false;
@@ -261,8 +409,9 @@ export function renderQueryAnswer(message, answer, {
   const settle = value => { if (!settled) { settled = true; resolveFinished(value); } };
   const guard = callback => (...args) => { if (!disposed) return callback(...args); };
   const progress = () => { if (!disposed) { try { onProgress(); } catch { /* Scrolling is optional presentation only. */ } } };
-  onEvidence = guard(onEvidence); onReplay = guard(onReplay); onCancel = guard(onCancel); onOpenBom = guard(onOpenBom); onReviewBom = guard(onReviewBom);
+  onEvidence = guard(onEvidence); onReplay = guard(onReplay); onCancel = guard(onCancel); onOpenBom = guard(onOpenBom); onReviewBom = guard(onReviewBom); onChooseQuote = guard(onChooseQuote);
   message.replaceChildren();
+  if (Number.isInteger(answer.meta?.ledger_version)) message.dataset.ledgerVersion = String(answer.meta.ledger_version);
   const sectionData = (Array.isArray(answer.sections) ? answer.sections : []).filter(section => section && typeof section === 'object');
   const blocks = confirmedAnswerBlocks(answer, mode), workflow = Boolean(blocks), cards = [];
   message.dataset.answerLayout = workflow ? 'workflow' : 'graph';
@@ -313,17 +462,42 @@ export function renderQueryAnswer(message, answer, {
     quantityRuns(paragraph, value, runs, segmenter); container.append(paragraph);
   });
   if (workflow) {
-    blocks.forEach((block, index) => {
-      const card = node('section', `query-answer-card${block.kind === 'attention' ? ' query-answer-attention' : ''}`);
+    let number = 0;
+    blocks.forEach(block => {
+      const kindClass = { attention: ' query-answer-attention', assumption: ' query-answer-assumption', verdict: ' query-answer-verdict' }[block.kind] || '';
+      const card = node('section', `query-answer-card${kindClass}`);
       card.dataset.blockId = block.id; card.hidden = typing;
       const heading = node('div', 'query-answer-heading');
-      heading.append(node('span', 'query-answer-number', String(index + 1)), node('h3', '', block.title), node('span', 'query-answer-tool', block.tool));
+      if (block.kind !== 'verdict') heading.append(node('span', 'query-answer-number', String(++number)));
+      heading.append(node('h3', '', block.title), node('span', 'query-answer-tool', block.tool));
       card.append(heading);
-      const start = runs.length; appendParagraphs(card, block.paragraphs);
+      // An assumption card is shown open; its heading tag (for example
+      // "시연 가정 · 일정") and its own style mark it as a scenario frame.
+      const target = card;
+      const table = answerTable(block.table);
+      if (table) target.append(table);
+      const start = runs.length; appendParagraphs(target, block.paragraphs);
+      if (Array.isArray(block.bullets) && block.bullets.length) {
+        const list = node('ul', 'query-answer-bullets');
+        block.bullets.forEach(value => list.append(node('li', '', text(value))));
+        target.append(list);
+      }
+      if (Array.isArray(block.quotes) && block.quotes.length) {
+        const wrap = node('div', 'query-quote-list');
+        block.quotes.forEach(quote => wrap.append(quoteCard(quote, onChooseQuote)));
+        target.append(wrap);
+      }
+      if (block.action === 'REGISTER_BOM') {
+        const register = action('BOM 원본 등록', onOpenBom, 'btn pri sm');
+        register.dataset.queryAction = 'bom-register'; target.append(register);
+      }
       cards.push({ element: card, runs: runs.slice(start), paragraphs: block.paragraphs });
       visibleBody.append(card);
     });
   } else appendParagraphs(visibleBody, paragraphs);
+  const aiCard = aiSummaryCard(answer);
+  message.aiSummaryCard = aiCard;
+  if (aiCard) verdict.append(aiCard);
   verdict.append(visibleBody);
   const typingControls = node('div', 'query-typing-controls'), typingStatus = node('span', 'query-typing-status');
   typingStatus.setAttribute('role', 'status'); typingStatus.setAttribute('aria-live', 'polite'); typingStatus.setAttribute('aria-atomic', 'true');
@@ -333,7 +507,9 @@ export function renderQueryAnswer(message, answer, {
   const supplement = node('div', 'query-supplement');
   supplement.hidden = typing;
   const requirements = answer.calculation?.material_requirements;
-  if (requirements?.state === 'BLOCKED_BOM' && requirements.bom_id == null) {
+  const cardRegister = (blocks || []).some(block => block.action === 'REGISTER_BOM');
+  if (cardRegister) { /* The card already carries the registration entry. */ }
+  else if (requirements?.state === 'BLOCKED_BOM' && requirements.bom_id == null) {
     const register = action('BOM 원본 등록', onOpenBom, 'btn pri sm');
     register.dataset.queryAction = 'bom-register';
     supplement.append(register);
@@ -344,6 +520,13 @@ export function renderQueryAnswer(message, answer, {
       review.dataset.queryAction = 'bom-review';
       supplement.append(review);
     }
+  }
+  const materials = workflow ? null : materialTable(answer, sectionData);
+  if (materials) supplement.prepend ? supplement.prepend(materials) : supplement.append(materials);
+  const chips = retrievalChips(answer);
+  if (chips) supplement.append(chips);
+  if (answer.ai_summary && ['REJECTED', 'UNAVAILABLE'].includes(answer.ai_summary.status)) {
+    supplement.append(node('p', 'note query-ai-fallback', 'AI 요약이 서버 검증을 통과하지 못해 원장 계산 결과만 표시합니다.'));
   }
   const scope = [];
   if (status) scope.push(status.textContent);

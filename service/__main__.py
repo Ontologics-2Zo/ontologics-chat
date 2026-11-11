@@ -9,7 +9,7 @@ from threading import Event, Thread
 from neo4j import GraphDatabase
 import uvicorn
 
-from dev.service_stack import load_runtime, runtime_path, StackError
+from dev.service_stack import load_database_url, load_runtime, runtime_path, StackError
 from service.db import Database
 from service.agent_config import load_agent_settings
 from service.errors import ServiceError
@@ -34,12 +34,19 @@ def parse_args(argv=None):
     parser.add_argument("--reference-preview",action="store_true")
     parser.add_argument("--import-initial",action="store_true")
     parser.add_argument("--agent-env-file",help="Optional private Agent settings; does not override DB runtime")
+    parser.add_argument("--model-budget-runtime-file",
+                        help="Keep model budget records in another local runtime's PostgreSQL (one shared budget)")
+    parser.add_argument("--model-budget-postgres-port",type=int)
     args=parser.parse_args(argv)
     if not 1<=args.port<=65535:
         parser.error("INVALID_PORT")
     ports=(args.postgres_port,args.neo4j_http_port,args.neo4j_bolt_port)
     if not all(1024<=port<=65535 for port in ports) or len(set((*ports,args.port)))!=4:
         parser.error("STACK_ARGUMENT_INVALID")
+    if bool(args.model_budget_runtime_file)!=(args.model_budget_postgres_port is not None) or (
+            args.model_budget_postgres_port is not None and (not 1024<=args.model_budget_postgres_port<=65535
+                                                            or args.model_budget_postgres_port in (*ports,args.port))):
+        parser.error("MODEL_BUDGET_ARGUMENT_INVALID")
     return args
 
 
@@ -57,6 +64,9 @@ def main():
                               (args.postgres_port,args.neo4j_http_port,args.neo4j_bolt_port))
         agent_settings=load_agent_settings(args.agent_env_file,environ=os.environ)
         db=Database(settings["DATABASE_URL"]);db.migrate()
+        # The shared budget database belongs to another service: never migrate it here.
+        budget_db=(Database(load_database_url(runtime_path(args.model_budget_runtime_file),args.model_budget_postgres_port))
+                   if args.model_budget_runtime_file else None)
         identity=IdentityService(db,enabled=args.dev_mode)
         if args.dev_mode:identity.provision_dev_accounts()
         ledger=LedgerReader(db,identity)
@@ -80,10 +90,14 @@ def main():
         retrieval_settings = Path(args.runtime_file).resolve().parent / "model-settings.json"
         retrieval_embedding = (LocalMultilingualEmbedding.from_settings(retrieval_settings)
                                if retrieval_settings.is_file() else None)
+        from service.retrieval_rerank import LocalCrossEncoderReranker
+        retrieval_reranker = (LocalCrossEncoderReranker.from_settings(retrieval_settings)
+                              if retrieval_settings.is_file() else None)
         origin=f"http://{args.origin_host}:{args.port}"
         app=create_app(db,private_root=private_root,origin=origin,dev_mode=args.dev_mode,
                        reference_preview=args.reference_preview,catalog=catalog,projector=projector,
-                       agent_settings=agent_settings, retrieval_embedding=retrieval_embedding,
+                       agent_settings=agent_settings, model_budget_db=budget_db, retrieval_embedding=retrieval_embedding,
+                       retrieval_reranker=retrieval_reranker,
                        agent_receipt_path=Path(args.runtime_file).resolve().parent / 'agent-observability.sqlite3')
 
         def worker():

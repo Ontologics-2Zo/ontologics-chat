@@ -302,6 +302,77 @@ class ProcurementDomainTests(unittest.TestCase):
         self.assertEqual(payload["procurement"]["receipts"][0]["lot_code"], "known-new-lot")
         self.assertEqual(payload["opening_balance"], self.original)
 
+    def test_a_draft_on_an_outdated_ledger_basis_can_still_be_returned(self):
+        stale = self.create(offer(quote_ref="stale-basis-draft"))
+        self.post(offer(quote_ref="advances-the-ledger"))
+        body = ProcurementReject(expected_version=stale["version"], payload_hash=stale["payload_hash"],
+            idempotency_key="reject-stale-draft", reason="Basis changed; the author must revise or drop it")
+        returned = self.service.reject(self.reviewer, self.company, stale["id"], body)
+        self.assertEqual((returned["status"], returned["rejection_reason"]), ("DRAFT", body.reason))
+        self.assert_code("PROCUREMENT_LEDGER_VERSION_CHANGED", lambda: self.action("review", returned))
+
+    def test_schedule_scenario_is_an_approved_assumption_in_the_graph(self):
+        from service.procurement_contracts import ScenarioContent
+        payload = self.ledger.read(self.author)
+        round_ = next(row for row in payload["entities"] if row["type"] == "DeliveryRound")
+        content = ScenarioContent(scenario_ref="SCN-test", round_id=round_["display_id"], inspection_business_days=1,
+            daily_capacity=20, ship_prep_business_days=1, transit_days=2, note="Demo schedule assumptions for what-if")
+        draft = self.create(content)
+        self.assert_code("SELF_REVIEW_FORBIDDEN", lambda: self.action("review", draft, actor=self.author))
+        self.post(content.model_copy(update={"scenario_ref": "SCN-posted"}))
+        after = self.ledger.read(self.author)
+        types = [row["type"] for row in after["entities"] if row.get("attributes", {}).get("provenance") == "DEMO_ASSUMPTION"]
+        self.assertEqual(sorted(set(types)), ["ProductionPlan", "ScenarioAssumption", "ScenarioProfile", "ScenarioRun"])
+        self.assertEqual(types.count("ScenarioAssumption"), 4)
+        # A "label" attribute would add a second rdfs:label and fail SHACL projection.
+        self.assertFalse(any("label" in row.get("attributes", {}) for row in after["entities"]
+                             if row.get("attributes", {}).get("provenance") == "DEMO_ASSUMPTION"))
+        run = next(row for row in after["entities"] if row["type"] == "ScenarioRun")
+        self.assertEqual(run["attributes"]["assumption_status"], "APPROVED_ASSUMPTION_NOT_FACT")
+        predicates = {(rel["predicate"]) for rel in after["relationships"] if rel["source"] == run["id"]}
+        self.assertTrue({"targetsRound", "usesProfile"} <= predicates)
+        self.assertTrue(any(rel["predicate"] == "hasPlan" for rel in after["relationships"]))
+        posted = [row for row in after["procurement"]["documents"] if row["kind"] == "SCENARIO"]
+        self.assertEqual(posted[0]["content"]["daily_capacity"], 20)
+        # The opening facts are untouched: assumptions never overwrite ledger quantities.
+        self.assertEqual(after["opening_balance"], self.original)
+
+    def test_baseline_boards_move_by_quantity_within_the_opening_balance(self):
+        from service.procurement_contracts import CohortContent
+        from service.procurement_state import legacy_pools
+        before = self.ledger.read(self.author)
+        round_id = before["opening_balance"]["delivery_round"]["round_id"]
+        pools = legacy_pools(before)
+        opening = before["opening_balance"]["delivery_round"]
+        def move(stage, quantity, ref):
+            return CohortContent(cohort_ref=ref, round_id=round_id, stage=stage, quantity=quantity,
+                                 note="Opening-balance boards moved by quantity")
+        if pools["warehouse"] < 1 or pools["in_transit"] < 1:
+            self.skipTest("fixture has no baseline boards in the warehouse and in transit")
+        self.assert_code("FULFILLMENT_EXCEEDS_LEGACY_COHORT", lambda: self.create(move("SHIPMENT", pools["warehouse"] + 1, "too-many")))
+        self.post(move("SHIPMENT", 1, "cohort-ship-1"))
+        self.post(move("ARRIVAL", 1, "cohort-arrive-1"))
+        after = self.ledger.read(self.author)
+        round_ = after["current_delivery_round"]
+        self.assertEqual(round_["shipped_qty"], opening["shipped_qty"] + 1)
+        self.assertEqual(round_["arrived_qty"], opening["arrived_qty"] + 1)
+        self.assertEqual(round_["remaining_promise_qty"], opening["remaining_promise_qty"] - 1)
+        self.assertEqual(legacy_pools(after), {**pools, "warehouse": pools["warehouse"] - 1})
+        types = {row["type"] for row in after["entities"]}
+        self.assertTrue({"LegacyCohort", "Shipment", "ArrivalRecord"} <= types)
+        self.assertTrue(any(rel["predicate"] == "shipsCohort" for rel in after["relationships"]))
+
+    def test_activity_lists_document_steps_but_not_postings(self):
+        draft = self.create(offer(quote_ref="activity-quote"))
+        approved = self.action("approve", self.action("review", draft))
+        self.action("post", approved)
+        steps = self.service.activity(self.reviewer, self.company)
+        mine = [step for step in steps if step["document_id"] == str(draft["id"])]
+        self.assertEqual([step["action"] for step in mine], ["approve", "review", "create"])  # newest first
+        self.assertTrue(all(step["kind"] == "QUOTE" and step["recorded_at"] for step in mine))
+        self.assertNotIn("post", {step["action"] for step in steps})
+        self.assert_code("INVALID_PAGE_LIMIT", lambda: self.service.activity(self.reviewer, self.company, limit=0))
+
     def test_independent_rejection_revokes_grant_and_cannot_reject_posted(self):
         draft = self.create(offer())
         approved = self.action("approve", self.action("review", draft))

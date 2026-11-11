@@ -43,7 +43,7 @@ function stateAt(snapshot, { execution_id = 'synthetic-execution', revision = 2,
       allowed_capabilities: ['fulfillment_read', 'material_analysis'] } : null,
     result: status === 'COMPLETED' ? { answer: '합성 조회 결과', status: 'ANSWERED', meta: { ...snapshot.meta } } : null };
 }
-async function setup({ animated = false, reduced = false } = {}) {
+async function setup({ animated = false, reduced = false, agent = 'fake' } = {}) {
   const elements = new Map(), requests = [], twins = [], answers = [], bomOpens = [], bomOpenArguments = [], documentEvents = {};
   let data = snapshotAt(), handler = null, serial = 0;
   const get = id => { if (!elements.has(id)) elements.set(id, new Element('div')); return elements.get(id); };
@@ -67,6 +67,7 @@ async function setup({ animated = false, reduced = false } = {}) {
         highlight(value) { this.highlights.push(value); }, reset() { this.resets++; } };
       twins.push(instance); return instance;
     },
+    updateAiSummary: () => true,
     renderQueryAnswer: (message, answer, options) => {
       let resolve;
       const finished = new Promise(done => { resolve = done; });
@@ -81,7 +82,7 @@ async function setup({ animated = false, reduced = false } = {}) {
       const request = { path, method: options.method || 'GET', body: options.body && JSON.parse(options.body) };
       requests.push(request);
       let result;
-      if (path === '/health') result = { agent: { mode: 'fake' } };
+      if (path === '/health') result = { agent: { mode: agent } };
       else if (path === '/api/mks2/session') result = { authenticated: false, profiles: [] };
       else if (path === '/api/mks2/snapshot') result = data;
       else if (path === '/api/mks2/ontology') result = { meta: { ...data.meta }, graph: { data: { nodes: [], edges: [] } } };
@@ -329,7 +330,8 @@ test('workflow uses server cards without automatic graph replay and the manual a
 
 test('animated graph hands one replay hook to the renderer while twin and reduced motion never wait for it', async () => {
   for (const [surface, reduced] of [['graph', false], ['graph', true], ['twin', false]]) {
-    const h = await setup({ animated: true, reduced }); await h.app.load(); h.app.route(surface);
+    // Graph presentation on the read API, as when the model is off.
+    const h = await setup({ animated: true, reduced, agent: 'disabled' }); await h.app.load(); h.app.route(surface);
     h.setHandler(() => twinAnswer(h)); await (surface === 'graph' ? h.app.askGraph('합성 그래프 질문') : h.app.askTwin('합성 트윈 질문'));
     const shown = h.answers[0]; assert.equal(shown.options.mode, 'graph');
     if (surface === 'graph' && !reduced) {
@@ -404,7 +406,7 @@ test('reset and identity invalidation dispose presentations before removing thei
 });
 
 test('a response arriving on a hidden tab is complete without animation or mixing parallel panel answers', async () => {
-  const h = await setup(); await h.app.load(); h.app.route('twin');
+  const h = await setup({ agent: 'disabled' }); await h.app.load(); h.app.route('twin');
   let replyTwin, replyGraph;
   h.setHandler(request => new Promise(resolve => {
     if (request.body.question === '합성 트윈 요청') replyTwin = resolve; else replyGraph = resolve;
@@ -481,6 +483,39 @@ test('a relevant committed reservation auto-refreshes and adds one status line w
   assert.equal(h.requests.filter(request => request.path.startsWith('/api/mks2/agent/') || request.path === '/api/mks2/query').length, 0);
   await h.app.poll();
   assert.equal(h.app.panels().dashboard.status.children.length, 1);
+});
+
+test('a grown shortage puts the same question back in the empty input and offers it again', async () => {
+  for (const typed of ['', '입력 중인 질문']) {
+    const h = await setup();
+    h.snapshot().material_requirements = { items: [{ item_id: 'item-a' }] };
+    const panel = h.app.panels().dashboard;
+    panel.topics.add('item-a'); panel.lastQuestion = '남은 68대, 납기 안에 고객에게 도착할 수 있어?'; panel.input.value = typed;
+    h.setHandler(request => request.path.startsWith('/api/mks2/events') ? reservationChanges('READY') : undefined);
+    h.setNextSnapshot(reservedSnapshot());
+    await h.app.poll();
+    assert.equal(panel.input.value, typed || panel.lastQuestion);
+    assert.match(panel.status.textContent, /같은 질문 다시 하기/);
+  }
+});
+
+test('the same-question button sends the question at once', async () => {
+  const h = await setup();
+  h.snapshot().material_requirements = { items: [{ item_id: 'item-a' }] };
+  const panel = h.app.panels().dashboard;
+  panel.topics.add('item-a'); panel.lastQuestion = '합성 재질문';
+  h.setHandler(request => request.path.startsWith('/api/mks2/events') ? reservationChanges('READY')
+    : request.path.endsWith('/run') ? stateAt(h.snapshot(), { status: 'COMPLETED', revision: 3 })
+      : request.path === '/api/mks2/agent/executions' ? stateAt(h.snapshot(), { status: 'READY', revision: 1 }) : undefined);
+  h.setNextSnapshot(reservedSnapshot());
+  await h.app.poll();
+  const again = (function find(node) { return node.textContent === '같은 질문 다시 하기' && node.events?.click ? node : node.children?.map(find).find(Boolean); })(panel.status);
+  assert.ok(again);
+  again.events.click();
+  await new Promise(setImmediate);
+  const created = h.requests.filter(r => r.path === '/api/mks2/agent/executions');
+  assert.equal(created.length, 1);
+  assert.equal(created[0].body.question, '합성 재질문');
 });
 
 test('a reservation whose graph projection is pending keeps the old snapshot and says the graph is updating', async () => {
@@ -593,4 +628,39 @@ test('an answer still typing out does not block applying a committed event', asy
   await h.app.poll();
   assert.equal(h.app.current().meta.ledger_version, 8);
   assert.match(h.app.panels().dashboard.status.textContent, /23→28/);
+});
+
+test('with a model connected the graph assistant takes the agent path and the twin keeps the read API', async () => {
+  const h = await setup(); await h.app.load(); h.app.route('graph');
+  h.setHandler(request => request.path === '/api/mks2/query' ? twinAnswer(h)
+    : request.path.endsWith('/run') ? stateAt(h.snapshot(), { status: 'COMPLETED', revision: 3 })
+      : stateAt(h.snapshot(), { status: 'READY', revision: 1 }));
+  await h.app.askGraph('합성 그래프 질문');
+  assert.deepEqual(h.requests.filter(r => r.path.startsWith('/api/mks2/')).map(r => r.path).filter(p => /agent|query/.test(p)),
+    ['/api/mks2/agent/executions', '/api/mks2/agent/executions/synthetic-execution/run']);
+  assert.match(h.app.graphPanel().messages.textContent, /합성 조회 결과/);
+  h.app.route('twin'); await h.app.askTwin('합성 트윈 질문');
+  assert.equal(h.requests.filter(r => r.path === '/api/mks2/query').length, 1);
+});
+
+test('suggestions say why they are shown and mark questions that just appeared', async () => {
+  const h = await setup();
+  h.snapshot().suggested_questions = ['합성 회차 질문'];
+  h.snapshot().summary = { bom_status: 'POSTED_SOURCE', item_id: 'item-a' };
+  h.snapshot().material_requirements = { items: [{ item_id: 'item-a' }] };
+  h.app.panels().dashboard.topics.add('item-a');
+  await h.app.load();
+  const container = h.app.panels().dashboard.suggestions;
+  const texts = () => container.children.map(child => child.textContent);
+  assert.equal(texts()[0], '현재 원장 기준 추천 질문');
+  assert.equal(container.children.filter(child => child.className.includes('suggestion-new')).length, 0);
+  const next = reservedSnapshot();
+  next.summary = { bom_status: 'POSTED_SOURCE', item_id: 'item-a' };
+  next.suggested_questions = ['합성 후속 질문', '합성 회차 질문'];
+  h.setHandler(request => request.path.startsWith('/api/mks2/events') ? reservationChanges('READY') : undefined);
+  h.setNextSnapshot(next);
+  await h.app.poll();
+  assert.equal(texts()[0], '다른 주문 예약 반영 (v8) · 확인할 질문');
+  const fresh = container.children.filter(child => child.className.includes('suggestion-new'));
+  assert.deepEqual(fresh.map(child => child.textContent), ['합성 후속 질문새']);
 });

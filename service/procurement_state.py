@@ -7,6 +7,16 @@ from service.errors import ServiceError
 from service.procurement_contracts import CONTENT_TYPES
 
 
+def legacy_pools(payload):
+    """Opening-balance boards (no serials) still at each stage, after posted cohort moves."""
+    stored = (payload.get("fulfillment") or {}).get("legacy")
+    if stored:
+        return dict(stored)
+    opening = payload["opening_balance"]["delivery_round"]
+    return {"good_not_received": opening["good_not_received_qty"], "warehouse": opening["warehouse_qty"],
+            "in_transit": opening["in_transit_qty"]}
+
+
 def apply_procurement_event(previous, event):
     try:
         value = event["payload"]
@@ -41,7 +51,7 @@ def apply_procurement_event(previous, event):
         raise ServiceError("PROCUREMENT_EVENT_DUPLICATE", 409)
     resolved = content["resolved"]
     parent = None
-    if kind != "QUOTE":
+    if kind not in {"QUOTE", "SCENARIO", "COHORT"} and not (kind == "PRODUCTION" and content.get("lot_code")):
         parent_ref = resolved.get("parent", {})
         parent = documents.get(parent_ref.get("id"))
         if (not parent or any(parent[key] != parent_ref[ref] for key, ref in
@@ -139,6 +149,33 @@ def apply_procurement_event(previous, event):
         parent["cancelled_by"] = identifier
         if parent["kind"] == "PO":
             parent["confirmed_remaining_qty"] = 0
+    if kind == "COHORT":
+        # Baseline boards move by quantity between the stages the opening
+        # balance recorded; never more than that stage still holds.
+        cohort_state = snapshot.setdefault("fulfillment", {"boards": {}, "scope": "INTERNAL_DEVELOPMENT_ONLY"})
+        pools = legacy_pools(snapshot)
+        round_ = snapshot.setdefault("current_delivery_round", deepcopy(snapshot["opening_balance"]["delivery_round"]))
+        n, stage = typed.quantity, typed.stage
+        source, target = {"FG_RECEIPT": ("good_not_received", "warehouse"), "SHIPMENT": ("warehouse", "in_transit"),
+                          "ARRIVAL": ("in_transit", None)}[stage]
+        if resolved["round_id"] != round_["round_id"] or n > pools[source]:
+            raise ServiceError("FULFILLMENT_EXCEEDS_LEGACY_COHORT", 409)
+        pools[source] -= n
+        if target:
+            pools[target] += n
+        cohort_state["legacy"] = pools
+        if stage == "FG_RECEIPT":
+            round_["fg_received_qty"] += n; round_["good_not_received_qty"] -= n; round_["warehouse_qty"] += n
+        elif stage == "SHIPMENT":
+            round_["shipped_qty"] += n; round_["warehouse_qty"] -= n; round_["in_transit_qty"] += n
+        else:
+            round_["arrived_qty"] += n; round_["in_transit_qty"] -= n; round_["remaining_promise_qty"] -= n
+        if min(round_[key] for key in ("good_not_received_qty", "warehouse_qty", "in_transit_qty", "remaining_promise_qty")) < 0:
+            raise ServiceError("FULFILLMENT_EVENT_BASIS_INVALID", 409)
+        round_entity = next(x for x in snapshot["entities"] if x["id"] == resolved["round_entity_id"])
+        for key in ("fg_received_qty", "shipped_qty", "arrived_qty", "good_not_received_qty", "warehouse_qty",
+                    "in_transit_qty", "remaining_promise_qty"):
+            round_entity.setdefault("attributes", {})[key] = round_[key]
     fulfillment = None
     if kind in {"PRODUCTION", "FG_RECEIPT", "SHIPMENT", "ARRIVAL"}:
         fulfillment = snapshot.setdefault("fulfillment", {"boards": {}, "scope": "INTERNAL_DEVELOPMENT_ONLY"})
@@ -210,7 +247,9 @@ def apply_procurement_event(previous, event):
             "source": start, "predicate": predicate, "target": end, "evidence": deepcopy(evidence)})
     type_ = {"QUOTE": "SupplierOffer", "PR": "PurchaseRequest", "PO": "PurchaseOrder", "SUPPLY_CONFIRMATION": "SourceDocument",
              "RECEIPT": "PartsReceiptLine", "IQC": "InspectionResult", "CANCEL": "SourceDocument",
-             "PRODUCTION": "ProductionReport", "FG_RECEIPT": "FinishedGoodsReceipt", "SHIPMENT": "Shipment", "ARRIVAL": "ArrivalRecord"}[kind]
+             "PRODUCTION": "ProductionReport", "FG_RECEIPT": "FinishedGoodsReceipt", "SHIPMENT": "Shipment", "ARRIVAL": "ArrivalRecord",
+             "SCENARIO": "ScenarioRun",
+             "COHORT": {"FG_RECEIPT": "FinishedGoodsReceipt", "SHIPMENT": "Shipment", "ARRIVAL": "ArrivalRecord"}.get(content.get("stage"), "SourceDocument")}[kind]
     attributes = {"document_id": identifier, "kind": kind, "status": "POSTED", "quantity": getattr(typed, "quantity", 0),
                   "supplier_confirmation": False, "transmission_status": "NOT_SENT"}
     if kind == "IQC":
@@ -223,12 +262,21 @@ def apply_procurement_event(previous, event):
         attributes.update(cancelled_remaining_qty=resolved["cancelled_remaining_qty"])
     elif kind == "QUOTE":
         attributes.update({key: content[key] for key in ("unit_price", "currency", "moq", "order_multiple", "freight", "valid_until")})
+    elif kind == "COHORT":
+        attributes.update(stage=typed.stage, cohort_ref=typed.cohort_ref, round_id=resolved["round_id"],
+                          board_identity="UNKNOWN_LEGACY_COHORT", quantity=typed.quantity)
+    elif kind == "SCENARIO":
+        attributes.update(scenario_ref=typed.scenario_ref, round_id=resolved["round_id"], provenance="DEMO_ASSUMPTION",
+                          assumption_status="APPROVED_ASSUMPTION_NOT_FACT")
     elif fulfillment is not None:
         attributes.update(board_serials=list(resolved["board_serials"]), round_id=resolved["round_id"])
         if kind == "PRODUCTION":
             attributes.update(lot_code=resolved["lot_code"], item_id=resolved["item_id"], consumed_qty=resolved["consumed_qty"],
                               quantity_per_board=resolved["quantity_per_board"], conditional_application=resolved["conditional_application"])
-    document_node = node("document", type_, attributes, kind + " " + identifier[:8])
+    document_node = node("document", type_, attributes,
+                         typed.scenario_ref if kind == "SCENARIO"
+                         else f"기초 보드 {dict(FG_RECEIPT='입고', SHIPMENT='출하', ARRIVAL='도착')[typed.stage]} {typed.quantity}대" if kind == "COHORT"
+                         else kind + " " + identifier[:8])
     revision = node("version", "DocumentVersion", {"version": value["document_version"], "payload_hash": value["payload_hash"]}, kind + " version")
     grant = node("approval", "ApprovalGrant", approval, kind + " approval")
     edge(grant, "approvalForDocumentVersion", revision)
@@ -241,7 +289,42 @@ def apply_procurement_event(previous, event):
         source = node("evidence", "Evidence", evidence, kind + " evidence")
         edge(node_id(parent["id"]), "supportedBy", source)
         edge(document_node, "supportedBy", source)
-    if kind == "QUOTE":
+    if kind == "COHORT":
+        # One LegacyCohort per round: the opening-balance boards without serials.
+        cohort_id = "urn:ontologics:procurement:" + content_hash([meta["company_id"], meta["run_id"], resolved["round_id"], "legacy-cohort"])
+        if not any(x["id"] == cohort_id for x in snapshot["entities"]):
+            snapshot["entities"].append({"id": cohort_id, "type": "LegacyCohort", "source_type": "LegacyCohort",
+                "display_id": f"{resolved['round_id']} 기초 보드", "logicalId": f"{resolved['round_id']} 기초 보드",
+                "label": f"{resolved['round_id']} 기초 보드", "origin": "synthetic_operation", "run_id": meta["run_id"],
+                "attributes": {"board_identity": "UNKNOWN_LEGACY_COHORT", "round_id": resolved["round_id"]},
+                "evidence": deepcopy(evidence)})
+        if typed.stage == "SHIPMENT":
+            edge(document_node, "shipmentForRound", resolved["round_entity_id"])
+            edge(document_node, "shipsCohort", cohort_id)
+        else:
+            edge(document_node, "supportedBy", node("evidence", "Evidence", evidence, f"{typed.cohort_ref} evidence"))
+    elif kind == "SCENARIO":
+        # ScenarioRun → targetsRound → round; → usesProfile → profile → usesAssumption → each value.
+        # The job's ProductionPlan uses the capacity assumption. All values are assumptions.
+        edge(document_node, "targetsRound", resolved["round_entity_id"])
+        profile = node("profile", "ScenarioProfile", {"scenario_ref": typed.scenario_ref, "provenance": "DEMO_ASSUMPTION"},
+                       typed.scenario_ref + " profile")
+        edge(document_node, "usesProfile", profile)
+        assumption_ids = {}
+        for key, label, value_, unit in (("inspection_business_days", "수입검사 기간", typed.inspection_business_days, "영업일"),
+                                         ("daily_capacity", "생산능력", typed.daily_capacity, "대/영업일"),
+                                         ("ship_prep_business_days", "출하 준비 기간", typed.ship_prep_business_days, "영업일"),
+                                         ("transit_days", "운송 기간", typed.transit_days, "일")):
+            # "label" would collide with the entity's rdfs:label (one label only).
+            assumption_ids[key] = node(key, "ScenarioAssumption", {"assumption_key": key, "assumption_label": label, "value": value_,
+                                       "unit": unit, "provenance": "DEMO_ASSUMPTION"}, f"{label} {value_}{unit}")
+            edge(profile, "usesAssumption", assumption_ids[key])
+        if resolved.get("job_entity_id"):
+            plan = node("plan", "ProductionPlan", {"scenario_ref": typed.scenario_ref, "daily_capacity": typed.daily_capacity,
+                        "provenance": "DEMO_ASSUMPTION"}, typed.scenario_ref + " plan")
+            edge(resolved["job_entity_id"], "hasPlan", plan)
+            edge(plan, "usesAssumption", assumption_ids["daily_capacity"])
+    elif kind == "QUOTE":
         edge(document_node, "offersItem", resolved["item_entity_id"])
         edge(document_node, "offerFromSupplier", resolved["supplier_entity_id"])
     elif kind == "PR":

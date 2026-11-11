@@ -15,6 +15,7 @@ from service.contracts import CANONICAL_VERSION, DocumentAction, canonical_bytes
 from service.domain import DomainService, _public
 from service.errors import ServiceError
 from service.materials import requirements_for_snapshot
+from service.procurement_state import legacy_pools
 from service.procurement_contracts import CONTENT_TYPES, FULFILLMENT_KINDS, ProcurementCreate, ProcurementReject, ProcurementRevise
 
 
@@ -130,6 +131,25 @@ class ProcurementService(DomainService):
     def _resolve(self, conn, company, payload, content):
         kind = content.kind
         value = content.model_dump(mode="json")
+        if kind == "COHORT":
+            round_ = payload.get("current_delivery_round", payload["opening_balance"]["delivery_round"])
+            if content.round_id != round_["round_id"]:
+                raise ServiceError("FULFILLMENT_ENTITY_UNCONFIRMED", 409)
+            pools = legacy_pools(payload)
+            source = {"FG_RECEIPT": "good_not_received", "SHIPMENT": "warehouse", "ARRIVAL": "in_transit"}[content.stage]
+            if content.quantity > pools[source]:
+                raise ServiceError("FULFILLMENT_EXCEEDS_LEGACY_COHORT", 409)
+            round_entity = self._entity(payload, "DeliveryRound", round_["round_id"])
+            return {"round_id": round_["round_id"], "round_entity_id": round_entity["id"], "stage": content.stage,
+                    "pools_before": pools, "quantity": content.quantity}
+        if kind == "SCENARIO":
+            # Assumptions target one existing delivery round and its job; no parent document.
+            round_ = self._entity(payload, "DeliveryRound", content.round_id)
+            job = next((row for row in payload["entities"] if row["type"] == "ProductionJob"
+                        and any(rel["predicate"] == "jobForRound" and rel["source"] == row["id"] and rel["target"] == round_["id"]
+                                for rel in payload["relationships"])), None)
+            return {"round_id": round_["display_id"], "round_entity_id": round_["id"],
+                    "job_entity_id": job["id"] if job else None, "provenance": "DEMO_ASSUMPTION"}
         if kind == "QUOTE":
             self._valid_quote(value)
             item = self._entity(payload, "InternalItem", content.item_id)
@@ -258,8 +278,17 @@ class ProcurementService(DomainService):
                   "configuration_entity_id": entity("ProductConfiguration", round_["configuration_id"])["id"],
                   "customer_entity_id": customers[0] if len(customers) == 1 else None}
         if kind == "PRODUCTION":
-            parent = self._parent(conn, company, content.iqc_id, "IQC")
-            lot_code, item_id, unit = parent["content"]["resolved"]["lot_code"], parent["content"]["resolved"]["item_id"], parent["content"]["resolved"]["unit"]
+            if content.iqc_id:
+                parent = self._parent(conn, company, content.iqc_id, "IQC")
+                lot_code, item_id, unit = parent["content"]["resolved"]["lot_code"], parent["content"]["resolved"]["item_id"], parent["content"]["resolved"]["unit"]
+            else:
+                # An existing LOT: its own available quantity (after other demands' reservations) is the limit.
+                parent = None
+                stock = payload.get("current_inventory", payload["opening_balance"]["inventory"])
+                rows = [row for row in stock if row.get("scope") == "LOT" and row.get("lot_id") == content.lot_code]
+                if len(rows) != 1:
+                    raise ServiceError("FULFILLMENT_LOT_NOT_AVAILABLE", 409)
+                lot_code, item_id, unit = rows[0]["lot_id"], rows[0]["item_id"], rows[0]["unit"]
             if any(serial in boards for serial in serials):
                 raise ServiceError("FULFILLMENT_BOARD_ALREADY_RECORDED", 409)
             if len(serials) > round_["remaining_good_target_qty"]:
@@ -282,7 +311,7 @@ class ProcurementService(DomainService):
             if not lines:
                 raise ServiceError("FULFILLMENT_BOM_LINE_UNCONFIRMED", 409)
             job = entity("ProductionJob", round_["job_id"])
-            return {**common, "parent": self._reference(parent), "item_id": item_id, "unit": unit, "lot_code": lot_code,
+            return {**common, **({"parent": self._reference(parent)} if parent else {}), "item_id": item_id, "unit": unit, "lot_code": lot_code,
                     "lot_entity_id": entity("PartLot", lot_code)["id"], "quantity_per_board": format(per_board, "f"),
                     "consumed_qty": consumed, "bom_line_entity_id": sorted(row["id"] for row in lines)[0],
                     "job_entity_id": job["id"], "conditional_application": items[0]["conditional"]}
@@ -303,8 +332,10 @@ class ProcurementService(DomainService):
         elif content.kind == "SUPPLY_CONFIRMATION":
             quantity = content.confirmed_qty
         key = next((getattr(content, name) for name in ("quote_ref", "confirmation_ref", "receipt_ref", "inspection_ref",
-                                                        "production_ref", "shipment_ref", "arrival_ref") if hasattr(content, name)), None)
-        return (resolved.get("parent", {}).get("id"), key, getattr(content, "lot_code", None), quantity,
+                                                        "production_ref", "shipment_ref", "arrival_ref", "scenario_ref", "cohort_ref") if hasattr(content, name)), None)
+        # Only a receipt creates a LOT; production from an existing LOT names it without claiming it.
+        lot_code = getattr(content, "lot_code", None) if content.kind == "RECEIPT" else None
+        return (resolved.get("parent", {}).get("id"), key, lot_code, quantity,
                 getattr(content, "passed_qty", 0), getattr(content, "failed_qty", 0))
 
     @staticmethod
@@ -426,7 +457,8 @@ class ProcurementService(DomainService):
                 raise ServiceError("POSTED_DOCUMENT_IMMUTABLE", 409)
             if document["created_by"] == principal.actor_id:
                 raise ServiceError("SELF_REVIEW_FORBIDDEN", 403)
-            self._snapshot(conn, company_id, document["content"]["basis_ledger_version"])
+            # Returning a draft writes nothing to the ledger, so a draft whose basis is
+            # outdated can still be returned to its author (it must be revised anyway).
             document = conn.execute("UPDATE procurement_documents SET status='DRAFT',reviewed_by=NULL,approved_by=NULL,approved_version=NULL,approved_hash=NULL,approval_policy_version=NULL,rejection_reason=%s,updated_at=now() WHERE id=%s RETURNING *", (body.reason, document["id"])).fetchone()
             self._audit(conn, principal, document, "procurement.reject")
             return document
@@ -437,6 +469,26 @@ class ProcurementService(DomainService):
         with self.db.connect() as conn:
             self.identity.require(principal, "document.read", conn, company_id=company_id)
             return _public(self._document(conn, company_id, document_id))
+
+    def activity(self, principal, company_id, limit=30):
+        """Recent document steps from the audit trail (draft, revise, review, approve, reject).
+
+        Posting is not listed here: it is a ledger event with its own version.
+        These steps are approvals only and never change the ledger.
+        """
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ServiceError("INVALID_PAGE_LIMIT", 422)
+        with self.db.connect() as conn:
+            self.identity.require(principal, "document.read", conn, company_id=company_id)
+            rows = conn.execute("""SELECT a.audit_id, a.recorded_at, a.action, a.actor_id, d.kind, d.id AS document_id, d.status AS document_status,
+                    d.quantity, d.content->'resolved'->>'item_id' AS item_id, d.content->'resolved'->>'supplier_id' AS supplier_id
+                FROM procurement_audit a JOIN procurement_documents d ON d.id=a.document_id
+                WHERE a.company_id=%s AND a.action <> 'procurement.post'
+                ORDER BY a.recorded_at DESC, a.audit_id LIMIT %s""", (company_id, limit)).fetchall()
+        return [{"audit_id": str(row["audit_id"]), "recorded_at": row["recorded_at"].isoformat(),
+                 "action": row["action"].removeprefix("procurement."), "actor_id": row["actor_id"], "kind": row["kind"],
+                 "document_id": str(row["document_id"]), "quantity": row["quantity"], "item_id": row["item_id"],
+                 "supplier_id": row["supplier_id"], "document_status": row["document_status"]} for row in rows]
 
     def list(self, principal, company_id, limit=200):
         if type(limit) is not int or not 1 <= limit <= 500:

@@ -119,9 +119,18 @@ class BoardsContent(PurchaseContent):
 
 
 class ProductionContent(BoardsContent):
+    """Boards built from a LOT: a newly inspected one (iqc_id) or an existing
+    opening-balance LOT (lot_code). Exactly one is named."""
     kind: Literal["PRODUCTION"] = "PRODUCTION"
-    iqc_id: str = Field(min_length=1, max_length=100)
+    iqc_id: str | None = Field(default=None, min_length=1, max_length=100)
+    lot_code: str | None = Field(default=None, min_length=1, max_length=100)
     production_ref: str = Field(min_length=1, max_length=100)
+
+    @model_validator(mode="after")
+    def one_source(self):
+        if (self.iqc_id is None) == (self.lot_code is None):
+            raise ValueError("PRODUCTION_SOURCE_REQUIRED")
+        return self
 
 
 class FinishedGoodsContent(BoardsContent):
@@ -142,12 +151,34 @@ class ArrivalContent(BoardsContent):
     arrival_ref: str = Field(min_length=1, max_length=100)
 
 
+class CohortContent(PurchaseContent):
+    """Opening-balance boards without serials (LegacyCohort), moved by quantity (T10)."""
+    kind: Literal["COHORT"] = "COHORT"
+    cohort_ref: str = Field(min_length=1, max_length=100)
+    round_id: str = Field(min_length=1, max_length=100)
+    stage: Literal["FG_RECEIPT", "SHIPMENT", "ARRIVAL"]
+    quantity: int = Field(ge=1, le=10000)
+
+
+class ScenarioContent(PurchaseContent):
+    """What-if schedule assumptions for one delivery round (T12). Not facts:
+    the values are entered and approved as assumptions and labelled so."""
+    kind: Literal["SCENARIO"] = "SCENARIO"
+    scenario_ref: str = Field(min_length=1, max_length=100)
+    round_id: str = Field(min_length=1, max_length=100)
+    inspection_business_days: int = Field(ge=0, le=30)
+    daily_capacity: int = Field(ge=1, le=10000)
+    ship_prep_business_days: int = Field(ge=0, le=30)
+    transit_days: int = Field(ge=0, le=60)
+    provenance: Literal["DEMO_ASSUMPTION"] = "DEMO_ASSUMPTION"
+
+
 ProcurementContent = Annotated[Union[QuoteContent, RequestContent, OrderContent, ReceiptContent,
                                     SupplyConfirmationContent, InspectionContent, CancelContent,
-                                    ProductionContent, FinishedGoodsContent, ShipmentContent, ArrivalContent], Field(discriminator="kind")]
+                                    ProductionContent, FinishedGoodsContent, ShipmentContent, ArrivalContent, ScenarioContent, CohortContent], Field(discriminator="kind")]
 CONTENT_TYPES = {cls.model_fields["kind"].default: cls for cls in
                  (QuoteContent, RequestContent, OrderContent, ReceiptContent, SupplyConfirmationContent, InspectionContent, CancelContent,
-                  ProductionContent, FinishedGoodsContent, ShipmentContent, ArrivalContent)}
+                  ProductionContent, FinishedGoodsContent, ShipmentContent, ArrivalContent, ScenarioContent, CohortContent)}
 FULFILLMENT_KINDS = {"PRODUCTION", "FG_RECEIPT", "SHIPMENT", "ARRIVAL"}
 
 

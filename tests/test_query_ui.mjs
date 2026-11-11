@@ -966,3 +966,122 @@ test('frame scheduling failure restores the complete confirmed body instead of l
     } finally { fixture.restore(); }
   }
 });
+
+test('reference-order delivery cards render table, open assumption table, quote choice and verdict as text', () => {
+  const { message, restore } = setup();
+  try {
+    const data = response(); data.intent = ['delivery'];
+    data.calculation = { actual_delivery_feasibility: 'UNKNOWN', material_requirements: { state: 'PARTIAL', bom_id: 'bom-1' } };
+    data.answer_blocks = [
+      { id: 'delivery_balance', title: '“9대”가 무엇인지 확인', tool: '원장 조회', kind: 'normal', paragraphs: ['9대는 남은 약속입니다.'] },
+      { id: 'material_shortage', title: '부품 부족 예측', tool: '원장 계산 · BOM 전개', kind: 'normal', paragraphs: ['합성 부족 3개.'],
+        table: { columns: ['위치', '품목', '필요', '가용', '부족'], rows: [['<b>U1</b>', 'item-x', '5', '2', '3']], alert_cells: [[0, 4]] } },
+      { id: 'schedule_backward', title: '일정 역산', tool: '시연 가정 · 일정', kind: 'assumption', paragraphs: ['근거가 없어 계산하지 않았습니다.'],
+        table: { columns: ['단계 (도착부터 거꾸로)', '필요한 근거', '상태'], rows: [['운송', '운송 기간', '근거 없음']], alert_cells: [[0, 2]] } },
+      { id: 'supply_candidates', title: '공급 후보 비교', tool: '원장 조회 · 견적 → 공급사', kind: 'normal', paragraphs: ['사람이 선택하세요.'],
+        quotes: [{ quote_id: 'q-1', quote_ref: 'CMP-X', supplier_id: 'sup-x', material_basis: 'planned', quantity_condition: 'MET', recommended_qty: 5, margin_qty: 2,
+                   supply_limit_qty: 9, moq: 5, order_multiple: 5, unit_price: '1', currency: 'KRW', freight: null, total: null, lead_business_days: 3, valid_until: null, reason: '충족' },
+                 { quote_id: 'q-2', quote_ref: 'CMP-Y', supplier_id: 'sup-y', material_basis: 'planned', quantity_condition: 'NOT_MET', recommended_qty: 10, margin_qty: 7,
+                   supply_limit_qty: 4, moq: 10, order_multiple: 10, unit_price: '1', currency: 'KRW', freight: '1', total: '11', lead_business_days: null, valid_until: null, reason: '미충족' }] },
+      { id: 'verdict', title: '자재 부족 3개 · 납기 판단 보류', tool: '판정', kind: 'verdict', paragraphs: ['보류합니다.'], bullets: ['운송 근거 없음'] },
+    ];
+    const chosen = [];
+    renderQueryAnswer(message, data, { mode: 'workflow', onChooseQuote: quote => chosen.push(quote.quote_id) });
+    const table = descendants(message).filter(item => item.className === 'query-mini-table')[0];
+    assert.ok(table); assert.ok(table.textContent.includes('<b>U1</b>'));  // literal text, never HTML
+    assert.equal(descendants(table).filter(item => item.className?.includes('alert')).length, 1);
+    // The assumption card is open (no fold label) and keeps its assumption tag.
+    assert.equal(descendants(message).filter(item => item.tagName === 'DETAILS' && item.className === 'query-assumption').length, 0);
+    const schedule = withClass(message, 'query-answer-assumption')[0];
+    assert.ok(schedule.textContent.includes('시연 가정 · 일정') && schedule.textContent.includes('근거 없음'));
+    assert.ok(!message.textContent.includes('가정 시나리오 · 원장 근거 아님'));
+    const buttons = descendants(message).filter(item => item.dataset.queryAction === 'choose-quote');
+    assert.equal(buttons.length, 2); assert.equal(buttons[1].disabled, true);
+    buttons[0].click(); assert.deepEqual(chosen, ['q-1']);
+    assert.ok(message.textContent.includes('운송비 미확인'));
+    const verdict = withClass(message, 'query-answer-verdict')[0];
+    assert.ok(verdict.textContent.includes('운송 근거 없음'));
+    assert.equal(withClass(verdict, 'query-answer-number').length, 0);
+  } finally { restore(); }
+});
+
+test('a BOM-missing card carries the only registration entry', () => {
+  const { message, restore } = setup();
+  try {
+    const data = response(); data.intent = ['delivery'];
+    data.calculation = { actual_delivery_feasibility: 'UNKNOWN', material_requirements: { state: 'BLOCKED_BOM', bom_id: null } };
+    data.answer_blocks = [{ id: 'bom_missing', title: 'BOM 전개 불가', tool: '원장 조회', kind: 'attention', action: 'REGISTER_BOM', paragraphs: ['멈춥니다.'] }];
+    let opens = 0;
+    renderQueryAnswer(message, data, { mode: 'workflow', onOpenBom: () => { opens++; } });
+    const controls = descendants(message).filter(item => item.dataset.queryAction === 'bom-register');
+    assert.equal(controls.length, 1); controls[0].click(); assert.equal(opens, 1);
+  } finally { restore(); }
+});
+
+test('a verified AI summary is shown as text with citations; a rejected one leaves only the server answer', () => {
+  const { message, restore } = setup();
+  try {
+    const data = { ...response(),
+      ai_summary: { status: 'VERIFIED', execution_mode: 'live', facts: [{ id: 'F1', name: '검사 잔액' }],
+        paragraphs: [{ text: '<b>검사 잔액</b>은 9입니다. 판단은 보류합니다.', cites: [{ id: 'F1' }, { id: 'E1', evidence: { evidence_id: 'retrieval:x', kind: 'source_row' } }] }] },
+      retrieval: { status: 'HIT', hits: [{ kind: 'source_row', text: '합성 행', origin: 'actual_source', review_status: 'SOURCE_ONLY', match_modes: ['lexical'] }] } };
+    renderQueryAnswer(message, data);
+    const card = withClass(message, 'query-ai-summary')[0];
+    assert.ok(card);
+    assert.match(card.textContent, /AI 요약.*모델 작성 · 서버 검증/);
+    assert.match(card.textContent, /<b>검사 잔액<\/b>은 9입니다/);  // text, never HTML
+    assert.deepEqual(withClass(card, 'query-ai-cite').map(chip => chip.textContent), ['서버 사실 1개', 'BOM 원문 행']);
+    assert.equal(withClass(card, 'query-ai-cite')[0].title, '검사 잔액');
+    assert.equal(withClass(message, 'query-retrieval-chip').length, 1);
+    const entity = new Element('div');
+    renderQueryAnswer(entity, { ...data, retrieval: { hits: [{ kind: 'ledger_entity', text: 'urn:ontologics:abc-1 ContractLine CTR-1 CTR-1' }] } });
+    assert.equal(withClass(entity, 'query-retrieval-chip')[0].textContent, '원장 개체 · ContractLine CTR-1 CTR-1');
+    assert.equal(withClass(message, 'query-ai-fallback').length, 0);
+    for (const status of ['REJECTED', 'UNAVAILABLE']) {
+      const other = new Element('div');
+      renderQueryAnswer(other, { ...data, ai_summary: { status, reason_code: 'SUMMARY_NUMBER_UNPLACED', paragraphs: data.ai_summary.paragraphs } });
+      assert.equal(withClass(other, 'query-ai-summary').length, 0);
+      assert.equal(withClass(other, 'query-ai-fallback').length, 1);
+    }
+  } finally { restore(); }
+});
+
+test('a pending AI summary shows a placeholder that is filled or replaced later without touching the answer', async () => {
+  const { message, restore } = setup();
+  try {
+    const { updateAiSummary } = await import('../web/mks2/query.js');
+    const data = { ...response(), ai_summary: { status: 'PENDING' } };
+    renderQueryAnswer(message, data);
+    const card = withClass(message, 'query-ai-pending')[0];
+    assert.match(card.textContent, /AI 요약.*작성 중.*원장 답변은 아래에/);
+    const before = message.textContent.replace(card.textContent, '');
+    assert.equal(updateAiSummary(message, { status: 'VERIFIED', execution_mode: 'live', paragraphs: [{ text: '판단은 보류합니다.', cites: [{ id: 'F1' }] }] }), true);
+    assert.match(card.textContent, /모델 작성 · 서버 검증.*판단은 보류합니다/);
+    assert.equal(message.textContent.replace(card.textContent, ''), before);
+    assert.equal(updateAiSummary(message, { status: 'UNAVAILABLE' }), false);
+    assert.match(card.textContent, /원장 계산 결과만 표시/);
+    assert.equal(updateAiSummary(new Element('div'), { status: 'VERIFIED' }), false);
+  } finally { restore(); }
+});
+
+test('the graph-screen answer shows materials as one table instead of repeated sentences', () => {
+  const { message, restore } = setup();
+  try {
+    const data = { ...response(),
+      sections: [{ id: 'materials', title: '자재', origin: 'conditional_demo', items: [
+        { label: 'ITEM-A', value: '소요 4 / 5 EA · 가용 9 EA · 부족 0 / 0 EA', detail: '합성 상세 A' },
+        { label: 'ITEM-B', value: '소요 4 / 5 EA · 가용 2 EA · 부족 2 / 3 EA', detail: '합성 상세 B' }] }],
+      calculation: { material_requirements: { items: [
+        { item_id: 'ITEM-A', planned_required_qty: '5', available_qty: '9', planned_shortage_qty: '0', unit: 'EA' },
+        { item_id: 'ITEM-B', planned_required_qty: '5', available_qty: '2', planned_shortage_qty: '3', unit: 'EA' }] } } };
+    renderQueryAnswer(message, data);
+    const table = withClass(message, 'query-material-table')[0];
+    assert.ok(table);
+    const rows = descendants(table).filter(item => item.tagName === 'TR').slice(1);
+    assert.equal(rows[0].children[0].textContent, 'ITEM-B');           // shortage first
+    assert.equal(rows[0].children[3].className, 'n alert');
+    assert.equal(rows[0].title, '소요 4 / 5 EA · 가용 2 EA · 부족 2 / 3 EA. 합성 상세 B');
+    assert.equal(rows[1].children[3].textContent, '—');
+    assert.ok(!message.textContent.includes('ITEM-A: 소요'));          // no per-item sentence in the body
+  } finally { restore(); }
+});

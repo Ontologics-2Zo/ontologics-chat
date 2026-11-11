@@ -1,7 +1,7 @@
 import { mountDashboard } from './dashboard.js';
 import { mountGraph } from './graph.js';
 import { mountLaneGraph } from './lanegraph.js';
-import { renderQueryAnswer } from './query.js';
+import { renderQueryAnswer, updateAiSummary } from './query.js';
 import { mountTwin } from './twin.js';
 
 // UI state is ephemeral. Identity, quantities, versions and answers come from the server.
@@ -31,9 +31,15 @@ const panels = {};
 const SCREENS = ['graph', 'dashboard', 'network', 'twin'];
 const currentScreen = () => SCREENS.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'graph';
 const labelFor = id => snapshot?.graph?.data?.nodes?.find(node => (node.node_id || node.id) === id)?.display_id || id;
-function notify(text) {
-  $('notice').textContent = text; $('notice').hidden = false;
-  clearTimeout(noticeTimer); noticeTimer = setTimeout(() => { $('notice').hidden = true; }, 4500);
+function notify(text, action = null) {
+  const notice = $('notice');
+  notice.textContent = text; notice.hidden = false;
+  if (action) {
+    const go = element('button', 'btn sm', action.label); go.type = 'button';
+    go.addEventListener('click', () => { notice.hidden = true; action.run(); });
+    notice.append(' ', go);
+  }
+  clearTimeout(noticeTimer); noticeTimer = setTimeout(() => { notice.hidden = true; }, action ? 9000 : 4500);
 }
 function cancelPendingReplay() { replayGeneration++; graph?.cancelReplay(); lane?.cancelReplay(); }
 // A completed server answer has its own presentation lifetime. Graph playback
@@ -119,7 +125,91 @@ function focusEvidence(id) {
   location.hash = '#graph';
   lane?.focus(id);
 }
+// Shortest chain of recorded relations from a node to the first node that
+// matches isTarget (both directions). Only snapshot edges are used.
+function graphChain(fromId, isTarget, maxDepth = 8) {
+  const nodes = snapshot?.graph?.data?.nodes || [], edges = snapshot?.graph?.data?.edges || [];
+  const byId = new Map(nodes.map(node => [node.node_id || node.id, node]));
+  if (!byId.has(fromId)) return [];
+  const next = new Map();
+  for (const edge of edges) {
+    if (!byId.has(edge.source) || !byId.has(edge.target)) continue;
+    (next.get(edge.source) || next.set(edge.source, []).get(edge.source)).push(edge.target);
+    (next.get(edge.target) || next.set(edge.target, []).get(edge.target)).push(edge.source);
+  }
+  const parent = new Map([[fromId, null]]), depth = new Map([[fromId, 0]]), queue = [fromId];
+  while (queue.length) {
+    const id = queue.shift();
+    if (id !== fromId && isTarget(byId.get(id))) {
+      const path = [];
+      for (let at = id; parent.get(at) !== null; at = parent.get(at)) path.unshift([parent.get(at), at]);
+      return path;
+    }
+    if (depth.get(id) >= maxDepth) continue;
+    for (const to of next.get(id) || []) if (!parent.has(to)) { parent.set(to, id); depth.set(to, depth.get(id) + 1); queue.push(to); }
+  }
+  return [];
+}
+const nodeType = node => node?.type || node?.node_type || node?.ontology_type;
+// "변경 관계 보기": play the chain from the changed record to the delivery round.
+function showChain(fromId) {
+  cancelPendingReplay();
+  location.hash = '#graph';
+  const hops = graphChain(fromId, node => nodeType(node) === 'DeliveryRound');
+  if (!hops.length || !lane) { lane?.focus(fromId); return; }
+  lane.replay({ hops, nodeIds: [...new Set(hops.flat())] });
+}
+// Visible progress while a question runs: spinner, elapsed seconds and the
+// server's own completed steps. It describes server events, not a fake bar.
+const PROGRESS_STEPS = [['route', '질문 분석 · AI'], ['read', '원장 조회·계산'], ['validate', '결과 확인'], ['retrieve', '근거 검색']];
+const PROGRESS_STAGE = { route: 'route', fulfillment_read: 'read', material_analysis: 'read', product_review: 'read',
+  procurement_review: 'read', validate: 'validate', retrieve: 'retrieve' };
+function startProgress(message, agent) {
+  const root = element('div', 'mk-progress'), head = element('div', 'mk-progress-head');
+  const time = element('span', 'mk-progress-time', '0초');
+  head.append(element('span', 'mk-spinner'), element('span', 'mk-progress-title', agent ? '답변을 만들고 있습니다' : '원장을 조회하고 있습니다'), time);
+  root.append(head);
+  const items = new Map();
+  if (agent) {
+    const list = element('ol', 'mk-progress-steps');
+    for (const [key, label] of PROGRESS_STEPS) { const item = element('li', 'pending', label); items.set(key, item); list.append(item); }
+    items.get('route').className = 'active';
+    root.append(list);
+  }
+  root.append(element('p', 'note', '원장 변경 없음 · 보통 10초 안팎 걸립니다.'));
+  message.replaceChildren(root);
+  const started = Date.now();
+  const timer = setInterval(() => { time.textContent = `${Math.floor((Date.now() - started) / 1000)}초`; }, 1000);
+  return {
+    mark(stage, status) {
+      const key = PROGRESS_STAGE[stage], item = items.get(key);
+      if (!item) return;
+      if (status === 'COMPLETED') {
+        item.className = 'done';
+        const next = PROGRESS_STEPS[PROGRESS_STEPS.findIndex(([name]) => name === key) + 1];
+        if (next && items.get(next[0]).className === 'pending') items.get(next[0]).className = 'active';
+      } else if (item.className !== 'done') item.className = 'active';
+    },
+    stop() { clearInterval(timer); },
+  };
+}
+// Sends a question at once in its own panel (used by "같은 질문 다시 하기").
+function askNow(name, question) {
+  const panel = panels[name];
+  if (!panel || !question || panel.submit.disabled) return false;
+  if (panel.input.value.trim() === question) panel.input.value = '';
+  runQuery(name, question);
+  return true;
+}
 function fillQuestion(text, name = currentScreen()) { panels[name].input.value = text; panels[name].input.focus(); }
+// After the basis changes, put the panel's last question back in its input so
+// it can be asked again on the new ledger. Never overwrites what is typed.
+function offerSameQuestion(name, question = panels[name]?.lastQuestion) {
+  const panel = panels[name];
+  if (!panel || !question || panel.input.value.trim()) return false;
+  panel.input.value = question;
+  return true;
+}
 // After an explicit BOM post, offer to resend the last question; it only fills the draft.
 function offerRerun(kind) {
   for (const name of ['dashboard', 'graph']) {
@@ -149,10 +239,32 @@ async function showBomGraph() {
   location.hash = '#graph';
   if (configuration) requestAnimationFrame(() => lane?.focus(configuration.id));
 }
+// Why these questions now: a short heading from the same snapshot state the
+// server used to choose them (BOM, reservation change, shortage, requests).
+function suggestionContext() {
+  const summary = snapshot.summary || {};
+  if (summary.bom_status !== 'POSTED_SOURCE') return 'BOM 등록 전 · 지금 답할 수 있는 질문';
+  const impact = (snapshot.reservation_impacts || []).at(-1);
+  if (impact && Number(impact.planned_shortage_after) > Number(impact.planned_shortage_before)) return `다른 주문 예약 반영 (v${impact.ledger_version}) · 확인할 질문`;
+  const focus = (snapshot.material_requirements?.items || []).find(item => item.item_id === summary.item_id);
+  const short = Number(focus?.planned_shortage_qty);
+  const requested = (snapshot.procurement?.documents || []).some(row => row.kind === 'PR' && !row.cancelled_by && !row.rejection_reason);
+  if (short > 0 && !requested) return `${summary.item_id} ${focus.planned_shortage_qty}개 부족 · 확보 검토 질문`;
+  if (short > 0) return `${summary.item_id} 확보 진행 중 · 확인할 질문`;
+  return '현재 원장 기준 추천 질문';
+}
 function updateSuggestions(container, name) {
+  const previous = container.shown || null;
   container.replaceChildren();
-  const questions = snapshot.suggested_questions || snapshot.suggestions || [];
-  for (const question of questions) if (typeof question === 'string') container.append(button(question, () => fillQuestion(question, name), 'suggestion'));
+  const questions = (snapshot.suggested_questions || snapshot.suggestions || []).filter(question => typeof question === 'string');
+  if (questions.length) container.append(element('div', 'suggestion-context', suggestionContext()));
+  for (const question of questions) {
+    const fresh = previous && !previous.includes(question);
+    const control = button(question, () => fillQuestion(question, name), fresh ? 'suggestion suggestion-new' : 'suggestion');
+    if (fresh) control.append(element('span', 'suggestion-tag', '새'));
+    container.append(control);
+  }
+  container.shown = questions;
 }
 function clearAgentWaiting(panel) {
   if (!panel) return;
@@ -178,7 +290,28 @@ function createPanel(name) {
   clearAgentWaiting(panels[name]);
   const root = $(`${name}-panel`); root.replaceChildren();
   const heading = element('div', 'panel-heading');
-  heading.append(element('h2', '', name === 'dashboard' ? '업무 에이전트' : name === 'network' ? '프로젝트 그래프 질의' : '업무 AI 질의'), element('span', 'tag', '원장 근거 조회'));
+  const title = name === 'dashboard' ? '업무 에이전트' : name === 'network' ? '프로젝트 그래프 질의' : name === 'twin' ? '디지털 트윈 질의' : '업무 AI 질의';
+  heading.append(element('h2', '', title), element('span', 'tag', '원장 근거 조회'));
+  // Collapse the assistant to a narrow strip so the dashboard or graph gets the
+  // width. A per-screen browser preference only; nothing is sent or stored on the server.
+  const toggle = element('button', 'btn sm panel-toggle'); toggle.type = 'button';
+  const storageKey = `mks2.panel.collapsed.${name}`;
+  const applyCollapsed = collapsed => {
+    root.classList?.toggle('collapsed', collapsed);
+    root.parentElement?.classList?.toggle('panel-collapsed', collapsed);
+    toggle.textContent = collapsed ? '펼치기' : '접기';
+    toggle.setAttribute('aria-expanded', String(!collapsed));
+    toggle.title = `${title} ${collapsed ? '펼치기' : '접기'}`;
+  };
+  toggle.addEventListener('click', () => {
+    const next = !root.classList?.contains('collapsed');
+    applyCollapsed(next);
+    try { globalThis.localStorage?.setItem(storageKey, next ? '1' : '0'); } catch { /* preference only */ }
+  });
+  heading.append(toggle);
+  let startCollapsed = false;
+  try { startCollapsed = globalThis.localStorage?.getItem(storageKey) === '1'; } catch { startCollapsed = false; }
+  applyCollapsed(startCollapsed);
   const context = element('div', 'panel-context', `원장 v${snapshot.meta.ledger_version}`);
   const messages = element('div', 'messages');
   messages.setAttribute('aria-live', 'polite'); messages.setAttribute('aria-relevant', 'additions');
@@ -208,7 +341,7 @@ function productInput() {
   return bom ? { ledger_version: snapshot.meta.ledger_version, bom_id: bom.bom_id,
     bom_version: bom.bom_version, payload_hash: bom.payload_hash } : undefined;
 }
-async function agentQuery(panel, question, message, requestGeneration) {
+async function agentQuery(panel, question, message, requestGeneration, contextEntityId) {
   let state;
   const key = crypto.randomUUID();
   const waiting = panel.waiting;
@@ -225,7 +358,7 @@ async function agentQuery(panel, question, message, requestGeneration) {
     // original answer text remains in the conversation.
     clearAgentWaiting(panel);
     state = await api('/api/mks2/agent/executions', { question,
-      ledger_version: snapshot.meta.ledger_version, context_entity_id: contextId || undefined,
+      ledger_version: snapshot.meta.ledger_version, context_entity_id: contextEntityId || undefined,
       idempotency_key: key });
   }
   if (generation !== requestGeneration) return null;
@@ -247,8 +380,7 @@ async function agentQuery(panel, question, message, requestGeneration) {
       for (const line of stream.split('\n')) if (line.startsWith('data: ')) {
         const event = JSON.parse(line.slice(6));
         cursor = Math.max(cursor, event.sequence || 0);
-        if (!finished && generation === requestGeneration) message.textContent =
-          `업무 조회 진행 · ${labels[event.stage] || '서버 처리 중'} · 원장 변경 없음`;
+        if (!finished && generation === requestGeneration) message.progress?.mark(event.stage, event.status);
       }
     } catch { /* The authoritative run response handles connection/auth errors. */ }
     finally { reading = false; }
@@ -308,7 +440,9 @@ async function runQuery(name, question) {
   const panel = panels[name], requestGeneration = generation;
   settleAnswer(panel);
   panel.messages.append(element('div', 'message user', question)); panel.submit.disabled = true; panel.lastQuestion = question;
-  const message = element('div', 'message assistant', '원장과 근거를 조회하고 있습니다.'); panel.messages.append(message);
+  const message = element('div', 'message assistant'); panel.messages.append(message);
+  const agentPath = agentMode !== 'disabled' && name !== 'twin';
+  message.progress = startProgress(message, agentPath);
   let followAnswer = true, presentationOwnsScroll = false;
   const trackScroll = () => {
     if (Number.isFinite(panel.messages.scrollHeight)) {
@@ -322,10 +456,14 @@ async function runQuery(name, question) {
   scrollAnswer(); panel.messages.addEventListener('scroll', trackScroll, { passive: true });
   cancelPendingReplay();
   try {
-    const answer = name === 'dashboard' && agentMode !== 'disabled'
-      ? await agentQuery(panel, question, message, requestGeneration)
+    // With a model connected the graph, dashboard and project-graph assistants
+    // take the agent path. The digital twin keeps the read API its evidence
+    // highlight is built on; every screen uses it when the model is off.
+    const context = name === 'twin' ? twinContextId : contextId;
+    const answer = agentPath
+      ? await agentQuery(panel, question, message, requestGeneration, context)
       : await api('/api/mks2/query', { question, ledger_version: snapshot.meta.ledger_version,
-        context_entity_id: (name === 'twin' ? twinContextId : contextId) || undefined });
+        context_entity_id: context || undefined });
     if (!answer) return;
     if (generation !== requestGeneration) return;
     if (answer.meta?.identity_revision !== identity?.identity_revision || answer.meta?.company_id !== identity?.company_id) {
@@ -350,7 +488,14 @@ async function runQuery(name, question) {
       snapshotId: answer.meta.snapshot_id ?? answer.meta.read_snapshot_id,
       companyId: answer.meta.company_id, identityRevision: answer.meta.identity_revision });
     const evidenceAtVersion = action => {
-      if (!answerSnapshotMatches(answer)) { notify('과거 원장 버전의 답변입니다. 최신 근거가 필요하면 질문을 다시 실행해 주세요.'); return; }
+      if (!answerSnapshotMatches(answer)) {
+        // A button on an old answer never sends a question by itself (no
+        // side-effect model call); the question waits in the input instead.
+        const filled = offerSameQuestion(name, question);
+        notify(filled ? '과거 원장 버전의 답변입니다. 같은 질문을 아래 입력창에 넣었습니다. 보내면 최신 원장으로 다시 답합니다.'
+          : '과거 원장 버전의 답변입니다. 최신 근거가 필요하면 질문을 다시 실행해 주세요.');
+        return;
+      }
       return action();
     };
     let activeReplay = null;
@@ -362,7 +507,16 @@ async function runQuery(name, question) {
       const replay = ++replayGeneration, playGeneration = generation;
       activeReplay = replay;
       const target = network ? graph : lane;
-      return presentation.play(() => target.replay({ hops, nodeIds: ids, edgeIds: answer.evidence_edge_ids || [] }),
+      // An answer without its own path still shows a connected flow: the round
+      // to the focus item (for example the short material) over recorded relations.
+      let flow = hops;
+      if (!flow.length && !network) {
+        const round = (snapshot.graph?.data?.nodes || []).find(node => nodeType(node) === 'DeliveryRound'
+          && (node.display_id === snapshot.summary?.delivery_round_id));
+        const item = snapshot.summary?.item_id;
+        if (round && item) flow = graphChain(round.node_id || round.id, node => nodeType(node) === 'InternalItem' && node.display_id === item);
+      }
+      return presentation.play(() => target.replay({ hops: flow, nodeIds: ids, edgeIds: answer.evidence_edge_ids || [] }),
         () => generation === playGeneration && replay === replayGeneration);
     });
     const animateAnswer = answerVisible(name);
@@ -370,6 +524,7 @@ async function runQuery(name, question) {
       && !globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches
       && typeof Intl.Segmenter === 'function' && typeof requestAnimationFrame === 'function'
       && typeof cancelAnimationFrame === 'function';
+    message.progress?.stop();
     const presentation = renderQueryAnswer(message, answer, {
       animate: animateAnswer, mode: name === 'dashboard' ? 'workflow' : 'graph',
       beforeBody: waitForGraph ? () => replayEvidence() : undefined,
@@ -387,6 +542,14 @@ async function runQuery(name, question) {
         settleAnswer(panel); cancelPendingReplay();
         dashboard.openBom(4, reference.document_id, { ...reference });
       }),
+      onChooseQuote: quote => evidenceAtVersion(() => {
+        settleAnswer(panel); cancelPendingReplay();
+        dashboard.startPurchaseRequest(quote).then(opened => {
+          if (opened === 'APPROVER_CANNOT_AUTHOR') setStatus([name], ['승인 권한이 있는 계정은 구매 요청을 작성하지 않습니다. 작성하면 승인할 다른 계정이 없습니다. 상단에서 작성자 계정으로 바꿔 주세요.']);
+          else if (!opened) setStatus([name], ['이 견적으로 구매 요청 초안을 열 수 없습니다. 권한·견적 상태를 확인해 주세요.']);
+          else location.hash = '#dashboard';
+        });
+      }),
       onReplay: () => replayEvidence(true),
       onCancel: () => { if (activeReplay === replayGeneration) cancelPendingReplay(); },
     });
@@ -403,11 +566,19 @@ async function runQuery(name, question) {
       if (panel.presentation === presentation) panel.presentation = null;
     });
     if (ids.length && name !== 'dashboard' && !waitForGraph) replayEvidence();
+    if (answer.ai_summary?.status === 'PENDING' && answer.agent_execution?.execution_id) {
+      // The ledger answer is already shown; the AI summary card fills in when written.
+      const revision = identity?.identity_revision;
+      api(`/api/mks2/agent/executions/${encodeURIComponent(answer.agent_execution.execution_id)}/summary`, {})
+        .then(result => { if (identity?.identity_revision === revision) updateAiSummary(message, result.ai_summary); })
+        .catch(() => { if (identity?.identity_revision === revision) updateAiSummary(message, { status: 'UNAVAILABLE' }); });
+    }
   } catch (error) {
     if (error.name === 'AbortError' || generation !== requestGeneration) return;
     message.replaceChildren(element('p', '', errorText(error)));
     if (error.status === 401) invalidateView();
   } finally {
+    message.progress?.stop();
     if (!presentationOwnsScroll) releaseScroll();
     if (generation === requestGeneration) {
       panel.submit.disabled = false;
@@ -476,7 +647,8 @@ async function loadSnapshot({ preserveMessages = false } = {}) {
   dashboard = mountDashboard($('dashboard-stage'), { snapshot, onSelect: setContext,
     onAsk: text => fillQuestion(text, 'dashboard'), onGraph: focusEvidence, api, getIdentity: () => identity,
     onShowBomGraph: showBomGraph,
-    onPosted: posted => { if (posted?.status === 'POSTED' && posted?.content?.rows) offerRerun('BOM'); refreshButton.textContent = '업무 반영 · 최신 원장 조회'; notify(liveEnabled ? '업무 사건이 원장에 반영됐습니다. 그래프 투영 후 화면이 자동으로 갱신됩니다.' : '업무 사건이 반영됐습니다. 그래프 준비 후 최신 원장을 조회해 주세요.'); pollChanges(); },
+    onPosted: posted => { if (posted?.status === 'POSTED' && posted?.content?.rows) offerRerun('BOM'); refreshButton.textContent = '업무 반영 · 최신 원장 조회'; notify(liveEnabled ? '업무 사건이 원장에 반영됐습니다. 그래프 투영 후 화면이 자동으로 갱신됩니다.' : '업무 사건이 반영됐습니다. 그래프 준비 후 최신 원장을 조회해 주세요.',
+      { label: '그래프에서 보기', run: () => { location.hash = '#graph'; } }); pollChanges(); },
     onRefresh: refreshSnapshot, live: { get: () => liveEnabled, set: value => { liveEnabled = !!value; notify(liveEnabled ? '확정 원장 사건을 자동으로 반영합니다.' : '자동 반영을 끕니다. 새 원장은 버튼으로 조회합니다.'); } } });
   lane?.destroy();
   lane = mountLaneGraph($('graph-stage'), { data: { meta: data.meta, nodes: data.entities || [], edges: data.relationships || [] },
@@ -544,12 +716,27 @@ function announceApplied(events, startedAt) {
       ` 관련 재고 변경 · 다른 주문 ${impact.demand_ref} 예약 +${impact.quantity}${unit} · 가용 ${impact.available_before}→${impact.available_after} · `
         + (grew ? `계획 부족 ${impact.planned_shortage_before}→${impact.planned_shortage_after}${unit} · 기존 확보안 재검토 필요` : `계획 부족 ${impact.planned_shortage_after}${unit} 유지`)
         + ` · 원장 v${impact.ledger_version} `,
-      button('원장 사건 보기', () => focusEvidence(impact.entity_id), 'btn sm'),
-      ...(grew ? names.map(name => button(question, () => fillQuestion(question, name), 'suggestion')) : [])].filter(Boolean));
+      button('변경 관계 보기', () => showChain(impact.entity_id), 'btn sm'),
+      ...(grew ? names.flatMap(name => [
+        panels[name].lastQuestion ? button('같은 질문 다시 하기', () => askNow(name, panels[name].lastQuestion), 'suggestion') : null,
+        button(question, () => fillQuestion(question, name), 'suggestion')]) : [])].filter(Boolean));
+    if (grew) {
+      for (const name of names) offerSameQuestion(name);
+      markEarlierAnswers(names, impact.ledger_version);
+    }
     for (const name of names) {
       panels[name].status.dataset.eventId = event.event_id;
       if (latency !== null) panels[name].status.dataset.latencyMs = String(latency);
       panels[name].status.dataset.applyMs = String(Date.now() - startedAt);
+    }
+  }
+}
+// Earlier answers stay exactly as answered; only a version tag says they need a re-check.
+function markEarlierAnswers(names, version) {
+  for (const name of names) {
+    for (const message of panels[name].messages.querySelectorAll('[data-ledger-version]')) {
+      if (Number(message.dataset.ledgerVersion) >= version || message.querySelector('.mk-answer-stale')) continue;
+      message.prepend(element('div', 'mk-answer-stale', `원장 v${message.dataset.ledgerVersion} 기준 답변 · 재검토 필요`));
     }
   }
 }

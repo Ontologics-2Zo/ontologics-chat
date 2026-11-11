@@ -33,6 +33,7 @@ class AgentSettings:
     prior_spend_usd: Decimal | None = None
     budget_id: str = "dec-h18-original"
     budget_authorization_ref: str | None = None
+    compose_enabled: bool = False
 
     def public(self):
         # Keys and host-specific paths must never enter health or trace payloads.
@@ -44,7 +45,8 @@ class AgentSettings:
                 "local_observability_content_enabled": self.langfuse_enabled and self.langfuse_content_enabled and self.observability_purpose == "interactive",
                 "remote_observability_enabled": self.langsmith_enabled,
                 "remote_observability_content_policy": "metadata_only",
-                "observability_purpose": self.observability_purpose}
+                "observability_purpose": self.observability_purpose,
+                "compose_enabled": self.compose_enabled}
 
 
 def load_agent_settings(path: str | Path | None = None, *, environ: Mapping[str, str] | None = None):
@@ -103,6 +105,9 @@ def load_agent_settings(path: str | Path | None = None, *, environ: Mapping[str,
         raise ServiceError("INVALID_MODEL_BUDGET_ID", 503)
     if authorization and not re.fullmatch(r"[a-zA-Z0-9_.-]{1,100}", authorization):
         raise ServiceError("INVALID_MODEL_BUDGET_AUTHORIZATION", 503)
+    compose = value("ONTO_MODEL_COMPOSE", "false")
+    if compose not in {"true", "false"}:
+        raise ServiceError("INVALID_MODEL_COMPOSE_SETTING", 503)
     smith_enabled = value("ONTO_LANGSMITH_ENABLED", "false")
     try:
         if smith_enabled not in {"true", "false"}:
@@ -125,7 +130,8 @@ def load_agent_settings(path: str | Path | None = None, *, environ: Mapping[str,
         langfuse_secret_key=value("LANGFUSE_SECRET_KEY"),
         langfuse_base_url=url.rstrip("/"), langfuse_enabled=enabled == "true",
         langfuse_content_enabled=content_enabled == "true", observability_purpose=purpose,
-        prior_spend_usd=spend, budget_id=budget_id, budget_authorization_ref=authorization)
+        prior_spend_usd=spend, budget_id=budget_id, budget_authorization_ref=authorization,
+        compose_enabled=compose == "true")
     if result.langfuse_enabled and not (result.langfuse_public_key and result.langfuse_secret_key):
         raise ServiceError("LANGFUSE_KEYS_REQUIRED", 503)
     return result

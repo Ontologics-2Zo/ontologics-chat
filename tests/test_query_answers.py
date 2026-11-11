@@ -5,7 +5,7 @@ from decimal import Decimal
 import unittest
 
 from service.imports import convert_baseline
-from service.query_answers import answer_query
+from service.query_answers import number, answer_query
 from service.query_contracts import QueryAnswerBlock, QueryPrerequisite
 from service.materials import requirements_for_snapshot
 from service.views import snapshot_view
@@ -36,6 +36,24 @@ class QueryAnswerTests(unittest.TestCase):
 
     def answer(self, question, **kwargs):
         return answer_query(question, self.view, self.ontology, **kwargs)
+
+    def test_detail_reads_answer_from_recorded_values_only(self):
+        quality = self.answer("불량률은 얼마야?")
+        self.assertEqual((quality["status"], quality["intent"]), ("ANSWERED", ["quality"]))
+        self.assertRegex(quality["answer"], r"불량률은 [\d.]+%")
+        self.assertIn("가정", quality["answer"])  # planned yield is kept apart from the actual rate
+        transit = self.answer("운송 중인 보드는 몇 대야?")
+        self.assertEqual((transit["status"], transit["intent"]), ("ANSWERED", ["transit"]))
+        self.assertIn("근거는 원장에 없습니다", transit["answer"])
+        substitute = self.answer("대체 후보는 있어?")
+        self.assertEqual(substitute["intent"], ["substitute"])
+        self.assertIn(substitute["status"], {"ANSWERED", "UNKNOWN"})
+        if substitute["status"] == "ANSWERED":
+            self.assertIn("확보량에 넣지 않습니다", substitute["answer"])
+        position = self.answer("어디에 들어가?")
+        self.assertEqual(position["intent"], ["position"])
+        unknown = self.answer("IM-9999는 어디에 들어가?")
+        self.assertIn(unknown["status"], {"UNKNOWN", "NEEDS_CLARIFICATION"})  # never guessed
 
     def test_colloquial_fulfillment_separates_remaining_and_new_production(self):
         result = self.answer("얼마나 남았어? 몇 대 더 만들어야 해?")
@@ -355,21 +373,17 @@ class QueryAnswerTests(unittest.TestCase):
         before = deepcopy(self.view)
         result = self.answer("남은 17대 납기 안에 도착할 수 있어?")
         blocks = [QueryAnswerBlock.model_validate(block) for block in result["answer_blocks"]]
-        self.assertEqual([block.id for block in blocks], ["delivery_balance", "bom_application", "bom_next_action"])
-        self.assertEqual([block.kind for block in blocks], ["normal", "normal", "attention"])
-        self.assertEqual({block.tool for block in blocks}, {"원장 조회"})
+        self.assertEqual([block.id for block in blocks], ["delivery_balance", "defect_basis", "bom_next_action", "verdict"])
+        self.assertEqual([block.kind for block in blocks], ["normal", "normal", "attention", "verdict"])
+        self.assertEqual(blocks[2].action, "REVIEW_BOM_APPLICATION")
         balance = " ".join(blocks[0].paragraphs)
         for field in ("promise_remaining_qty", "production_remaining_qty", "already_produced_qty"):
             self.assertIn(f"{self.view['summary'][field]}대", balance)
-        self.assertIn("합성 기초 원장", balance)
-        application = " ".join(blocks[1].paragraphs)
-        self.assertIn(self.view["summary"]["configuration_id"], application)
-        self.assertIn(self.view["summary"]["delivery_round_id"], application)
-        self.assertIn("등록 원문은 2행", application)
-        self.assertIn("검토된 적용 행이 없어", application)
-        self.assertIn("납기 판단을 보류", " ".join(blocks[2].paragraphs))
-        self.assertNotIn("94%", str(result["answer_blocks"]))
-        self.assertNotIn("계획 투입", str(result["answer_blocks"]))
+        self.assertIn(self.view["summary"]["delivery_round_id"], balance)
+        self.assertIn("검토된 적용 행이 없어", " ".join(blocks[2].paragraphs))
+        self.assertIn("납기 판단 보류", blocks[3].title)
+        self.assertIn("새 납기 약속으로 저장하지 않습니다", " ".join(blocks[3].paragraphs))
+        self.assertNotIn("schedule_backward", [block.id for block in blocks])
         self.assertEqual(result["calculation"]["material_requirements"], before["material_requirements"])
         self.assertEqual(result["calculation"]["actual_delivery_feasibility"], "UNKNOWN")
         self.assertEqual(result["meta"], before["meta"])
@@ -379,35 +393,80 @@ class QueryAnswerTests(unittest.TestCase):
         self.view = query_view(with_bom=False)
         result = self.answer("남은 물량을 납기 안에 도착시킬 수 있어?")
         blocks = result["answer_blocks"]
-        self.assertIn("반영된 BOM 원본이 없어", " ".join(blocks[1]["paragraphs"]))
-        self.assertEqual(blocks[2]["title"], "BOM 원본 등록 필요")
+        self.assertEqual([b["id"] for b in blocks], ["delivery_balance", "defect_basis", "bom_missing", "verdict"])
+        self.assertIn("반영된 BOM이 없어", " ".join(blocks[2]["paragraphs"]))
+        self.assertEqual(blocks[2]["title"], "BOM 전개 불가")
+        self.assertEqual(blocks[2]["action"], "REGISTER_BOM")
+        self.assertEqual(blocks[3]["title"], "BOM 미등록 · 납기 판단 보류")
         self.assertNotIn("등록 원문은", str(blocks))
-        self.assertEqual(len(blocks), 3)
         self.assertIsNone(result["prerequisite"]["bom"])
 
-    def test_partial_delivery_cards_keep_exact_known_shortage_and_conditional_origin(self):
+    def test_partial_delivery_cards_follow_reference_order_with_exact_quantities(self):
         result = self.answer("자재 부족과 납기 가능성을 알려줘")
-        body = " ".join(result["answer_blocks"][1]["paragraphs"])
-        self.assertIn("소요 16.5 piece", body)
-        self.assertIn("가용 12 piece", body)
-        self.assertIn("부족 4.5 piece", body)
-        self.assertIn("시연 가정", body)
-        self.assertIn("합성 기초 원장", body)
-        self.assertNotIn("94%", str(result["answer_blocks"]))
-        self.assertEqual(result["calculation"]["material_requirements"]["items"][0]["planned_shortage_qty"], "6.0")
+        blocks = [QueryAnswerBlock.model_validate(block) for block in result["answer_blocks"]]
+        self.assertEqual([b.id for b in blocks][:4], ["delivery_balance", "defect_basis", "material_shortage", "schedule_backward"])
+        self.assertEqual(blocks[-1].id, "verdict")
+        defect = " ".join(blocks[1].paragraphs)
+        summary = self.view["summary"]
+        judged = summary["good_qty"] + summary["defect_qty"]
+        self.assertIn(f"판정된 {judged}대 중 불량 {summary['defect_qty']}대", defect)
+        self.assertIn("가정 계산이며 양품을 보장하지 않습니다", defect)
+        table = blocks[2].table
+        self.assertEqual(table.columns, ["위치", "품목", "필요", "가용", "부족"])
+        item = result["calculation"]["material_requirements"]["items"][0]
+        # Planned-input basis: the same numbers as the shared calculation, not a recomputation.
+        self.assertEqual(table.rows[0][1:], [item["item_id"], number(item["planned_required_qty"]), "12", "6"])
+        self.assertEqual(table.alert_cells, [[0, 4]])
+        self.assertIn("부족 0으로 보지 않습니다", " ".join(blocks[2].paragraphs))
+        schedule = blocks[3]
+        self.assertEqual((schedule.kind, schedule.tool), ("assumption", "원장 조회 · 일정 · 견적"))
+        # One row per stage backward from the due date, filled from the ledger where it can be.
+        rows = schedule.table.rows
+        self.assertEqual([row[0] for row in rows][1:6], ["운송", "출하 준비", f"생산 {number(result['calculation']['basis']['planned_input_qty'])}대", "수입검사", "부품 입하 필요일"])
+        self.assertEqual([row[2] for row in rows][1:6], ["근거 없음"] * 4 + ["계산 불가"])
+        self.assertTrue(all(cell[1] == 2 for cell in schedule.table.alert_cells))
+        # Durations for stages without evidence are never filled in.
+        self.assertNotRegex(" ".join(" ".join(row) for row in rows[1:6]), r"\d+\s*(영업)?일")
+        # Parts arrival comes from a quote's lead time; the gap is calendar days to the due date.
+        parts = rows[6]
+        self.assertTrue(parts[0].startswith("부품 입하 예상"))
+        if parts[2] == "시연 견적 가정":
+            self.assertRegex(parts[1], r"견적 \d+영업일 → \d{4}-\d{2}-\d{2}$")
+            self.assertTrue(any("공급사 확약이 아닙니다" in note for note in schedule.paragraphs))
+        else:
+            self.assertEqual(parts[1:], ["수량을 충족하는 견적 없음", "미확인"])
+        self.assertEqual(blocks[-1].title, "자재 부족 6개 · 납기 판단 보류")
+        self.assertEqual(item["planned_shortage_qty"], "6.0")
         direct = self.answer("재고 빼면 어떤 자재가 얼마나 모자라?")
         self.assertNotIn("answer_blocks", direct)
         self.assertIn("부족 4.5 / 6", str(next(s for s in direct["sections"] if s["id"] == "materials")))
 
     def test_explicit_delivery_what_if_cards_preserve_exact_yield_and_planned_comparison(self):
         result = self.answer("양품 19대가 목표면 수율 50%로 납기 가능해?")
-        balance = " ".join(result["answer_blocks"][0]["paragraphs"])
-        self.assertIn("50%", balance); self.assertIn("38대", balance)
-        self.assertIn("양품을 보장하지 않습니다", balance)
-        materials = next(s for s in result["sections"] if s["id"] == "materials")["items"]
-        for row in materials:
-            self.assertIn(row["value"], " ".join(result["answer_blocks"][1]["paragraphs"]))
+        defect = " ".join(result["answer_blocks"][1]["paragraphs"])
+        self.assertIn("50%", defect); self.assertIn("38대", defect)
+        self.assertIn("양품을 보장하지 않습니다", defect)
         self.assertEqual(result["calculation"]["actual_delivery_feasibility"], "UNKNOWN")
+
+
+class BusinessDayTests(unittest.TestCase):
+    def test_scenario_schedule_runs_forward_from_parts_and_backward_from_the_due_date(self):
+        from service.query_answers import _scenario_schedule
+        scenario = {"content": {"scenario_ref": "SCN-1", "inspection_business_days": 1, "daily_capacity": 20,
+                                "ship_prep_business_days": 1, "transit_days": 2}}
+        plan = _scenario_schedule(scenario, {"date": "2026-11-13"}, "2026-11-27", "43")
+        self.assertEqual((plan["inspected"], plan["production_days"], plan["produced"], plan["shipped"], plan["arrives"]),
+                         ("2026-11-16", 3, "2026-11-19", "2026-11-20", "2026-11-22"))
+        self.assertEqual((plan["slack"], plan["latest_parts"]), (5, "2026-11-18"))
+        late = _scenario_schedule({"content": {**scenario["content"], "daily_capacity": 5}}, {"date": "2026-11-13"}, "2026-11-27", "43")
+        self.assertLess(late["slack"], 0)  # a slower assumption shows the overrun, not a hidden pass
+
+    def test_weekends_are_skipped_like_the_ledger_quote_dates(self):
+        from datetime import date
+        from service.query_answers import _add_business_days
+        start = date(2026, 11, 6)  # Friday
+        self.assertEqual([_add_business_days(start, days).isoformat() for days in (3, 5, 10)],
+                         ["2026-11-11", "2026-11-13", "2026-11-20"])
 
 
 if __name__ == "__main__":

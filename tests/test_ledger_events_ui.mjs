@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { formatLedgerEventTime, ledgerEventFreshIds, renderLedgerEvents, createLedgerEventRenderer, mountDashboard } from '../web/mks2/dashboard.js';
+import { activitySummary, formatLedgerEventTime, ledgerEventFreshIds, renderLedgerEvents, createLedgerEventRenderer, mountDashboard } from '../web/mks2/dashboard.js';
 
 function event(version = 2, extra = {}) {
   return { event_id: `synthetic-event-${version}`, ledger_version: version, event_type: 'BomRegistered',
@@ -147,4 +147,15 @@ test('dashboard remount retains only an in-memory same-scope cursor and does not
     dashboard?.destroy();
     if (previousDocument === undefined) delete globalThis.document; else globalThis.document = previousDocument;
   }
+});
+
+test('document steps appear among ledger events without a ledger version', () => {
+  const step = { audit_id: 'audit-1', recorded_at: '2099-01-01T00:00:00+00:00', action: 'approve', actor_id: 'actor-dev-b',
+    kind: 'PO', document_id: 'abcd1234-0000', quantity: 25 };
+  assert.equal(activitySummary(step), 'PO-ABCD 내부 발주 승인 · B (아직 원장 미반영)');
+  assert.equal(activitySummary({ ...step, action: 'create', actor_id: 'actor-dev-a' }), 'PO-ABCD 내부 발주 초안 · 25개 · 승인 요청 (작성 A)');
+  const html = renderLedgerEvents(snapshot(2, [event(2)]), { activity: [step, { ...step, audit_id: '<x>' , recorded_at: '2000-01-01T00:00:00+00:00', action: 'review' }] });
+  assert.ok(html.indexOf('data-activity-id="audit-1"') < html.indexOf('data-ledger-event-id'));  // newest first
+  assert.ok(html.includes('>문서</span>'));
+  assert.ok(!html.includes('<x>'));  // escaped
 });

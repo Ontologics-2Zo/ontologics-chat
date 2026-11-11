@@ -104,6 +104,7 @@ def snapshot_view(payload):
         meta.update(opening_effective_at=source["opening_effective_at"],
                     inventory_effective_at=source.get("current_inventory_effective_at"))
     from service.reservations import reservation_impacts
+    from service.procurement_state import legacy_pools
     impacts = reservation_impacts(requirements, payload.get("reservations", []))
     suggestions = []
     from decimal import Decimal
@@ -111,7 +112,8 @@ def snapshot_view(payload):
     if first and Decimal(impacts[-1]["planned_shortage_after"]) > Decimal(first["planned_shortage_before"]):
         # Selecting a suggestion only fills the question draft (no model call).
         suggestions = [f"왜 부족이 {impacts[-1]['planned_shortage_after']}개로 늘었어?",
-                       f"기존 {first['planned_shortage_before']}개 안이면 충분해? 어떤 안을 다시 검토할까?"]
+                       f"기존 {first['planned_shortage_before']}개 안이면 충분해? 어떤 안을 다시 검토할까?",
+                       "도착기한에는 어떤 영향이 있어?"]
     return {
         "mode": "ledger-service", "serviceConnected": True, "meta": meta, "summary": summary,
         "entities": payload["entities"], "relationships": payload["relationships"],
@@ -128,7 +130,8 @@ def snapshot_view(payload):
         "fulfillment": deepcopy(payload.get("fulfillment", {})),
         "capabilities": {"bom_upload": "RUNNER_UNAVAILABLE", "purchase_write": "NOT_IMPLEMENTED", "agent": "NOT_IMPLEMENTED", "model": "NOT_RUN"},
         "reservation_impacts": impacts,
-        "suggested_questions": suggestions + ["남은 약속은 몇 대고, 얼마나 더 만들어야 해?", "수율을 적용하면 몇 대 투입하고 어떤 자재가 부족해?", f"남은 {summary['promise_remaining_qty']}대, 납기 안에 고객에게 도착할 수 있어?", "현재 가용 재고와 예약 근거를 보여줘", "전체 온톨로지의 클래스와 관계 범위를 보여줘"],
+        "legacy_cohort": legacy_pools(payload),
+        "suggested_questions": suggested_questions(summary, requirements, bom, payload, suggestions),
     }
 
 
@@ -166,3 +169,28 @@ def ontology_view(catalog):
 
 # Kept at this public import location for existing API and projection clients.
 from service.query_answers import answer_query
+
+
+def suggested_questions(summary, requirements, bom, payload, follow_ups):
+    """Questions that fit the current state and that the read flow can answer.
+
+    Before a BOM is posted, material questions only say a BOM is needed, so
+    they are left out. After a reservation, its follow-ups come first. A
+    shortage with no live purchase request adds the quote comparison.
+    """
+    round_question = f"남은 {summary['promise_remaining_qty']}대, 납기 안에 고객에게 도착할 수 있어?"
+    ontology = "전체 온톨로지의 클래스와 관계 범위를 보여줘"
+    if not bom:
+        ordered = [round_question, "남은 약속은 몇 대고, 얼마나 더 만들어야 해?", "현재 가용 재고와 예약 근거를 보여줘", ontology]
+    else:
+        item = summary.get("item_id")
+        focus = next((row for row in requirements.get("items", []) if row.get("item_id") == item), None)
+        short = focus is not None and focus.get("planned_shortage_qty") is not None and float(focus["planned_shortage_qty"]) > 0
+        requested = any(row.get("kind") == "PR" and not row.get("cancelled_by") and not row.get("rejection_reason")
+                        for row in (payload.get("procurement") or {}).get("documents", []))
+        ordered = [*follow_ups, round_question, "수율을 적용하면 몇 대 투입하고 어떤 자재가 부족해?"]
+        if short and not requested:
+            ordered.append(f"{item} 부족을 채울 견적을 비교해줘")
+        ordered += ["현재 가용 재고와 예약 근거를 보여줘", "남은 약속은 몇 대고, 얼마나 더 만들어야 해?", ontology]
+    return list(dict.fromkeys(ordered))[:7]
+

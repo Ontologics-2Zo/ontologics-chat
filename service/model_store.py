@@ -29,6 +29,15 @@ class PostgresModelStore:
     def __init__(self, db):
         self.db = db
 
+    def verify_schema(self):
+        """A shared budget database is migrated by its own service; only check it."""
+        try:
+            with self.db.connect() as conn:
+                for table in ("model_budget_accounts", "model_executions", "model_attempts"):
+                    conn.execute(f"SELECT 1 FROM {table} LIMIT 0")
+        except Exception:
+            raise ServiceError("MODEL_BUDGET_DATABASE_UNAVAILABLE", 503) from None
+
     def initialize_budget(self, budget_id, *, limit_usd=Decimal("10"),
                           prior_spend_usd=None, authorization_ref=None):
         """Insert a new scope once. Existing history is immutable through this API."""

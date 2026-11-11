@@ -189,7 +189,7 @@ class OpenRouterRouteProvider:
                  output_token_parameter="max_tokens"):
         if not isinstance(api_key, str) or not api_key or any(ord(c) < 32 for c in api_key):
             raise ServiceError("MODEL_CREDENTIAL_MISSING", 503)
-        if not re.fullmatch(r"[a-z0-9_.-]+/[a-z0-9_.-]+", model_id) or not re.fullmatch(r"[a-z0-9_.-]+", provider_slug):
+        if not re.fullmatch(r"[a-z0-9_.-]+/[a-z0-9_.-]+", model_id) or not re.fullmatch(r"[a-z0-9_.-]+(/[a-z0-9_.-]+)?", provider_slug):
             raise ServiceError("MODEL_PROFILE_INVALID", 503)
         if canonical_model_id is not None and (not isinstance(canonical_model_id, str)
                 or not re.fullmatch(r"[a-z0-9_.-]+/[a-z0-9_.-]+", canonical_model_id)
@@ -202,6 +202,8 @@ class OpenRouterRouteProvider:
         # Host supplies the exact canonical_slug from the selected public
         # catalog record. No prefix match, caller override or model fallback.
         self._response_model_ids = frozenset((model_id, canonical_model_id or model_id))
+        # A regional tag such as "azure/us" pins one endpoint; the response
+        # still names the provider itself ("Azure").
         self.provider_slug = provider_slug
         self.output_token_parameter = output_token_parameter
         self._client = client
@@ -338,7 +340,7 @@ class OpenRouterRouteProvider:
                     error = "MODEL_RETURNED_MODEL_MISMATCH"
                 if actual_provider is None:
                     error = "MODEL_PROVIDER_UNCONFIRMED"
-                elif actual_provider.casefold() != self.provider_slug.casefold():
+                elif actual_provider.casefold() != self.provider_slug.partition("/")[0].casefold():
                     error = "MODEL_RETURNED_PROVIDER_MISMATCH"
                 return ProviderReply(capability, usage, actual_provider, model, generation_id, error)
         except ProviderFailure:

@@ -104,3 +104,23 @@
 .mks-edge.mks-row-evidence:hover text, .mks-edge.mks-row-evidence:focus-within text { opacity:1; }
 .mks-graph-detail { max-height:45%; overflow:auto; z-index:2; }
 @media (max-width:700px) { .mks-graph-legend { top:88px; } .mks-graph-tools { justify-content:flex-start; } .mks-graph-status { top:126px; } }
+
+/* Business-area colours and importance sizes (presentation only) */
+.mks-graph { --area-plan: #0d9488; --area-dem: #2563eb; --area-bom: #7c3aed; --area-inv: #059669; --area-pro: #d97706; --area-ev: #94a3b8; }
+.mks-node.mks-area-dem { --area: var(--area-dem); } .mks-node.mks-area-bom { --area: var(--area-bom); }
+.mks-node.mks-area-inv { --area: var(--area-inv); } .mks-node.mks-area-pro { --area: var(--area-pro); }
+.mks-node.mks-area-ev { --area: var(--area-ev); }
+.mks-node[class*="mks-area-"]:not(.mks-tone-bad):not(.mks-tone-warn) .mks-node-shape { stroke: var(--area); fill: color-mix(in srgb, var(--area) 16%, var(--node, #fff)); stroke-width: 2px; }
+.mks-node.mks-key .mks-node-shape, .mks-node.mks-key .mks-node-ring { scale: 1.35; transform-box: fill-box; transform-origin: center; }
+.mks-node.mks-key .mks-node-id { font-size: 15px; fill: var(--area, var(--fg)); }
+.mks-node.mks-minor .mks-node-shape, .mks-node.mks-minor .mks-node-ring, .mks-node.mks-minor .mks-node-shadow { scale: .5; transform-box: fill-box; transform-origin: center; }
+.mks-node.mks-minor .mks-node-shape { stroke-width: 1.2px; }
+.mks-node.mks-minor text { display: none; }
+.mks-node.mks-minor:hover text, .mks-node.mks-minor.mks-hit text, .mks-node.mks-minor.mks-selected text, .mks-node.mks-minor.mks-active-step text { display: inline; }
+.mks-area-legend { display: flex; flex-wrap: wrap; gap: 8px; width: 100%; margin-top: 4px; }
+.mks-area-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; }
+.mks-area-chip::before { content: ""; width: 10px; height: 10px; border-radius: 3px; background: color-mix(in srgb, var(--c) 25%, transparent); border: 2px solid var(--c); }
+.mks-area-chip.mks-area-dem { --c: #2563eb; } .mks-area-chip.mks-area-bom { --c: #7c3aed; } .mks-area-chip.mks-area-inv { --c: #059669; }
+.mks-area-chip.mks-area-pro { --c: #d97706; } .mks-area-chip.mks-area-ev { --c: #94a3b8; }
+.mks-node.mks-area-plan { --area: var(--area-plan); }
+.mks-area-chip.mks-area-plan { --c: #0d9488; }

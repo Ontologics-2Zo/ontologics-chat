@@ -35,6 +35,10 @@ CAPABILITIES = {"fulfillment_read": FulfillmentRead, "material_analysis": Materi
 CAPABILITY_TOOLS = {"fulfillment_read": "ledger.query", "material_analysis": "ledger.query",
                     "product_review": "product.review", "procurement_review": "procurement.options"}
 MODEL_CAPABILITIES = frozenset({"fulfillment_read", "material_analysis"})
+ROUTE_FEATURE = {"fulfillment": "fulfillment", "production": "production", "materials": "materials",
+                 "inventory": "inventory", "delivery": "delivery", "ontology": "ontology",
+                 "sourcing": "materials", "change": "materials", "trace": "inventory",
+                 "position": "materials", "substitute": "materials", "quality": "production", "transit": "fulfillment"}
 PINNED_FIELDS = ("company_id", "read_snapshot_id", "ledger_version", "projection_version",
                  "ontology_version", "rule_version", "as_of", "known_as_of")
 
@@ -49,13 +53,18 @@ class TaskState(TypedDict, total=False):
 
 class AgentWorkflow:
     def __init__(self, db, identity, gateway, context_provider, *, route_model=None,
-                 observer=None, max_tool_calls=8, deadline_seconds=3600):
+                 compose_model=None, observer=None, max_tool_calls=8, deadline_seconds=3600,
+                 retrieval_profile="R3"):
         if type(max_tool_calls) is not int or not 1 <= max_tool_calls <= 100:
             raise ValueError("INVALID_AGENT_BUDGET")
         if type(deadline_seconds) is not int or not 1 <= deadline_seconds <= 86400:
             raise ValueError("INVALID_AGENT_DEADLINE")
         self.db, self.identity, self.gateway = db, identity, gateway
         self.context_provider, self.route_model, self.observer = context_provider, route_model, observer
+        self.compose_model = compose_model
+        if retrieval_profile not in {"R3", "R4"}:
+            raise ValueError("INVALID_RETRIEVAL_PROFILE")
+        self.retrieval_profile = retrieval_profile
         self.max_tool_calls, self.deadline_seconds = max_tool_calls, deadline_seconds
         self.store = AgentStore(db)
         self.runtime_versions = {name: version(name) for name in
@@ -119,6 +128,9 @@ class AgentWorkflow:
             # historical business snapshot. Keep the stored artifact immutable.
             result = {**result, "meta": {**result.get("meta", {}),
                                         "identity_revision": principal.identity_revision}}
+            if self._summarizable(row):
+                stored = self.store.artifact(str(row["execution_id"]), self._summary_key(row))
+                result["ai_summary"] = stored["content"] if stored else {"status": "PENDING"}
         return {"execution_id": str(row["execution_id"]), "revision": row["revision"],
                 "status": row["status"], "capability": row["capability"],
                 "segment_count": row["segment_count"], "tool_calls": row["tool_calls"],
@@ -127,6 +139,51 @@ class AgentWorkflow:
                 "ledger_mutations": 0, "execution_kind": "langgraph_readonly_agent",
                 "deadline_at": row["deadline_at"].isoformat(),
                 "events": self.store.events(str(row["execution_id"]))}
+
+    def _summarizable(self, row):
+        return (self.compose_model is not None and row["status"] == "COMPLETED"
+                and row.get("capability") in MODEL_CAPABILITIES and bool(row.get("result_ref")))
+
+    @staticmethod
+    def _summary_key(row):
+        return content_hash({"stage": "compose", "base": str(row["result_ref"])})
+
+    def summarize(self, principal, execution_id):
+        """After-answer AI summary of a completed answer; never changes the answer itself.
+
+        Stored once per answer. A concurrent request returns PENDING instead of a
+        second model call, and a changed snapshot makes the summary unavailable.
+        """
+        row = self._owner(principal, execution_id)
+        if not self._summarizable(row):
+            raise ServiceError("AGENT_SUMMARY_NOT_ALLOWED", 409)
+        execution_id, key = str(row["execution_id"]), self._summary_key(row)
+        stored = self.store.artifact(execution_id, key)
+        if stored:
+            return stored["content"]
+        with self.store.summary_lock(execution_id) as locked:
+            if not locked:
+                return {"status": "PENDING"}
+            stored = self.store.artifact(execution_id, key)
+            if stored:
+                return stored["content"]
+            try:
+                context = self._revalidate(principal, row)
+            except ServiceError as error:
+                return self.store.put_summary(execution_id, key, {"status": "UNAVAILABLE", "reason_code": error.code})
+            result = self.store.result(execution_id, row["result_ref"])
+            hits = ((result or {}).get("retrieval") or {}).get("hits") or []
+
+            class _Budget:
+                deadline_at = row["deadline_at"]
+                @staticmethod
+                def check():
+                    if datetime.now(timezone.utc) >= row["deadline_at"]:
+                        raise ServiceError("AGENT_DEADLINE_EXCEEDED", 408)
+                    self._revalidate(principal, row)
+            summary = self.compose_model(principal, context, str(row.get("segment_id") or execution_id),
+                                         result, hits[:5], _Budget())
+            return self.store.put_summary(execution_id, key, summary)
 
     def events(self, principal, execution_id, after=0):
         row = self._owner(principal, execution_id)
@@ -251,14 +308,18 @@ class AgentWorkflow:
             if explicit:
                 return {"capability": explicit, "needs_clarification": False}
             plan = interpret_question(request.question)
+            # The model only receives the fixed routing flags. Narrower intents
+            # map onto them (sourcing/change → materials, trace → inventory).
+            features = tuple(sorted({ROUTE_FEATURE[intent] for intent in plan.intents if intent in ROUTE_FEATURE})) or ("unknown",)
             if plan.clarification or plan.unsupported:
                 capability = None
+            elif set(plan.intents) == {"ontology"}:
+                capability = "fulfillment_read"  # schema scope: same read-only query, no model needed
             elif self.route_model:
-                features = tuple(plan.intents) or ("unknown",)
                 capability = self.route_model(principal, context, segment_id, features, budget)
-            elif set(plan.intents) & {"materials", "inventory"}:
+            elif set(features) & {"materials", "inventory"}:
                 capability = "material_analysis"
-            elif set(plan.intents) & {"fulfillment", "production", "delivery"}:
+            elif set(features) & {"fulfillment", "production", "delivery"}:
                 capability = "fulfillment_read"
             else:
                 capability = None
@@ -310,6 +371,44 @@ class AgentWorkflow:
                 raise ServiceError("AGENT_RESULT_INVALID", 409)
             return {"needs_clarification": result["status"] == "NEEDS_CLARIFICATION"}
 
+        def extend(state, stage, field, make):
+            """Adds one field to the result as a new immutable artifact (cached per input)."""
+            base = state.get("result_ref")
+            result = self.store.result(execution_id, base)
+            if result is None or state.get("capability") not in MODEL_CAPABILITIES:
+                return {}
+            key = content_hash({"stage": stage, "base": base})
+            prior = self.store.artifact(execution_id, key)
+            if prior:
+                self.store.result(execution_id, prior["artifact_id"])
+                return {"result_ref": str(prior["artifact_id"])}
+            ref = self.store.put_artifact(execution_id, lease, key, {**result, field: make(result)})
+            return {"result_ref": ref}
+
+        def retrieve(state):
+            # Snapshot-local hybrid search (R3) as supporting evidence. A search
+            # failure never fails the answer; it is recorded as unavailable.
+            def search(result):
+                request, _ = effective_input()
+                try:
+                    port = self.gateway.bind(principal=principal, context=context, budget=budget,
+                                             allowed_tools={"retrieval.search"})
+                    # The host picks R4 (local rerank, best top-5 order on the P0
+                    # cases) when a reranker is loaded, otherwise R3.
+                    found = port.call("retrieval.search", {"query": request.question, "profile": self.retrieval_profile,
+                                                           "limit": 8, "ledger_version": context.ledger_version}).data
+                except ServiceError as error:
+                    return {"status": "UNAVAILABLE", "reason_code": error.code, "hits": []}
+                except ValueError:
+                    return {"status": "UNAVAILABLE", "reason_code": "RETRIEVAL_TOOL_UNAVAILABLE", "hits": []}
+                hits = [{"evidence_id": hit["evidence_id"], "kind": hit["kind"], "origin": hit["origin"],
+                         "review_status": hit["review_status"], "node_ids": hit["node_ids"][:4],
+                         "match_modes": hit["match_modes"], "text": hit["text"][:120]} for hit in found.get("hits", [])]
+                return {"status": found.get("status"), "profile": found.get("profile", "R3"),
+                        "corpus_version": (found.get("meta") or {}).get("corpus_version"), "hits": hits}
+            return extend(state, "retrieve", "retrieval", search)
+
+
         graph = StateGraph(TaskState)
         graph.add_node("route", observed("route", route))
         graph.add_node("clarify", clarify)
@@ -321,11 +420,15 @@ class AgentWorkflow:
             graph.add_node(capability, child.compile(name=capability))
             graph.add_edge(capability, "validate")
         graph.add_node("validate", observed("validate", validate))
+        graph.add_node("retrieve", observed("retrieve", retrieve))
         choices = {**{name: name for name in CAPABILITIES}, "clarify": "clarify"}
         graph.add_edge(START, "route")
         graph.add_conditional_edges("route", lambda state: state.get("capability") or "clarify", choices)
         graph.add_conditional_edges("clarify", lambda state: state["capability"], {name: name for name in CAPABILITIES})
-        graph.add_conditional_edges("validate", lambda state: "clarify" if state["needs_clarification"] else "end", {"clarify": "clarify", "end": END})
+        graph.add_conditional_edges("validate", lambda state: "clarify" if state["needs_clarification"] else "retrieve", {"clarify": "clarify", "retrieve": "retrieve"})
+        # The AI summary is a separate after-answer step (summarize), so the
+        # ledger answer is returned without waiting for the model to write.
+        graph.add_edge("retrieve", END)
         return graph.compile(checkpointer=saver, name=WORKFLOW_VERSION)
 
     def run(self, principal, execution_id, *, expected_revision=None):

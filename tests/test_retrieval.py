@@ -90,6 +90,19 @@ class RetrievalTests(unittest.TestCase):
             self.assertIn(value, tokens)
         self.assertEqual(self.embedding.calls, [])
 
+    def test_slash_joined_specs_are_also_indexed_by_part(self):
+        tokens = lexical_tokens("100nF/16V/10%/X7R/C0402 C8")
+        for value in ("100nf/16v/10", "100nf", "16v", "x7r", "c0402", "c8"):
+            self.assertIn(value, tokens)
+        self.assertEqual(lexical_tokens("ABC-12.5"), ["abc-12.5"])
+
+    def test_entity_text_carries_korean_class_and_status_names(self):
+        from service.retrieval import _korean_hints
+        hints = _korean_hints({"type": "InternalItem", "attributes": {"substitute_status": "NOT_REVIEWED", "location": ""}})
+        self.assertIn("사내 품목", hints); self.assertIn("대체 후보", hints); self.assertIn("검토되지 않음", hints)
+        self.assertNotIn("보관 위치", hints)
+        self.assertEqual(_korean_hints({"type": "Unknown", "attributes": {}}), "")
+
     def test_dense_can_recover_without_lexical_match_and_reports_provenance(self):
         self.assertEqual(self.search("저항")["status"], "NO_HIT")
         result = self.search("저항", "R1")
@@ -168,6 +181,14 @@ class RetrievalTests(unittest.TestCase):
         self.assertTrue(all(hit["source"].get("bom_id") != old_bom for hit in result["hits"]))
         self.assertTrue(all(edge["evidence"].get("bom_id") != old_bom for edge in result["graph"]["edges"]))
 
+    def test_graph_reached_documents_only_fill_free_slots(self):
+        result = self.search("DEMO-R1", "R3", limit=20)
+        modes = [hit["match_modes"] for hit in result["hits"]]
+        first_graph = next((n for n, mode in enumerate(modes) if mode == ["graph"]), len(modes))
+        # Direct matches keep their order; graph-only documents come after them.
+        self.assertTrue(all(mode != ["graph"] for mode in modes[:first_graph]))
+        self.assertTrue(all(mode == ["graph"] for mode in modes[first_graph:]))
+
     def test_scope_context_rejects_unknown_and_only_visits_recorded_neighborhood(self):
         with self.assertRaisesRegex(ServiceError, "RETRIEVAL_CONTEXT_UNAVAILABLE"):
             self.search("resistor", "R1", context_entity_id="not-in-snapshot")
@@ -189,11 +210,32 @@ class RetrievalTests(unittest.TestCase):
         self.assertEqual(self.search("resistor")["status"], "INDEX_INCOMPLETE")
 
     def test_optional_profiles_explicit_and_do_not_invoke_embeddings(self):
-        for profile in ("R2", "R4", "R5"):
+        for profile in ("R2", "R5"):
             result = self.search("resistor", profile)
             self.assertEqual(result["status"], "PROFILE_NOT_IMPLEMENTED")
             self.assertEqual(result["profile_status"][profile], "NOT_IMPLEMENTED")
         self.assertEqual(self.embedding.calls, [])
+        # R4 is implemented but needs a configured local reranker.
+        result = self.search("resistor", "R4")
+        self.assertEqual((result["status"], result["code"]), ("INDEX_INCOMPLETE", "RETRIEVAL_RERANKER_UNAVAILABLE"))
+
+    def test_r4_reorders_candidates_including_graph_reached_ones(self):
+        class Reranker:
+            provenance = {"model_id": "synthetic-rerank"}
+            def __init__(self): self.calls = []
+            def score(self, query, texts):
+                self.calls.append(len(texts))
+                # Prefer later candidates so the order visibly changes.
+                return [float(n) for n in range(len(texts))]
+        reranker = Reranker()
+        service = RetrievalService(self.authorize, self.embedding, reranker=reranker)
+        result = service.search(self.principal, self.payload, self.context, RetrievalSearch(query="DEMO-R1", profile="R4", limit=20))
+        self.assertEqual(result["status"], "HIT")
+        self.assertTrue(reranker.calls and reranker.calls[0] <= 30)
+        self.assertTrue(all("rerank" in hit["match_modes"] for hit in result["hits"]))
+        self.assertEqual([hit["score"] for hit in result["hits"]], sorted((hit["score"] for hit in result["hits"]), reverse=True))
+        self.assertEqual(result["meta"]["reranker"], {"model_id": "synthetic-rerank"})
+        self.assertEqual(result["meta"]["external_model_calls"], 0)
 
     def test_cache_is_content_scoped_bounded_and_does_not_mutate_inputs(self):
         original = deepcopy(self.payload)

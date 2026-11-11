@@ -7,7 +7,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from dev.service_stack import load_runtime, StackError
+from dev.service_stack import load_database_url, load_runtime, StackError
 from service.__main__ import parse_args
 
 
@@ -49,6 +49,31 @@ class ServiceStartupTests(unittest.TestCase):
             with self.subTest(values=values),redirect_stderr(io.StringIO()),self.assertRaises(SystemExit) as error:
                 self.args(*values)
             self.assertEqual(error.exception.code,2)
+
+
+    def test_shared_model_budget_needs_both_options_and_a_distinct_port(self):
+        self.assertIsNone(self.args().model_budget_runtime_file)
+        args=self.args("--postgres-port","55436","--model-budget-runtime-file","other.json","--model-budget-postgres-port","55432")
+        self.assertEqual(args.model_budget_postgres_port,55432)
+        for values in (("--model-budget-runtime-file","other.json"),("--model-budget-postgres-port","55432"),
+                       ("--model-budget-runtime-file","other.json","--model-budget-postgres-port","55432"),
+                       ("--model-budget-runtime-file","other.json","--model-budget-postgres-port","80")):
+            with self.subTest(values=values),redirect_stderr(io.StringIO()),self.assertRaises(SystemExit) as error:
+                self.args(*values)
+            self.assertEqual(error.exception.code,2)
+
+    def test_shared_budget_reads_only_the_checked_database_url(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/"runtime.json"
+            config={"DATABASE_URL":"postgresql://test:synthetic-password@127.0.0.1:55432/synthetic",
+                    "NEO4J_URI":"bolt://127.0.0.1:57687","NEO4J_PASSWORD":"synthetic-password"}
+            path.write_text(json.dumps(config))
+            self.assertEqual(load_database_url(path,55432),config["DATABASE_URL"])
+            with self.assertRaises(StackError):load_database_url(path,55436)
+            path.write_text(json.dumps({**config,"DATABASE_URL":"postgresql://test:pw@remote.invalid:55432/x"}))
+            with self.assertRaises(StackError):load_database_url(path,55432)
+            path.write_text("not json")
+            with self.assertRaises(StackError):load_database_url(path,55432)
 
 
 if __name__=="__main__":unittest.main()

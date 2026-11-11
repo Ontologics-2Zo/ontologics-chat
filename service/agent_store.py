@@ -113,6 +113,35 @@ class AgentStore:
             finally:
                 guard.execute("SELECT pg_advisory_unlock(%s)", (key,))
 
+    @contextmanager
+    def summary_lock(self, execution_id):
+        """Same per-execution advisory lock as claim(); yields False when busy."""
+        execution_id = identifier(execution_id)
+        key = int.from_bytes(sha256(execution_id.encode()).digest()[:8], "big", signed=True)
+        with self.db.connect() as guard:
+            guard.autocommit = True
+            locked = guard.execute("SELECT pg_try_advisory_lock(%s) AS acquired", (key,)).fetchone()["acquired"]
+            try:
+                yield bool(locked)
+            finally:
+                if locked:
+                    guard.execute("SELECT pg_advisory_unlock(%s)", (key,))
+
+    def put_summary(self, execution_id, key, content):
+        """Stores the after-answer summary of a COMPLETED execution once; the answer artifact is untouched."""
+        digest = content_hash(content)
+        with self.db.connect() as conn:
+            row = conn.execute("SELECT status FROM agent_executions WHERE execution_id=%s FOR UPDATE", (execution_id,)).fetchone()
+            if row is None or row["status"] != "COMPLETED":
+                raise ServiceError("AGENT_SUMMARY_NOT_ALLOWED", 409)
+            previous = conn.execute("SELECT * FROM agent_artifacts WHERE execution_id=%s AND artifact_key=%s",
+                                    (execution_id, key)).fetchone()
+            if previous:
+                return previous["content"]
+            conn.execute("""INSERT INTO agent_artifacts(artifact_id,execution_id,artifact_key,content,content_hash)
+                VALUES (%s,%s,%s,%s,%s)""", (str(uuid4()), execution_id, key, Jsonb(content), digest))
+            return content
+
     def resume(self, execution_id, request):
         digest = content_hash(request.model_dump(mode="json"))
         with self.db.connect() as conn:
