@@ -335,3 +335,18 @@
 .mk-event-list li.mk-event-step{color:var(--fg2,#475569)}
 .mk-event-version.mk-event-doc{color:var(--fg3,#94a3b8);font-weight:500}
 .mk-event-step-text{font-size:12.5px}
+/* 진행 현황: one card, a row per workflow */
+.mk-flow-board>h3{margin:0 0 8px;font-size:14px}
+.mk-flow-banner{margin:0 0 10px;padding:7px 10px;border-radius:8px;background:var(--accent-soft,#eef0fe);color:var(--accent,#4f46e5);font-size:12.5px;font-weight:600}
+.mk-flow-lane{padding:10px 0;border-top:1px solid var(--line2,#e7ecf2)}
+.mk-flow-lane:first-of-type{border-top:0;padding-top:2px}
+.mk-flow-head{display:flex;align-items:center;gap:8px;font-size:13.5px}
+.mk-flow-head .mk-pill{margin-left:auto}
+.mk-flow-summary{margin:4px 0 6px;font-size:12.5px;color:var(--fg2,#475569);font-family:var(--mono,ui-monospace,monospace)}
+.mk-flow-lane .mk-supply-actions{margin-bottom:4px}
+.mk-flow-wait{font-size:12px;color:var(--fg3,#64748b)}
+.mk-flow-detail{font-size:12px;color:var(--fg2,#475569)}
+.mk-flow-detail>summary{cursor:pointer;color:var(--fg3,#64748b);font-size:12px;width:max-content}
+.mk-flow-detail[open]>summary{margin-bottom:4px}
+.mk-flow-detail .mk-supply-steps{margin:4px 0 6px}
+.mk-flow-detail .mk-small-note{margin:4px 0 0}
