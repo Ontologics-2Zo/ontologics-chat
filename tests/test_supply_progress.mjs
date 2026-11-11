@@ -151,3 +151,17 @@ test('the delivery-round card offers baseline moves, LOT production and next boa
   const done = fulfillmentState({ ...view, summary: { ...view.summary, promise_remaining_qty: 0 } }, [], author);
   assert.equal(done.status, '전량 도착');
 });
+
+test('the progress board shows whose turn it is instead of greyed-out buttons', async () => {
+  const { laneWaiting, flowBanner } = await import('../web/mks2/procurement.js');
+  const approval = [{ label: '승인', action: 'review-approve', disabled: true }, { label: '반려', action: 'reject', disabled: true }];
+  const authorTurn = [{ label: '내부 발주 초안', action: 'new-po', disabled: true }];
+  const mine = [{ label: '승인', action: 'review-approve', disabled: false }];
+  assert.equal(laneWaiting(approval), 'review');
+  assert.equal(laneWaiting(authorTurn), 'author');
+  assert.equal(laneWaiting(mine), null);
+  assert.equal(laneWaiting([]), null);
+  assert.equal(flowBanner([approval, approval, authorTurn], author), '검토자 승인 대기 2건 · 상단 역할을 검토자로 바꾸면 승인할 수 있습니다.');
+  assert.equal(flowBanner([mine, authorTurn], reviewer), '작성자 차례 1건 · 상단 역할을 작성자로 바꾸면 이어서 작성할 수 있습니다.');
+  assert.equal(flowBanner([mine, []], reviewer), '');
+});

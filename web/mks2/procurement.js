@@ -162,29 +162,53 @@ export function supplyProgress(documents, snapshot, identity, editor = null) {
   }
   return {
     item, status, tone, steps: stepsAt(focus ? reachedStep[focus.status] ?? 0 : 4), focusId: focus?.id || null,
-    focusLabel: focus && focus !== pr ? kindLabel[focus.kind] : null, next, shortfall, needed: Number.isFinite(needed) ? needed : null, stale, rows: progressRows,
+    focusLabel: focus && focus !== pr ? kindLabel[focus.kind] : null,
+    focusSummary: focus ? `${kindLabel[focus.kind] || focus.kind} ${docLabel(focus.kind, focus.id)}${focus.quantity != null ? ` · ${focus.quantity}${unit}` : ''}` : null, next, shortfall, needed: Number.isFinite(needed) ? needed : null, stale, rows: progressRows,
     notes: returned.length ? [...notes, `반려된 초안 ${returned.length}건은 작성자 수정 전까지 진행에서 제외했습니다.`] : notes,
   };
 }
 const toneClass = { ok: 'ok', warn: 'warn', mute: 'mute', info: 'info' };
-function progressCard(progress, busy, extra = '') {
+// One "진행 현황" card: a row per workflow with a one-line summary and only the
+// buttons this account can press. Steps, detail rows and fixed notes fold away.
+function laneButtons(entries, busy, focusId = null, fulfill = false) {
+  let first = true;
+  return entries.map((entry, index) => ({ entry, index })).filter(({ entry }) => entry.action && !entry.disabled).map(({ entry, index }) => {
+    const primary = first; first = false;
+    const doc = entry.target || focusId;
+    return `<button type="button" class="mk-btn${primary ? ' primary' : ''}" data-purchase-action="${entry.action}"${fulfill ? ` data-fulfill-index="${index}"` : ''}${doc ? ` data-doc="${esc(doc)}"` : ''}${busy ? ' disabled' : ''}>${esc(entry.label)}</button>`;
+  }).join('');
+}
+// Who the row is waiting for when this account has nothing to press.
+export function laneWaiting(entries) {
+  if (!entries?.length || entries.some(entry => entry.action && !entry.disabled)) return null;
+  return entries.some(entry => entry.label === '승인') ? 'review' : 'author';
+}
+const WAITING_TEXT = { review: '검토자 승인 대기', author: '작성자 차례' };
+function lane({ key, title, status, tone, summary, entries, busy, focusId, fulfill, warnings = [], steps = '', rows = [], notes = [], fixed = '', extra = '' }) {
+  const waiting = laneWaiting(entries);
+  const detail = steps || rows.length || notes.length || fixed;
+  return `<section class="mk-flow-lane" ${key}>
+    <div class="mk-flow-head"><strong>${esc(title)}</strong><span class="mk-pill ${toneClass[tone] || 'mute'}">${esc(status)}</span></div>
+    ${summary ? `<p class="mk-flow-summary">${esc(summary)}</p>` : ''}
+    ${warnings.map(text => `<div class="mk-supply-warn">${text}</div>`).join('')}
+    <div class="mk-supply-actions">${laneButtons(entries, busy, focusId, fulfill)}${waiting ? `<span class="mk-flow-wait">${WAITING_TEXT[waiting]}</span>` : ''}</div>
+    ${extra}
+    ${detail ? `<details class="mk-flow-detail"><summary>상세</summary>${steps}${rows.length ? `<dl class="mk-supply-rows">${rows.map(([label, value]) => `<dt>${esc(label)}</dt><dd>${esc(value)}</dd>`).join('')}</dl>` : ''}${[...notes, fixed].filter(Boolean).map(note => `<p class="mk-small-note">${esc(note)}</p>`).join('')}</details>` : ''}
+  </section>`;
+}
+function supplyLane(progress, busy, extra = '') {
   if (!progress) return '';
-  // Same layout as the shared MK-S2 card: title + one status pill, step pills,
-  // label/value list, a warning box when the plan no longer covers the
-  // current shortage, then the action and the note.
-  const head = `<h3>${esc(progress.item)} 확보 진행<span class="mk-spacer"></span><span class="mk-pill ${toneClass[progress.tone] || 'mute'}">${esc(progress.status)}</span></h3>`;
-  if (progress.empty) return `<section class="mk-supply-progress" data-supply-progress>${head}<p class="mk-supply-empty">${esc(progress.text)}</p>${extra}</section>`;
+  const title = `${progress.item || '대상 품목'} 확보`;
+  if (progress.empty) return lane({ key: 'data-supply-progress', title, status: progress.status, tone: progress.tone, summary: progress.text, entries: [], busy, extra });
+  const pick = label => progress.rows.find(([name]) => name === label)?.[1];
+  const order = pick('내부 발주');
+  const summary = progress.focusSummary || pick('입하 · 검사') || (order && !order.startsWith('미작성') ? order : pick('구매 요청')) || '';
   const warnings = [];
   if (progress.shortfall > 0) warnings.push(`현재 부족 ${esc(progress.needed)}개 기준으로 이 안은 <b>${esc(progress.shortfall)}개 미충족</b>입니다 · 재검토 필요 (자동 수정 없음)`);
   if (progress.stale) warnings.push(`기준 원장 v${esc(progress.stale.basis)}→v${esc(progress.stale.current)} · 초안 재검토 필요`);
-  const primary = progress.next.findIndex(entry => !entry.disabled && entry.action);
-  const buttons = progress.next.map((entry, index) => `<button type="button" class="mk-btn${entry.primary || index === primary ? ' primary' : ''}"${entry.action ? ` data-purchase-action="${entry.action}" data-doc="${esc(entry.target || progress.focusId || '')}"` : ''}${entry.disabled || busy ? ' disabled' : ''}>${esc(entry.label)}</button>`).join('');
-  return `<section class="mk-supply-progress" data-supply-progress>${head}
-    <div class="mk-supply-steps" role="list" aria-label="확보 단계${progress.focusLabel ? ` · ${esc(progress.focusLabel)}` : ''}">${progress.steps.map(step => `<span role="listitem" class="mk-step-${step.state}"${step.state === 'current' ? ' aria-current="step"' : ''}>${esc(step.label)}</span>`).join('<i aria-hidden="true">→</i>')}${progress.focusLabel ? `<small>${esc(progress.focusLabel)}</small>` : ''}</div>
-    <dl class="mk-supply-rows">${progress.rows.map(([label, value]) => `<dt>${esc(label)}</dt><dd>${esc(value)}</dd>`).join('')}</dl>
-    ${warnings.map(text => `<div class="mk-supply-warn">${text}</div>`).join('')}
-    <div class="mk-supply-actions">${buttons}${progress.notes.map(note => `<span class="mk-small-note">${esc(note)}</span>`).join('')}</div>
-    ${extra}<p class="mk-small-note">내부 발주는 공급사 확약이 아닙니다. 외부 송신은 없습니다.</p></section>`;
+  const steps = `<div class="mk-supply-steps" role="list" aria-label="확보 단계${progress.focusLabel ? ` · ${esc(progress.focusLabel)}` : ''}">${progress.steps.map(step => `<span role="listitem" class="mk-step-${step.state}"${step.state === 'current' ? ' aria-current="step"' : ''}>${esc(step.label)}</span>`).join('<i aria-hidden="true">→</i>')}</div>`;
+  return lane({ key: 'data-supply-progress', title, status: progress.status, tone: progress.tone, summary, entries: progress.next, busy, focusId: progress.focusId,
+    warnings, steps, rows: progress.rows, notes: progress.notes, fixed: '내부 발주는 공급사 확약이 아닙니다. 외부 송신은 없습니다.', extra });
 }
 
 // T12 what-if schedule card: the latest scenario document and its next step,
@@ -261,21 +285,25 @@ export function fulfillmentState(snapshot, documents, identity) {
   return { pending, next, notes, rows, status: done ? '전량 도착' : pending ? '승인 진행' : '진행 중', tone: done ? 'ok' : pending ? 'warn' : 'info',
            label: pending ? documentLabel(pending.kind, pending.id) : null };
 }
-function fulfillmentCard(state, busy) {
-  const buttons = state.next.map((entry, index) => `<button type="button" class="mk-btn${index === 0 && !entry.disabled ? ' primary' : ''}" data-purchase-action="${entry.action}" data-fulfill-index="${index}"${entry.target ? ` data-doc="${esc(entry.target)}"` : ''}${entry.disabled || busy ? ' disabled' : ''}>${esc(entry.label)}</button>`).join('');
-  return `<section class="mk-supply-progress mk-fulfillment-card" data-fulfillment-card><h3>회차 이행<span class="mk-spacer"></span><span class="mk-pill ${toneClass[state.tone] || 'mute'}">${esc(state.status)}</span></h3>
-    <dl class="mk-supply-rows">${state.rows.map(([label, value]) => `<dt>${esc(label)}</dt><dd>${esc(value)}</dd>`).join('')}${state.label ? `<dt>승인 대기</dt><dd>${esc(state.label)}</dd>` : ''}</dl>
-    <div class="mk-supply-actions">${buttons}${state.notes.map(note => `<span class="mk-small-note">${esc(note)}</span>`).join('')}</div>
-    <p class="mk-small-note">기초 보드는 serial이 없는 기초 이관 수량이며 기록된 단계별 수량 안에서만 옮깁니다. 신규 보드는 LOT 가용 수량 안에서 생산합니다.</p></section>`;
+function fulfillmentLane(state, busy) {
+  const [promise, ...rest] = state.rows;
+  return lane({ key: 'data-fulfillment-card', title: '회차 이행', status: state.status, tone: state.tone,
+    summary: `${promise[0]} ${promise[1]}${state.label ? ` · ${state.label}` : ''}`, entries: state.next, busy, fulfill: true,
+    rows: rest, notes: state.notes, fixed: '기초 보드는 serial이 없는 기초 이관 수량이며 기록된 단계별 수량 안에서만 옮깁니다. 신규 보드는 LOT 가용 수량 안에서 생산합니다.' });
 }
-function scenarioCard(state, busy, extra = '') {
-  const buttons = state.next.map((entry, index) => `<button type="button" class="mk-btn${index === 0 && !entry.disabled ? ' primary' : ''}" data-purchase-action="${entry.action}"${entry.target ? ` data-doc="${esc(entry.target)}"` : ''}${entry.disabled || busy ? ' disabled' : ''}>${esc(entry.label)}</button>`).join('');
-  const body = state.doc
-    ? `<dl class="mk-supply-rows">${state.values.map(([label, value]) => `<dt>${esc(label)}</dt><dd>${esc(value)}</dd>`).join('')}<dt>문서</dt><dd>${esc(state.label)}</dd></dl>`
-    : '<p class="mk-supply-empty">등록된 일정 가정이 없습니다. 가정을 승인하면 68대 질문의 일정 역산이 이 기간으로 계산됩니다.</p>';
-  return `<section class="mk-supply-progress mk-scenario-card" data-scenario-card><h3>일정 가정 시나리오<span class="mk-spacer"></span><span class="mk-pill ${toneClass[state.tone] || 'mute'}">${esc(state.status)}</span></h3>
-    ${body}<div class="mk-supply-actions">${buttons}${state.notes.map(note => `<span class="mk-small-note">${esc(note)}</span>`).join('')}</div>${extra}
-    <p class="mk-small-note">What-if 가정입니다. 원장 사실이 아니며 실제 납기 판단은 보류로 남습니다.</p></section>`;
+function scenarioLane(state, busy, extra = '') {
+  const summary = state.doc ? `${state.label} · ${state.values.map(([label, value]) => `${label} ${value}`).join(' · ')}` : '가정 없음 · 승인하면 68대 질문의 일정 역산에 쓰입니다';
+  return lane({ key: 'data-scenario-card', title: '일정 가정', status: state.status, tone: state.tone, summary, entries: state.next, busy,
+    notes: state.notes, fixed: 'What-if 가정입니다. 원장 사실이 아니며 실제 납기 판단은 보류로 남습니다.', extra });
+}
+// One line above the rows when the next presses belong to the other account.
+export function flowBanner(lanes, identity) {
+  const approver = (identity?.permitted_actions || []).includes('document.approve');
+  const waits = lanes.map(laneWaiting).filter(Boolean);
+  const review = waits.filter(wait => wait === 'review').length, author = waits.filter(wait => wait === 'author').length;
+  if (!approver && review) return `검토자 승인 대기 ${review}건 · 상단 역할을 검토자로 바꾸면 승인할 수 있습니다.`;
+  if (approver && author) return `작성자 차례 ${author}건 · 상단 역할을 작성자로 바꾸면 이어서 작성할 수 있습니다.`;
+  return '';
 }
 
 export function mountProcurementFlow(container, { snapshot, api, getIdentity = () => null, onPosted = () => {}, onRefresh = () => {}, onActivity = () => {} }) {
@@ -370,9 +398,13 @@ export function mountProcurementFlow(container, { snapshot, api, getIdentity = (
     if (progress && editor && !scenarioEditing) progress.next = [];
     const scenario = scenarioState(documents, getIdentity());
     if (scenarioEditing) scenario.next = [];
-    container.innerHTML = progressCard(progress, busy || needsRefresh, status + refresh + (scenarioEditing ? '' : form()))
-      + scenarioCard(scenario, busy || needsRefresh, scenarioEditing ? status + form() : '')
-      + fulfillmentCard(fulfillment = fulfillmentState(snapshot, documents, getIdentity()), busy || needsRefresh);
+    fulfillment = fulfillmentState(snapshot, documents, getIdentity());
+    const blocked = busy || needsRefresh;
+    const banner = flowBanner([progress && !progress.empty ? progress.next : [], scenario.next, fulfillment.next], getIdentity());
+    container.innerHTML = `<div class="mk-flow-board"><h3>진행 현황</h3>${banner ? `<p class="mk-flow-banner">${esc(banner)}</p>` : ''}${status}${refresh}`
+      + supplyLane(progress, blocked, scenarioEditing ? '' : form())
+      + scenarioLane(scenario, blocked, scenarioEditing ? form() : '')
+      + fulfillmentLane(fulfillment, blocked) + '</div>';
   }
   container.addEventListener('click', event => {
     const target = event.target.closest('[data-purchase-action]');
