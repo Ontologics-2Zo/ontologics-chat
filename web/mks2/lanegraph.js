@@ -89,6 +89,11 @@ export function mountLaneGraph(container, { data, summary = {}, itemOrder = [], 
   const VKEY=VER.map(V=>{const m=new Map(); V.lines.forEach(l=>m.set(verKey(l),A(l).source_description)); return m;});
   function verLabel(i){const V=VER[i]; return 'v'+V.v+(V.sd?' · '+NB.get(V.sd).label:'');}
   
+  /* ---- 이행 묶음 (흐름 레인 표시용): 생산 실적별 보드·장착 기록. 노드·관계는 그대로 ---- */
+  const PRODS=ofType('ProductionReport').map(n=>n.id);
+  const BOARD_P=new Map(), INST_P=new Map();
+  PRODS.forEach((p,i)=>outs(p,'reportedBoard').forEach(e=>BOARD_P.set(e.target,i)));
+  ofType('InstallationEvent').forEach(n=>{const b=(outs(n.id,'installedOn')[0]||{}).target; if(b&&BOARD_P.has(b)) INST_P.set(n.id,BOARD_P.get(b));});
   /* ---- 화면 상태 ---- */
   const PIN=new Set();
   const LAY={rows:true,docs:true,labels:false};
@@ -101,8 +106,10 @@ export function mountLaneGraph(container, { data, summary = {}, itemOrder = [], 
     if(t==='BOMApplication') return (ACTIVE_APP.has(id)||MODE!=='lane')?id:null;
     if(t==='BOMLine'){if((LINE_APP.has(id)&&(activeLine(id)||MODE!=='lane'))||PIN.has(id)) return id; return LAY.rows?'gL:'+LINE_V.get(id):(MODE!=='lane'?id:null);}
     if(t==='SourceRow'){if(PIN.has(id)) return id; return LAY.rows?'gR:'+ROW_V.get(id):(MODE!=='lane'?id:null);}
+    // Many boards and install records fold per production record in the lane view only.
+    if(MODE==='lane'&&!PIN.has(id)){if(t==='BoardUnit'&&BOARD_P.has(id)) return 'gB:'+BOARD_P.get(id); if(t==='InstallationEvent'&&INST_P.has(id)) return 'gI:'+INST_P.get(id);}
     return id;}
-  function ensureVisible(id){const n=NB.get(id); if(!n) return; if((n.type==='BOMLine'||n.type==='SourceRow')&&slot(id)!==id) PIN.add(id); if(DOCS.has(n.type)&&!LAY.docs){LAY.docs=true; syncLayerBtns();}}
+  function ensureVisible(id){const n=NB.get(id); if(!n) return; if((n.type==='BOMLine'||n.type==='SourceRow'||n.type==='BoardUnit'||n.type==='InstallationEvent')&&slot(id)!==id) PIN.add(id); if(DOCS.has(n.type)&&!LAY.docs){LAY.docs=true; syncLayerBtns();}}
   
   /* ---- 배치 계산 ---- */
   const COLA=[[90,'고객 · 계약'],[335,'납품 회차'],[580,'생산'],[800,'제품 구성'],[1040,'BOM 행 → 적용'],[1280,'사내 품목'],[1520,'재고 · 견적'],[1740,'공급사']];
@@ -119,8 +126,30 @@ export function mountLaneGraph(container, { data, summary = {}, itemOrder = [], 
     let ry=30;
     ofType('PartLot').forEach(l=>{if(!P.has(l.id)){putN(l.id,1520,ry+OY); ry+=77;} ins(l.id,'reservationEventLot').forEach(e=>{if(!P.has(e.source)){putN(e.source,1520,ry+OY); ry+=77;}});});
     ofType('SupplierOffer').forEach(o=>{if(P.has(o.id)) return; putN(o.id,1520,ry+OY); const s=(outs(o.id,'offerFromSupplier')[0]||{}).target; if(s&&!P.has(s)) putN(s,1740,ry+OY); ry+=77;});
+    // 이행 띠: 생산 실적마다 한 줄(실적 → 보드 묶음 → 장착 묶음 → 소비), 그 아래 입고 → 배정 → 출하 → 도착.
+    if(PRODS.length){
+      let fy=Math.max(470,90+APPS.length*90+OY+40);
+      const consumptionOf=p=>{for(const e of outs(p,'reportedBoard')){const inst=(ins(e.target,'installedOn')[0]||{}).source; const c=inst&&(outs(inst,'supportedByConsumption')[0]||{}).target; if(c) return c;} return null;};
+      PRODS.forEach((p,i)=>{
+        const boards=GD.nodes.filter(n=>n.type==='BoardUnit'&&BOARD_P.get(n.id)===i&&!PIN.has(n.id)).map(n=>n.id);
+        const installs=GD.nodes.filter(n=>n.type==='InstallationEvent'&&INST_P.get(n.id)===i&&!PIN.has(n.id)).map(n=>n.id);
+        if(!P.has(p)) putN(p,580,fy);
+        if(boards.length) put('gB:'+i,800,fy,168,56,{group:'B',pi:i,members:boards});
+        if(installs.length) put('gI:'+i,1040,fy,168,56,{group:'I',pi:i,members:installs});
+        const c=consumptionOf(p); if(c&&!P.has(c)) putN(c,1280,fy);
+        const all=new Set(outs(p,'reportedBoard').map(e=>e.target));
+        const fgs=ins(p,'fgReceiptFromReport').map(e=>e.source);
+        const ships=ofType('Shipment').filter(sh=>outs(sh.id,'shipsBoard').some(e=>all.has(e.target))).map(sh=>sh.id);
+        const arr=ofType('ArrivalRecord').filter(ar=>outs(ar.id,'arrivedBoard').some(e=>all.has(e.target))).map(ar=>ar.id);
+        const allocs=fgs.flatMap(f=>ins(f,'allocationFromReceipt').map(e=>e.source));
+        const row=[[fgs,580],[allocs,800],[ships,1040],[arr,1280]];
+        const depth=Math.max(0,...row.map(([ids])=>ids.length));
+        for(let k=0;k<depth;k++) row.forEach(([ids,x])=>{const id=ids[k]; if(id&&!P.has(id)) putN(id,x,fy+78*(k+1));});
+        fy+=78*(depth+1)+24;
+      });
+    }
     let oy=450;
-    GD.nodes.forEach(n=>{if(P.has(n.id)||DOCS.has(n.type)||n.type==='BOMLine'||n.type==='SourceRow'||n.type==='BOMSnapshot'||n.type==='BOMApplication'||n.type==='Evidence') return; putN(n.id,1740,oy+OY); oy+=78;});
+    GD.nodes.forEach(n=>{if(P.has(n.id)||slot(n.id)!==n.id||DOCS.has(n.type)||n.type==='BOMLine'||n.type==='SourceRow'||n.type==='BOMSnapshot'||n.type==='BOMApplication'||n.type==='Evidence') return; putN(n.id,1740,oy+OY); oy+=78;});
     let aBottom=0; P.forEach(b=>{aBottom=Math.max(aBottom,b.y+b.h/2);});
     const lbTop=Math.max(600,aBottom+52);
     let top=lbTop+34; const bands=[];
@@ -171,7 +200,9 @@ export function mountLaneGraph(container, { data, summary = {}, itemOrder = [], 
   function chipSVG(x,y,t,c){const w=t.length*6+10; return `<g class="nch ${c}" transform="translate(${x},${y})"><rect width="${w}" height="15" rx="4"/><text x="5" y="11">${esc(t)}</text></g>`;}
   function nodeSVG(b){
     const cls=['nd'], k=b.key; let kd='',og='',tt='',sb='',body='',cat='ev';
-    if(b.group){const V=VER[b.vi]; cls.push('grp');
+    if(b.group==='B'||b.group==='I'){cls.push('grp'); cat='dem'; const pr=NB.get(PRODS[b.pi]);
+      kd=b.group==='B'?'보드 묶음':'장착 기록 묶음'; tt=`${b.members.length}${b.group==='B'?'대':'건'}`; sb=`${pr?pr.display_id:'생산 실적'} · 눌러서 목록`; og='원장';
+    } else if(b.group){const V=VER[b.vi]; cls.push('grp');
       if(b.group==='L'){cat='bom'; const u=b.members.filter(l=>((A(l).decision||{}).application_status)==='UNRESOLVED').length; kd=`BOM 행 묶음 · v${V.v}`; tt=`${b.members.length}행`; sb=`UNRESOLVED ${u} · 눌러서 행 탐색`;}
       else {cat='ev'; const rs=b.members.map(r=>A(r).source_row).filter(x=>x!=null); kd=`원문 행 묶음 · v${V.v}`; tt=`${b.members.length}행`; sb=rs.length?`시트 row ${Math.min(...rs)}–${Math.max(...rs)}`:'';}
       og='원본';
@@ -247,7 +278,7 @@ export function mountLaneGraph(container, { data, summary = {}, itemOrder = [], 
     svg.classList.toggle('dimming',G.hitN.size>0);
     svg.classList.toggle('labels',LAY.labels); svg.classList.toggle('net',!!V.net);
     const folded=[...P.values()].filter(b=>b.group).reduce((s,b)=>s+b.members.length,0);
-    $('snapinfo').innerHTML=`원본 노드 <b>${GD.nodes.length}</b> · 관계 <b>${GD.edges.length}</b> → 화면 상자 <b>${P.size}</b> · 선 <b>${E.length}</b>${V.derN?` · 파생 클래스 ${V.clsN} · 속성값 ${V.litN}`:''}${folded?` · 묶음 안 ${folded}행`:''}<br>원장 v${META.ledger_version} · 그래프 v${META.projection_version} · 원천 v${META.source_ledger_version}`;
+    $('snapinfo').innerHTML=`원본 노드 <b>${GD.nodes.length}</b> · 관계 <b>${GD.edges.length}</b> → 화면 상자 <b>${P.size}</b> · 선 <b>${E.length}</b>${V.derN?` · 파생 클래스 ${V.clsN} · 속성값 ${V.litN}`:''}${folded?` · 묶음 안 ${folded}개`:''}<br>원장 v${META.ledger_version} · 그래프 v${META.projection_version} · 원천 v${META.source_ledger_version}`;
     if(!G.fitted&&svg.getBoundingClientRect().width>0){G.fitted=true; if(svg.getBoundingClientRect().width<700){const c=chainIds(), ap=itemOrder.length?appByItem(itemOrder[0]):null; fitTo([c.round,c.job,c.cfg].filter(Boolean).concat(ap?[ap.app]:[]),0);} else fitAll(0);}
     if(G.sel) showDetail(G.sel); else $('detail').hidden=true;
     if(!$('rowx').hidden) renderRowx();
@@ -294,7 +325,7 @@ export function mountLaneGraph(container, { data, summary = {}, itemOrder = [], 
     const l=VER[0]&&VER[0].lines.find(l=>(A(l).designators||[]).includes(x)); return l||null;}
   function focusAny(x,center){const k=resolveKey(x); if(!k) return; if(NB.has(k)) ensureVisible(k);
     stopTrace(); clearHits(); G.sel=k; G.focus=k; renderGraph(); if(center) fitTo([...G.hitN]); if(NB.has(k)) onSelect(NB.get(k));}
-  on(svg,'click',e=>{if(suppressClick){suppressClick=false; return;} const g=e.target.closest('.nd'); if(!g) return; const k=g.dataset.k; if(k[0]==='g'&&k[2]===':'){openRowx(+k.slice(3)); stopTrace(); clearHits(); G.sel=null; G.focus=k; renderGraph(); return;} focusAny(k,false);});
+  on(svg,'click',e=>{if(suppressClick){suppressClick=false; return;} const g=e.target.closest('.nd'); if(!g) return; const k=g.dataset.k; if(k.startsWith('gB:')||k.startsWith('gI:')){stopTrace(); clearHits(); G.sel=k; G.focus=k; renderGraph(); showDetail(k); return;} if(k[0]==='g'&&k[2]===':'){openRowx(+k.slice(3)); stopTrace(); clearHits(); G.sel=null; G.focus=k; renderGraph(); return;} focusAny(k,false);});
   on(svg,'keydown',e=>{if(e.key==='Enter'||e.key===' '){const g=e.target.closest('.nd'); if(g){e.preventDefault(); g.dispatchEvent(new MouseEvent('click',{bubbles:true}));}}});
   
   /* ---- 근거 경로 (원본 관계만 따라감) ---- */
@@ -337,6 +368,10 @@ export function mountLaneGraph(container, { data, summary = {}, itemOrder = [], 
     const d=$('detail'); if(!key){d.hidden=true; return;}
     const close=`<button class="x" type="button" data-act="close" aria-label="닫기">×</button>`;
     if(typeof DERM!=='undefined'&&DERM.has(key)){d.innerHTML=derDetail(key,close); d.hidden=false; return;}
+    if((key.startsWith('gB:')||key.startsWith('gI:'))&&G.view&&G.view.P.get(key)){const b=G.view.P.get(key), pr=NB.get(PRODS[b.pi]);
+      d.innerHTML=`<div class="ih"><div><div class="k">${b.group==='B'?'보드 묶음':'장착 기록 묶음'} · 화면 표시용</div><h4>${esc(pr?pr.display_id:'생산 실적')} · ${b.members.length}${b.group==='B'?'대':'건'}</h4></div>${close}</div>
+        <p class="note" style="margin-top:4px">같은 생산 실적의 ${b.group==='B'?'BoardUnit':'InstallationEvent'} 노드 ${b.members.length}개를 한 상자로 접었습니다. 노드와 관계는 그대로이며, 선의 ×N은 묶인 관계 수입니다. 항목을 누르면 따로 펼쳐 보입니다.</p>
+        <div class="rc" style="padding-left:0">${b.members.slice(0,60).map(o=>`<button class="chip" type="button" data-node="${esc(o)}">${esc(nlabel(o))}</button>`).join('')}${b.members.length>60?`<span class="note">외 ${b.members.length-60}개</span>`:''}</div>`; d.hidden=false; return;}
     if(key[0]==='g'&&key[2]===':'){const b=G.view&&G.view.P.get(key); if(!b){d.hidden=true; return;} const V=VER[b.vi];
       d.innerHTML=`<div class="ih"><div><div class="k">${b.group==='L'?'BOM 행 묶음':'원문 행 묶음'} · 화면 표시용</div><h4>v${V.v} · ${b.members.length}행</h4></div>${close}</div>
         <p class="note" style="margin-top:4px">같은 버전의 ${b.group==='L'?'BOMLine':'SourceRow'} 노드 ${b.members.length}개를 한 상자로 접었습니다. 노드와 관계는 그대로이며, 선의 ×N은 묶인 관계 수입니다.</p>
