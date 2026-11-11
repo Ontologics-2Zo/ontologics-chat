@@ -151,6 +151,8 @@ select,.btn { border:1px solid var(--line); background:var(--surface); border-ra
 .query-quote-metrics dt { font-size:11px; color:var(--fg2); }
 .query-quote-metrics dd { margin:0 0 4px; font-weight:600; font-variant-numeric:tabular-nums; }
 .query-quote-reason { font-size:11.5px; }
+.query-quote-recommended { border-color:var(--ok, #2f9e6b); box-shadow:0 0 0 1px var(--ok, #2f9e6b) inset; }
+.query-quote-why { color:var(--ok, #2f9e6b); }
 .query-answer-card[data-display-state=active] .query-answer-number::after { content:''; width:8px; height:8px; border:1.5px solid var(--accent); border-top-color:transparent; border-radius:50%; animation:query-card-spin .7s linear infinite; }
 @keyframes query-card-spin { to { transform:rotate(360deg); } }
 @media(prefers-reduced-motion:reduce) { .query-answer-card[data-display-state=active] .query-answer-number::after { animation:none; } }

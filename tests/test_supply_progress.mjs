@@ -137,7 +137,7 @@ test('the schedule scenario card follows the same author/approver rule', async (
   assert.deepEqual(scenarioState([draft], reviewer).next.map(entry => entry.action), ['review-approve', 'reject']);
   assert.deepEqual(mine.values[1], ['생산능력', '20대/영업일']);
   const posted = scenarioState([{ ...draft, status: 'POSTED', ledger_version: 10 }], author);
-  assert.equal(posted.status, '반영됨 · 원장 v10'); assert.equal(posted.next[0].label, '새 가정 작성');
+  assert.equal(posted.status, '반영됨 · 원장 v10'); assert.equal(posted.next[0].label, '새 시연 가정 작성');
   assert.equal(scenarioState([{ ...draft, rejection_reason: 'x' }], author).status, '가정 없음');
 });
 

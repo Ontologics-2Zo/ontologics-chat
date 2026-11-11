@@ -47,6 +47,38 @@ def quote_calculation(quote, shortage):
             "currency": quote["currency"], "freight_status": "KNOWN" if total is not None else "UNKNOWN"}
 
 
+RECOMMENDATION_RULE = "유효 · 공급한도 확인 · 수량 충족 견적 중 리드타임 → 소계 순"
+
+
+def recommend_quote(entries):
+    """Pick one quote to suggest, by a fixed rule, without choosing for the user.
+
+    Only valid quotes whose order quantity is known to fit the supply limit
+    count. Among them the shortest quoted lead time wins, then the lower
+    subtotal, then the quote reference. Freight, supplier commitment and the
+    real schedule stay unconfirmed; a person still picks and approves.
+    Returns {"quote_id", "reason"} or None.
+    """
+    usable = [e for e in entries if not e.get("expired") and e.get("calculation")
+              and e["calculation"].get("quantity_condition") == "MET" and e["calculation"].get("recommended_qty")]
+    if not usable:
+        return None
+    def key(e):
+        lead = e.get("lead_business_days")
+        return (lead is None, lead if lead is not None else 0, Decimal(str(e["calculation"]["subtotal"])), e["quote_ref"])
+    ranked = sorted(usable, key=key)
+    best = ranked[0]
+    if len(ranked) == 1:
+        why = "수량 조건을 충족하는 유효 견적이 이것 하나입니다"
+    else:
+        lead, other = best.get("lead_business_days"), ranked[1].get("lead_business_days")
+        if lead is not None and lead != other:
+            why = f"수량 충족 견적 {len(ranked)}건 중 견적 리드타임이 가장 짧습니다({lead}영업일)"
+        else:
+            why = f"수량 충족 견적 {len(ranked)}건 중 리드타임이 같아 소계가 가장 낮습니다"
+    return {"quote_id": str(best["quote_id"]), "reason": f"{why}. 운임·공급 확약·실제 일정은 미확인이며 선택과 승인은 사람이 합니다."}
+
+
 class ProcurementService(DomainService):
     @staticmethod
     def _snapshot(conn, company, expected):
@@ -561,5 +593,13 @@ class ProcurementService(DomainService):
                         "expired": date.fromisoformat(quote["valid_until"]) < datetime.now(timezone.utc).date(),
                         "partial_bom": not requirements["full_coverage"], "provenance": "DEMO_ASSUMPTION",
                         "supplier_confirmation": False, "transmission_status": "NOT_SENT"})
-            return {"ledger_version": expected_ledger_version, "quotes": choices,
+            for basis in ("base", "planned"):
+                group = [row for row in choices if row["material_basis"] == basis]
+                for item_id in {row["item_id"] for row in group}:
+                    picked = recommend_quote([row for row in group if row["item_id"] == item_id])
+                    for row in group:
+                        if row["item_id"] == item_id:
+                            row["recommended"] = bool(picked) and row["quote_id"] == picked["quote_id"]
+                            row["recommendation_reason"] = picked["reason"] if row["recommended"] else None
+            return {"ledger_version": expected_ledger_version, "quotes": choices, "recommendation_rule": RECOMMENDATION_RULE,
                     "scope": "INTERNAL_DEVELOPMENT_ONLY", "manufacturing_feasibility": "UNKNOWN"}

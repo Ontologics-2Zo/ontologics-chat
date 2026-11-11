@@ -337,6 +337,8 @@
 .mk-event-step-text{font-size:12.5px}
 /* 진행 현황: one card, a row per workflow */
 .mk-flow-board>h3{margin:0 0 8px;font-size:14px}
+.mk-flow-board-head{display:flex;align-items:center;gap:8px;margin:0 0 8px}.mk-flow-board-head h3{margin:0;font-size:14px}
+.mk-auto-toggle{margin-left:auto;font-size:11.5px;padding:2px 8px}.mk-auto-toggle.on{color:var(--ok,#047857);border-color:var(--ok,#047857)}
 .mk-flow-banner{display:flex;align-items:center;gap:10px;margin:0 0 10px;padding:6px 6px 6px 10px;border-radius:8px;background:var(--accent-soft,#eef0fe);color:var(--accent,#4f46e5);font-size:12.5px;font-weight:600}
 .mk-flow-lane{padding:10px 0;border-top:1px solid var(--line2,#e7ecf2)}
 .mk-flow-lane:first-of-type{border-top:0;padding-top:2px}

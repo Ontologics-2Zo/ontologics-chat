@@ -295,6 +295,7 @@ function quoteCard(quote, onChooseQuote) {
   head.append(node('b', '', text(quote.supplier_id)), node('span', 'chip', text(quote.quote_ref)));
   const [label, tone] = quoteConditions[quote.quantity_condition] || ['미확인', 'mute'];
   head.append(node('span', `pill ${tone}`, label));
+  if (quote.recommended) head.append(node('span', 'pill ok query-quote-pick', '추천'));
   if (quote.freight == null) head.append(node('span', 'pill warn', '운송비 미확인'));
   const value = v => v == null || v === '' ? '미확인' : String(v);
   const metrics = node('dl', 'query-quote-metrics');
@@ -303,7 +304,9 @@ function quoteCard(quote, onChooseQuote) {
     metrics.append(node('dt', '', name), node('dd', '', value(v)));
   }
   card.append(head, metrics, node('p', 'query-quote-reason', text(quote.reason)));
-  const choose = action('이 견적으로 구매 요청 초안', () => onChooseQuote(quote), 'btn pri sm');
+  if (quote.recommended && quote.recommendation_reason) card.append(node('p', 'query-quote-reason query-quote-why', `추천 이유 · ${text(quote.recommendation_reason)}`));
+  if (quote.recommended) card.classList.add('query-quote-recommended');
+  const choose = action(quote.recommended ? '추천 견적으로 구매 요청 초안' : '이 견적으로 구매 요청 초안', () => onChooseQuote(quote), quote.recommended ? 'btn pri sm' : 'btn sm');
   choose.dataset.queryAction = 'choose-quote';
   if (quote.quantity_condition === 'NOT_MET' || !quote.recommended_qty) choose.disabled = true;
   card.append(choose);

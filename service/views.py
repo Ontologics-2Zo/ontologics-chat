@@ -172,6 +172,25 @@ def ontology_view(catalog):
 from service.query_answers import answer_query
 
 
+def _stage_questions(summary, payload, item):
+    """Questions for the step the round has reached (all answered by the read flow).
+
+    Received but not yet inspected parts → are they usable; a purchased LOT
+    built into boards → where it went; every promised unit arrived → confirm.
+    """
+    questions = []
+    receipts = [row for row in (payload.get("procurement") or {}).get("receipts", []) if row.get("item_id") == item]
+    if any(row.get("pending_qty", 0) > 0 for row in receipts):
+        questions.append(f"입하된 {item} 부품, 이제 가용 재고로 쓸 수 있어?")
+    boards = ((payload.get("fulfillment") or {}).get("boards") or {}).values()
+    lots = [row["lot_code"] for row in receipts if any(board.get("lot_code") == row["lot_code"] for board in boards)]
+    if lots:
+        questions.append(f"{lots[-1]}는 어느 보드·출하·도착까지 연결됐어?")
+    if summary.get("promise_remaining_qty") == 0:
+        questions.append(f"이번 회차 약속 {summary.get('arrived_qty')}대가 모두 고객에게 도착했어?")
+    return questions
+
+
 def suggested_questions(summary, requirements, bom, payload, follow_ups):
     """Questions that fit the current state and that the read flow can answer.
 
@@ -189,9 +208,14 @@ def suggested_questions(summary, requirements, bom, payload, follow_ups):
         short = focus is not None and focus.get("planned_shortage_qty") is not None and float(focus["planned_shortage_qty"]) > 0
         requested = any(row.get("kind") == "PR" and not row.get("cancelled_by") and not row.get("rejection_reason")
                         for row in (payload.get("procurement") or {}).get("documents", []))
-        ordered = [*follow_ups, round_question, "수율을 적용하면 몇 대 투입하고 어떤 자재가 부족해?"]
+        stage = _stage_questions(summary, payload, item)
+        # Once every promised unit arrived the stage question replaces "남은 0대…".
+        ordered = [*follow_ups, *stage, *([round_question] if summary.get("promise_remaining_qty") != 0 else []),
+                   "수율을 적용하면 몇 대 투입하고 어떤 자재가 부족해?"]
         if short and not requested:
             ordered.append(f"{item} 부족을 채울 견적을 비교해줘")
+            # Agent write behind an approval card: only a draft, never an order.
+            ordered.append("추천 견적으로 구매 요청 초안 만들어줘")
         if short:
             # T12: same ledger, assumption only (read-only comparison).
             ordered.append("부품 입하가 3영업일 늦어지면 결과는 어떻게 달라져?")
