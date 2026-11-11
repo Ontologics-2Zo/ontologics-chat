@@ -230,7 +230,9 @@ def reservation_impacts(requirements, reservations):
             before, after = Decimal(reservation["item_available_before"]), Decimal(reservation["item_available_after"])
         else:
             before, after = Decimal(reservation["before"]["available_qty"]), Decimal(reservation["after"]["available_qty"])
-        shortage = lambda need, available: format(max(need - available, Decimal(0)).normalize(), "f")
+        # Approved substitutes (T13) count for the current plan on both sides.
+        extra = Decimal(item.get("substitute_qty") or 0)
+        shortage = lambda need, available: format(max(need - available - extra, Decimal(0)).normalize(), "f")
         impacts.append({"reservation_id": reservation["reservation_id"], "ledger_version": reservation["ledger_version"],
             "item_id": item["item_id"], "unit": item["unit"], "lot_id": reservation["lot_id"],
             "quantity": reservation["quantity"], "demand_ref": reservation["demand_ref"],
@@ -240,5 +242,6 @@ def reservation_impacts(requirements, reservations):
             "available_before": format(before.normalize(), "f"), "available_after": format(after.normalize(), "f"),
             "shortage_before": shortage(required, before), "shortage_after": shortage(required, after),
             "planned_shortage_before": shortage(planned, before), "planned_shortage_after": shortage(planned, after),
+            "substitute_qty": format(extra.normalize(), "f"),
             "entity_id": reservation.get("entity_id"), "lot_entity_id": reservation.get("lot_entity_id")})
     return impacts

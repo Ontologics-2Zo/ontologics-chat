@@ -284,9 +284,16 @@ def _delivery_blocks(view, plan, sections, prerequisite, requirements):
         notes = []
         if focus:
             reserved = sum(entry.get("reserved_other_qty") or 0 for entry in view["inventory"] if entry["item_id"] == focus["item_id"])
-            notes.append(f"{focus['item_id']}은 다른 수요 예약 {number(reserved)}개를 빼면 가용 {number(focus['available_qty'])}개 → {number(focus['planned_shortage_qty'])}개 부족 (수율 미반영 시 {number(focus['shortage_qty'])}개).")
+            substitute = Decimal(focus.get("substitute_qty") or 0)
+            if substitute:
+                notes.append(f"{focus['item_id']}은 다른 수요 예약 {number(reserved)}개를 빼면 재고 가용 {number(focus['stock_available_qty'])}개, 승인된 대체 {number(substitute)}개를 더해 가용 {number(focus['available_qty'])}개 → {number(focus['planned_shortage_qty'])}개 부족 (수율 미반영 시 {number(focus['shortage_qty'])}개).")
+            else:
+                notes.append(f"{focus['item_id']}은 다른 수요 예약 {number(reserved)}개를 빼면 가용 {number(focus['available_qty'])}개 → {number(focus['planned_shortage_qty'])}개 부족 (수율 미반영 시 {number(focus['shortage_qty'])}개).")
         else:
             notes.append("계산한 품목에는 계획 투입 기준 부족이 없습니다.")
+        for row in items:
+            if Decimal(row.get("substitute_qty") or 0) and row is not focus:
+                notes.append(f"{row['item_id']}은 재고 가용 {number(row['stock_available_qty'])}개에 승인된 대체 {number(row['substitute_qty'])}개를 더해 가용 {number(row['available_qty'])}개입니다. 대체는 시연 적용 승인이며 제조 기술검수가 아닙니다.")
         substitutes = [row for row in view.get("substitutes") or [] if focus and row.get("original_item_id") == focus["item_id"]
                        and row.get("status") != "APPROVED"]
         if substitutes:
@@ -786,7 +793,8 @@ def _substitute_answer(view, plan, req):
     lines = [f"{row['original_item_id']}의 대체 후보는 {row['candidate_item_id']}({status_ko.get(row['status'], row['status'])})입니다. "
              f"보유 {number(row['candidate_on_hand_qty'])} {row['unit']} 중 이번 수요에 인정한 수량은 {number(row['counted_qty_for_selected_demand'])} {row['unit']}입니다."
              for row in rows]
-    answer = " ".join(lines) + " 검토 전 대체 후보는 부족 계산의 확보량에 넣지 않습니다."
+    approved = [row for row in rows if row.get("status") == "APPROVED"]
+    answer = " ".join(lines) + (" 승인·반영된 인정 수량만 부족 계산의 가용에 더했고, 이는 시연 적용 승인이며 제조 기술검수가 아닙니다." if approved else "") + " 검토 전 대체 후보는 부족 계산의 확보량에 넣지 않습니다."
     return _result(view, plan, answer=answer, conclusion="대체 후보 · 검토 전은 확보량 제외", sections=[section("substitute", "대체 후보 · 합성 기초 이관", SYNTHETIC, [
         {"label": f"{row['original_item_id']} → {row['candidate_item_id']}", "value": f"{status_ko.get(row['status'], row['status'])} · 보유 {number(row['candidate_on_hand_qty'])} · 인정 {number(row['counted_qty_for_selected_demand'])}"}
         for row in rows])])
@@ -825,7 +833,12 @@ def _what_if_answer(view, plan):
     def pick(req):
         rows = [row for row in req["items"] if not asked or row["item_id"].casefold() in asked]
         short = [row for row in rows if row.get("planned_shortage_qty") not in (None, "0")]
-        return max(short, key=lambda row: Decimal(row["planned_shortage_qty"])) if short else (rows[0] if rows else None)
+        if short:
+            return max(short, key=lambda row: Decimal(row["planned_shortage_qty"]))
+        # No shortage: the round's focus item, then one with a substitute candidate.
+        candidates = {row.get("original_item_id") for row in view.get("substitutes") or []}
+        return (next((row for row in rows if row["item_id"] == s.get("item_id")), None)
+                or next((row for row in rows if row["item_id"] in candidates), None) or (rows[0] if rows else None))
     focus = pick(base) or pick(scen)
     if focus is None:
         return _clarify(view, plan, "질문의 품목이 현재 BOM의 계산 가능한 품목에 없습니다. 품목코드를 확인해 주세요.")
@@ -838,14 +851,16 @@ def _what_if_answer(view, plan):
     if plan.yield_rate is not None:
         applied.append(f"계획 수율 {percentage(plan.yield_rate)}%")
 
-    # Substitutes: only an approved candidate with an accepted quantity counts.
+    # Substitutes: an approved and posted quantity is already in the ledger basis
+    # (T13); unreviewed candidates are never counted by an assumption.
     substitute_rows = [row for row in view.get("substitutes") or [] if row.get("original_item_id") == item_id]
     counted = Decimal(0)
     if plan.substitute_assumed:
         applied.append("대체품 포함")
         for row in substitute_rows:
             if row.get("status") == "APPROVED":
-                counted += Decimal(str(row.get("counted_qty_for_selected_demand") or 0))
+                gaps.append(f"대체 {row['candidate_item_id']} 인정 {number(row.get('counted_qty_for_selected_demand'))}{_unit_word(row['unit'])}는 이미 승인·반영되어 기준 가용에 포함돼 있습니다. "
+                            f"남은 후보 재고 {number(int(row['candidate_on_hand_qty']) - int(row.get('counted_qty_for_selected_demand') or 0))}{_unit_word(row['unit'])}는 추가 승인 전이라 넣지 않았습니다.")
             else:
                 gaps.append(f"대체 후보 {row['candidate_item_id']}(보유 {number(row['candidate_on_hand_qty'])} {row['unit']})은 기술 검토·승인 전이라 확보량에 넣지 않았습니다. 대체를 쓰려면 적용 승인이 먼저 필요합니다.")
         if not substitute_rows:
@@ -1078,7 +1093,9 @@ def answer_query(question, view, ontology, *, context_entity_id=None):
             sections.append(section("material_change", "자재 조건 변경 영향 · 원장 사건", "development_workflow", [
                 item("변경 사건", f"다른 수요 {latest['demand_ref']} 예약 {latest['quantity']} {latest['unit']}", f"원장 v{latest['ledger_version']} · 재고 이동·소비가 아닙니다."),
                 item(f"{latest['item_id']} 가용", f"{number(first['available_before'])} → {number(latest['available_after'])} {latest['unit']}"),
-                item("계획 투입 기준 부족", f"{number(first['planned_shortage_before'])} → {number(latest['planned_shortage_after'])} {latest['unit']}", "이전 확보안은 재검토가 필요합니다. 공급사·초안은 자동으로 바꾸지 않습니다."),
+                item("계획 투입 기준 부족", f"{number(first['planned_shortage_before'])} → {number(latest['planned_shortage_after'])} {latest['unit']}",
+                     "이전 확보안은 재검토가 필요합니다. 공급사·초안은 자동으로 바꾸지 않습니다."
+                     + (f" 현재 승인된 대체 {number(latest['substitute_qty'])} {latest['unit']}를 포함한 기준입니다." if Decimal(latest.get("substitute_qty") or 0) else "")),
                 item("고객 도착 / 남은 약속", f"{number(s['arrived_qty'])}대 / {number(s['promise_remaining_qty'])}대", "예약 사건은 도착·잔여 약속을 바꾸지 않습니다."),
             ], "PARTIAL"))
         sections.append(section("next", "조건부 납기 계산에 필요한 다음 확인", "unknown", [
@@ -1113,7 +1130,8 @@ def answer_query(question, view, ontology, *, context_entity_id=None):
             focus = max(short, key=lambda row: Decimal(row["planned_shortage_qty"])) if short else None
             answers = [f"남은 고객 도착 약속은 {number(s['promise_remaining_qty'])}대이고, 추가 양품 목표는 {number(s['production_remaining_qty'])}대입니다.",
                        (f"계획 투입 {basis['planned_input_qty']}대 기준 {focus['item_id']}이 {number(focus['planned_shortage_qty'])}개 부족합니다."
-                        if focus else f"계산한 {len(scoped)}개 품목은 계획 투입 {basis['planned_input_qty']}대 기준 부족이 없습니다."),
+                        if focus else f"계산한 {len(scoped)}개 품목은 계획 투입 {basis['planned_input_qty']}대 기준 부족이 없습니다."
+                        + "".join(f" {row['item_id']}은 승인된 대체 {number(row['substitute_qty'])}개를 포함했습니다." for row in scoped if Decimal(row.get("substitute_qty") or 0))),
                        f"BOM 적용 미확인 {number(req['unresolved_count'])}행은 부족 0으로 보지 않습니다." if req["unresolved_count"] else first]
         elif "delivery" in intents or blocked_calculation:
             answers = [first, action,

@@ -2,7 +2,7 @@
 // this module never sends supplier messages or changes browser-only inventory.
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const kinds = { QUOTE: '견적 조건', PR: '구매 요청', PO: '내부 발주', SUPPLY_CONFIRMATION: '공급확인 · 모의', RECEIPT: '입하', IQC: '수입검사', CANCEL: '잔여 취소',
-  PRODUCTION: '생산 실적', FG_RECEIPT: '완성품 입고', SHIPMENT: '출하', ARRIVAL: '고객 도착' , SCENARIO: '일정 가정 시나리오' , COHORT: '기존 보드 이행' };
+  PRODUCTION: '생산 실적', FG_RECEIPT: '완성품 입고', SHIPMENT: '출하', ARRIVAL: '고객 도착' , SCENARIO: '일정 가정 시나리오' , COHORT: '기존 보드 이행', SUBSTITUTION: '대체 적용 승인' };
 const statuses = { DRAFT: '검토 전', REVIEWED: '검토 완료', APPROVED: '승인 · 반영 전', POSTED: '원장 반영' };
 const fields = {
   QUOTE: ['quote_ref', 'supplier_id', 'item_id', 'unit', 'unit_price', 'currency', 'moq', 'order_multiple', 'freight', 'valid_until', 'lead_business_days', 'provenance', 'note'],
@@ -19,6 +19,7 @@ const fields = {
   ARRIVAL: ['shipment_id', 'arrival_ref', 'board_serials', 'note'],
   // T12: what-if schedule assumptions for one delivery round.
   COHORT: ['cohort_ref', 'round_id', 'stage', 'quantity', 'note'],
+  SUBSTITUTION: ['substitution_ref', 'round_id', 'original_item_id', 'candidate_item_id', 'quantity', 'note'],
   SCENARIO: ['scenario_ref', 'round_id', 'inspection_business_days', 'daily_capacity', 'ship_prep_business_days', 'transit_days', 'provenance', 'note'],
 };
 const nextStep = { PRODUCTION: ['FG_RECEIPT', 'production_id', 'PRODUCED', '완성품 입고 기록'],
@@ -49,7 +50,7 @@ const errors = {
 // receipt and inspection. Buttons only run the existing explicit commands.
 const unitWord = unit => unit === 'EA' || !unit ? '개' : ` ${unit}`;
 // Short readable document label from the real ID (for example PR-16BF), like the shared screen.
-const docPrefix = { COHORT: 'CH', SCENARIO: 'SCN', PR: 'PR', PO: 'PO', SUPPLY_CONFIRMATION: 'SC', RECEIPT: 'RC', IQC: 'IQC', CANCEL: 'CX', QUOTE: 'QT',
+const docPrefix = { SUBSTITUTION: 'SB', COHORT: 'CH', SCENARIO: 'SCN', PR: 'PR', PO: 'PO', SUPPLY_CONFIRMATION: 'SC', RECEIPT: 'RC', IQC: 'IQC', CANCEL: 'CX', QUOTE: 'QT',
   PRODUCTION: 'PD', FG_RECEIPT: 'FG', SHIPMENT: 'SH', ARRIVAL: 'AR' };
 export const documentLabel = (kind, id) => `${docPrefix[kind] || kind}-${String(id || '').replace(/[^0-9a-z]/gi, '').slice(0, 4).toUpperCase()}`;
 const progressSteps = ['초안', '승인 요청', '승인', '확정'];
@@ -244,6 +245,49 @@ export function scenarioState(documents, identity) {
   const tone = !doc ? 'mute' : doc.status === 'POSTED' ? 'ok' : 'warn';
   return { doc, status, tone, values, next, notes, label: doc ? documentLabel('SCENARIO', doc.id) : null };
 }
+// T13 substitute approval: an existing candidate for the focus item can be
+// counted for this round's shortage only after another account approves and
+// posts it. A demo application approval, not a manufacturing technical review.
+export function substituteState(snapshot, documents, identity) {
+  const item = snapshot?.summary?.item_id;
+  const candidate = (snapshot?.substitutes || []).find(row => row.original_item_id === item);
+  if (!candidate) return null;
+  const can = permission => (identity?.permitted_actions || []).includes(permission);
+  const rows = (documents || []).filter(row => row.kind === 'SUBSTITUTION' && !row.cancelled_by && !(row.status === 'DRAFT' && row.rejection_reason)
+    && row.content?.original_item_id === item);
+  const doc = rows.at(-1) || null, approver = can('document.approve'), mine = doc && doc.created_by === identity?.actor_id;
+  const requirement = (snapshot?.material_requirements?.items || []).find(row => row.item_id === item);
+  const shortage = Number(requirement?.planned_shortage_qty), counted = Number(candidate.counted_qty_for_selected_demand) || 0;
+  const left = (Number(candidate.candidate_on_hand_qty) || 0) - counted, unit = unitWord(candidate.unit);
+  const next = [], notes = [];
+  if (!doc || doc.status === 'POSTED') {
+    const quantity = Number.isFinite(shortage) ? Math.min(shortage, left) : 0;
+    if (quantity > 0) {
+      next.push({ label: `대체 승인 요청 · ${candidate.candidate_item_id} ${quantity}${unit}`, action: 'new-substitution', quantity,
+        candidate: candidate.candidate_item_id, original: item, disabled: approver || !can('document.create') });
+      if (approver) notes.push('대체 승인 요청은 작성자 계정이 작성하고 이 계정이 승인합니다.');
+    } else if (!Number.isFinite(shortage)) notes.push('부족 수량을 계산할 수 없어 대체 인정을 요청하지 않습니다.');
+  } else if (doc.status === 'APPROVED') {
+    next.push({ label: '확정 (원장 반영)', action: 'post', target: doc.id, disabled: !can('document.post') });
+  } else {
+    next.push({ label: '승인', action: 'review-approve', target: doc.id, disabled: mine || !approver },
+              { label: '반려', action: 'reject', target: doc.id, disabled: mine || !can('document.review') });
+    if (mine) notes.push('작성자 본인은 승인할 수 없습니다. 상단에서 역할을 검토자로 바꾸세요.');
+  }
+  const pending = doc && doc.status !== 'POSTED';
+  const status = pending ? (doc.status === 'APPROVED' ? '확정 대기' : '승인 진행') : counted ? `인정 ${counted}${unit}` : '검토 전';
+  const tone = pending ? 'warn' : counted ? 'ok' : 'mute';
+  const summary = pending
+    ? `${documentLabel('SUBSTITUTION', doc.id)} · ${candidate.candidate_item_id} ${doc.content?.quantity ?? '?'}${unit} 인정 요청`
+    : `${candidate.candidate_item_id} 보유 ${candidate.candidate_on_hand_qty}${unit} · 인정 ${counted}${unit}${Number.isFinite(shortage) ? ` · ${item} 부족 ${shortage}${unit}` : ''}`;
+  return { status, tone, summary, next, notes, candidate };
+}
+function substituteLane(state, busy, extra = '') {
+  if (!state) return '';
+  return lane({ key: 'data-substitute-card', title: `${state.candidate.original_item_id} 대체`, status: state.status, tone: state.tone, summary: state.summary,
+    entries: state.next, busy, notes: state.notes, extra,
+    fixed: '시연 적용 승인입니다. 제조 기술검수·품목 동일성 확정이 아니며, 대체 품목의 입고·불출·장착 기록은 아직 없습니다.' });
+}
 // T10 delivery-round card: the opening-balance boards (no serials) move by
 // quantity, and new boards are produced from a LOT and followed to arrival.
 // Every step is a one-click draft that another account approves and posts.
@@ -317,7 +361,7 @@ export function flowBanner(lanes, identity) {
 
 export function mountProcurementFlow(container, { snapshot, api, getIdentity = () => null, onPosted = () => {}, onRefresh = () => {}, onActivity = () => {} }) {
   const abort = new AbortController(), pending = new Map();
-  let documents = [], choices = [], activeId = null, editor = null, busy = false, destroyed = false, fulfillment = null, supply = null;
+  let documents = [], choices = [], activeId = null, editor = null, busy = false, destroyed = false, fulfillment = null, supply = null, substitute = null;
   let notice = '', failed = false, needsRefresh = false;
   const ledgerVersion = snapshot.meta?.ledger_version;
   const active = () => documents.find(row => row.id === activeId);
@@ -408,15 +452,20 @@ export function mountProcurementFlow(container, { snapshot, api, getIdentity = (
     const status = notice && (failed || editor || needsRefresh) ? `<p role="status" aria-live="polite" class="mk-supply-notice${failed ? ' mk-bom-warning' : ''}">${esc(notice)}</p>` : `<p role="status" aria-live="polite" class="mk-supply-notice"></p>`;
     const refresh = needsRefresh ? `<p class="mk-supply-notice">원장에 새 사건이 반영되었습니다. 최신 원장 조회 후 다음 업무를 진행해 주세요. ${button('최신 원장 조회', 'refresh', busy)}</p>` : '';
     const scenarioEditing = editor?.kind === 'SCENARIO' || (editor?.kind === 'REJECT' && active()?.kind === 'SCENARIO');
-    const progress = supply = supplyProgress(documents, snapshot, getIdentity(), scenarioEditing ? null : editor);
-    if (progress && editor && !scenarioEditing) progress.next = [];
+    const substituteEditing = editor?.kind === 'REJECT' && active()?.kind === 'SUBSTITUTION';
+    const otherEditing = scenarioEditing || substituteEditing;
+    const progress = supply = supplyProgress(documents, snapshot, getIdentity(), otherEditing ? null : editor);
+    if (progress && editor && !otherEditing) progress.next = [];
+    substitute = substituteState(snapshot, documents, getIdentity());
+    if (substitute && editor) substitute.next = [];
     const scenario = scenarioState(documents, getIdentity());
     if (scenarioEditing) scenario.next = [];
     fulfillment = fulfillmentState(snapshot, documents, getIdentity());
     const blocked = busy || needsRefresh;
-    const banner = flowBanner([progress && !progress.empty ? progress.next : [], scenario.next, fulfillment.next], getIdentity());
+    const banner = flowBanner([progress && !progress.empty ? progress.next : [], substitute?.next || [], scenario.next, fulfillment.next], getIdentity());
     container.innerHTML = `<div class="mk-flow-board"><h3>진행 현황</h3>${banner ? `<p class="mk-flow-banner"><span>${esc(banner.text)}</span><button type="button" class="mk-btn primary" data-switch-role="${banner.role}"${busy ? ' disabled' : ''}>${esc(banner.action)}</button></p>` : ''}${status}${refresh}`
-      + supplyLane(progress, blocked, scenarioEditing ? '' : form())
+      + supplyLane(progress, blocked, otherEditing ? '' : form())
+      + substituteLane(substitute, blocked, substituteEditing ? form() : '')
       + scenarioLane(scenario, blocked, scenarioEditing ? form() : '')
       + fulfillmentLane(fulfillment, blocked) + '</div>';
   }
@@ -429,6 +478,22 @@ export function mountProcurementFlow(container, { snapshot, api, getIdentity = (
     const action = target.dataset.purchaseAction, doc = active();
     if (action === 'refresh') { onRefresh(); return; }
     if (action === 'close-editor') { editor = null; render(); return; }
+    if (action === 'new-substitution') {
+      // One click: the quantity is the smaller of the shortage and the uncounted
+      // candidate stock. Another account approves and posts it (nothing posted here).
+      const entry = substitute?.next?.find(row => row.action === 'new-substitution');
+      if (!entry || entry.disabled) return;
+      const content = { kind: 'SUBSTITUTION', substitution_ref: `SUB-${Date.now().toString(36).toUpperCase()}`,
+        round_id: snapshot.summary?.delivery_round_id, original_item_id: entry.original, candidate_item_id: entry.candidate, quantity: entry.quantity,
+        note: `자동 작성 · ${entry.original} 부족에 대체 ${entry.candidate} ${entry.quantity}개 인정 요청 (시연 적용 승인, 기술검수 아님)` };
+      work(async () => {
+        const result = await command('/api/mks2/procurement/documents', { expected_ledger_version: ledgerVersion, content });
+        if (destroyed) return;
+        await reload(result.id);
+        message('대체 승인 요청을 저장했습니다. 작성자와 다른 계정에서 승인·확정하면 부족 계산에 반영됩니다.');
+      });
+      return;
+    }
     if (!doc) return;
     if (action === 'revise') { start(doc.kind, Object.fromEntries(fields[doc.kind].map(key => [key, doc.content[key]])), doc); return; }
     if (action === 'reject') { start('REJECT', { reason: '' }); return; }

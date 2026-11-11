@@ -112,7 +112,8 @@ def snapshot_view(payload):
     if first and Decimal(impacts[-1]["planned_shortage_after"]) > Decimal(first["planned_shortage_before"]):
         # Selecting a suggestion only fills the question draft (no model call).
         suggestions = [f"왜 부족이 {impacts[-1]['planned_shortage_after']}개로 늘었어?",
-                       f"기존 {first['planned_shortage_before']}개 안이면 충분해? 어떤 안을 다시 검토할까?",
+                       f"기존 {first['planned_shortage_before']}개 안이면 충분해? 어떤 안을 다시 검토할까?"
+                       if Decimal(first["planned_shortage_before"]) > 0 else f"{impacts[-1]['item_id']} 부족을 채울 견적을 비교해줘",
                        "도착기한에는 어떤 영향이 있어?"]
     return {
         "mode": "ledger-service", "serviceConnected": True, "meta": meta, "summary": summary,
@@ -122,7 +123,7 @@ def snapshot_view(payload):
         "rounds": [summary], "inventory": inventories,
         "events":payload.get("events",[]),"event_count":payload.get("event_count",0),"events_limit":100,
         "production": balance["production_reports"], "shipments": balance["shipments"],
-        "quotations": balance["quotations"], "substitutes": balance["substitutes"],
+        "quotations": balance["quotations"], "substitutes": deepcopy(payload.get("current_substitutes", balance["substitutes"])),
         "mapping_candidates": balance["mapping_candidates"],
         "bom": deepcopy(bom), "material_requirements": requirements,
         "procurement": deepcopy(payload.get("procurement", {})),

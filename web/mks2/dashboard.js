@@ -65,7 +65,7 @@ export function ledgerEventFreshIds(previous, snapshot) {
 
 const activityKinds = { PR: '구매 요청', PO: '내부 발주', SUPPLY_CONFIRMATION: '공급확인', RECEIPT: '입하', IQC: '수입검사',
   CANCEL: '잔여 취소', QUOTE: '견적', PRODUCTION: '생산 실적', FG_RECEIPT: '완성품 입고', SHIPMENT: '출하', ARRIVAL: '고객 도착',
-  SCENARIO: '일정 가정', COHORT: '기초 보드 이행' };
+  SCENARIO: '일정 가정', COHORT: '기초 보드 이행', SUBSTITUTION: '대체 적용 승인' };
 const actorName = id => String(id || '').replace(/^actor-dev-/, '').toUpperCase() || '미확인';
 // A document step is an approval-side record, not a ledger commit: no version.
 export function activitySummary(item) {

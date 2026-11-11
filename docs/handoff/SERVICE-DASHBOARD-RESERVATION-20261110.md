@@ -96,7 +96,7 @@ DEC-H47 실행 기록이다. 브랜치 `feat/mks2-dashboard-reservation`, 기준
 | 6절 CQ3 | LOT-PWR-02 → 소비·장착 → 보드3 생산 → 입고 → 출하2 → 도착1, LOT 추적 질문 | T9 | VERIFIED(격리, 아래) |
 | 6절 전체 도착 | 약속100 전부 도착 확인 | T10 | VERIFIED(격리, [기록](SERVICE-FULFILLMENT-T10-20261111.md)) |
 | 6절 예비 CQ4 | Rev L → L1 변경 영향 | T11 | BLOCKED · 비공개 입력에 Rev L 원문 없음 |
-| 6절 What-if | 수율·공급·대체 조건 비교 | T12 | VERIFIED(격리, [기록](SERVICE-WHATIF-SCHEDULE-20261111.md)) · 대체 승인 절차·시나리오 저장 비교 미구현 |
+| 6절 What-if | 수율·공급·대체 조건 비교 | T12 | VERIFIED(격리, [기록](SERVICE-WHATIF-SCHEDULE-20261111.md)) · 대체 승인은 T13 일부로 구현([기록](SERVICE-SUBSTITUTE-T13-20261111.md)) · 시나리오 저장 비교 미구현 |
 
 ### T8 실행 결과
 

@@ -337,6 +337,38 @@ class ProcurementDomainTests(unittest.TestCase):
         # The opening facts are untouched: assumptions never overwrite ledger quantities.
         self.assertEqual(after["opening_balance"], self.original)
 
+    def test_substitute_approval_counts_only_the_approved_quantity(self):
+        from decimal import Decimal
+        from service.materials import requirements_for_snapshot
+        from service.procurement_contracts import SubstitutionContent
+        before = self.ledger.read(self.author)
+        round_id = before["opening_balance"]["delivery_round"]["round_id"]
+        item = next(row for row in requirements_for_snapshot(before)["items"] if row["item_id"] == "item-a")
+        shortage = Decimal(item["planned_shortage_qty"])
+        self.assertGreater(shortage, 4)
+        content = lambda quantity, ref: SubstitutionContent(substitution_ref=ref, round_id=round_id, original_item_id="item-a",
+            candidate_item_id="alternative-a", quantity=quantity, note="Demo application approval of a substitute")
+        limit = lambda stock, need: "SUBSTITUTE_EXCEEDS_SHORTAGE" if need < stock else "SUBSTITUTE_EXCEEDS_CANDIDATE_STOCK"
+        self.assert_code(limit(11, int(shortage)), lambda: self.create(content(min(11, int(shortage)) + 1, "SUB-over")))
+        self.assert_code("SUBSTITUTE_CANDIDATE_UNCONFIRMED", lambda: self.create(content(1, "SUB-x").model_copy(update={"candidate_item_id": "item-b"})))
+        draft = self.create(content(1, "SUB-self"))
+        self.assert_code("SELF_REVIEW_FORBIDDEN", lambda: self.action("review", draft, actor=self.author))
+        self.post(content(4, "SUB-posted"))
+        after = self.ledger.read(self.author)
+        row = next(row for row in requirements_for_snapshot(after)["items"] if row["item_id"] == "item-a")
+        self.assertEqual((Decimal(row["substitute_qty"]), Decimal(row["planned_shortage_qty"])), (4, shortage - 4))
+        self.assertEqual(Decimal(row["available_qty"]) - Decimal(row["stock_available_qty"]), 4)
+        candidate = after["current_substitutes"][0]
+        self.assertEqual((candidate["status"], candidate["counted_qty_for_selected_demand"]), ("APPROVED", 4))
+        self.assertEqual(candidate["approval_scope"], "DEMO_APPLICATION_NOT_TECHNICAL_REVIEW")
+        # Stock rows and opening facts are untouched; only the counted quantity changed.
+        self.assertEqual(after["opening_balance"], self.original)
+        self.assertEqual(after.get("current_inventory", after["opening_balance"]["inventory"]), before.get("current_inventory", before["opening_balance"]["inventory"]))
+        document = next(x for x in after["entities"] if x.get("attributes", {}).get("kind") == "SUBSTITUTION")
+        self.assertEqual((document["type"], document["attributes"]["provenance"]), ("SourceDocument", "DEMO_APPLICATION_APPROVAL"))
+        # Both the candidate stock left (11 - 4) and the remaining shortage cap a further approval.
+        self.assert_code(limit(7, int(shortage) - 4), lambda: self.create(content(min(7, int(shortage) - 4) + 1, "SUB-more")))
+
     def test_baseline_boards_move_by_quantity_within_the_opening_balance(self):
         from service.procurement_contracts import CohortContent
         from service.procurement_state import legacy_pools

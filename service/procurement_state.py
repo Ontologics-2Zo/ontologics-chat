@@ -51,7 +51,7 @@ def apply_procurement_event(previous, event):
         raise ServiceError("PROCUREMENT_EVENT_DUPLICATE", 409)
     resolved = content["resolved"]
     parent = None
-    if kind not in {"QUOTE", "SCENARIO", "COHORT"} and not (kind == "PRODUCTION" and content.get("lot_code")):
+    if kind not in {"QUOTE", "SCENARIO", "COHORT", "SUBSTITUTION"} and not (kind == "PRODUCTION" and content.get("lot_code")):
         parent_ref = resolved.get("parent", {})
         parent = documents.get(parent_ref.get("id"))
         if (not parent or any(parent[key] != parent_ref[ref] for key, ref in
@@ -82,6 +82,23 @@ def apply_procurement_event(previous, event):
             raise ServiceError("PROCUREMENT_EVENT_CONFIRMATION_INVALID", 409)
         parent["confirmed_qty"] = parent.get("confirmed_qty", 0) + typed.confirmed_qty
         parent["confirmed_remaining_qty"] = parent.get("confirmed_remaining_qty", 0) + typed.confirmed_qty
+
+    if kind == "SUBSTITUTION":
+        # Count part of an existing candidate for the selected demand; stock rows are not changed.
+        candidates = snapshot.setdefault("current_substitutes", deepcopy(snapshot["opening_balance"].get("substitutes") or []))
+        candidate = next((x for x in candidates if x["substitution_id"] == resolved["substitution_id"]), None)
+        if (not candidate or candidate["original_item_id"] != typed.original_item_id
+                or candidate["candidate_item_id"] != typed.candidate_item_id
+                or int(candidate.get("counted_qty_for_selected_demand") or 0) != resolved["counted_before"]
+                or typed.quantity > int(candidate["candidate_on_hand_qty"]) - resolved["counted_before"]):
+            raise ServiceError("SUBSTITUTE_EVENT_INVALID", 409)
+        candidate.update(status="APPROVED", approval_ref=identifier,
+                         counted_qty_for_selected_demand=resolved["counted_before"] + typed.quantity,
+                         approval_scope="DEMO_APPLICATION_NOT_TECHNICAL_REVIEW")
+        item_entity = next((x for x in snapshot["entities"] if x["id"] == resolved["candidate_entity_id"]), None)
+        if item_entity:
+            item_entity.setdefault("attributes", {}).update(substitute_status="APPROVED",
+                counted_qty_for_selected_demand=candidate["counted_qty_for_selected_demand"])
 
     inventory = snapshot.setdefault("current_inventory", deepcopy(snapshot["opening_balance"]["inventory"]))
     receipt = None
@@ -248,7 +265,7 @@ def apply_procurement_event(previous, event):
     type_ = {"QUOTE": "SupplierOffer", "PR": "PurchaseRequest", "PO": "PurchaseOrder", "SUPPLY_CONFIRMATION": "SourceDocument",
              "RECEIPT": "PartsReceiptLine", "IQC": "InspectionResult", "CANCEL": "SourceDocument",
              "PRODUCTION": "ProductionReport", "FG_RECEIPT": "FinishedGoodsReceipt", "SHIPMENT": "Shipment", "ARRIVAL": "ArrivalRecord",
-             "SCENARIO": "ScenarioRun",
+             "SCENARIO": "ScenarioRun", "SUBSTITUTION": "SourceDocument",
              "COHORT": {"FG_RECEIPT": "FinishedGoodsReceipt", "SHIPMENT": "Shipment", "ARRIVAL": "ArrivalRecord"}.get(content.get("stage"), "SourceDocument")}[kind]
     attributes = {"document_id": identifier, "kind": kind, "status": "POSTED", "quantity": getattr(typed, "quantity", 0),
                   "supplier_confirmation": False, "transmission_status": "NOT_SENT"}
@@ -265,6 +282,11 @@ def apply_procurement_event(previous, event):
     elif kind == "COHORT":
         attributes.update(stage=typed.stage, cohort_ref=typed.cohort_ref, round_id=resolved["round_id"],
                           board_identity="UNKNOWN_LEGACY_COHORT", quantity=typed.quantity)
+    elif kind == "SUBSTITUTION":
+        attributes.update(substitution_ref=typed.substitution_ref, round_id=resolved["round_id"],
+                          original_item_id=resolved["original_item_id"], candidate_item_id=resolved["candidate_item_id"],
+                          unit=resolved["unit"], provenance="DEMO_APPLICATION_APPROVAL",
+                          approval_scope="DEMO_APPLICATION_NOT_TECHNICAL_REVIEW")
     elif kind == "SCENARIO":
         attributes.update(scenario_ref=typed.scenario_ref, round_id=resolved["round_id"], provenance="DEMO_ASSUMPTION",
                           assumption_status="APPROVED_ASSUMPTION_NOT_FACT")
@@ -275,6 +297,7 @@ def apply_procurement_event(previous, event):
                               quantity_per_board=resolved["quantity_per_board"], conditional_application=resolved["conditional_application"])
     document_node = node("document", type_, attributes,
                          typed.scenario_ref if kind == "SCENARIO"
+                         else f"대체 {typed.candidate_item_id} {typed.quantity}개" if kind == "SUBSTITUTION"
                          else f"기초 보드 {dict(FG_RECEIPT='입고', SHIPMENT='출하', ARRIVAL='도착')[typed.stage]} {typed.quantity}대" if kind == "COHORT"
                          else kind + " " + identifier[:8])
     revision = node("version", "DocumentVersion", {"version": value["document_version"], "payload_hash": value["payload_hash"]}, kind + " version")
@@ -303,6 +326,10 @@ def apply_procurement_event(previous, event):
             edge(document_node, "shipsCohort", cohort_id)
         else:
             edge(document_node, "supportedBy", node("evidence", "Evidence", evidence, f"{typed.cohort_ref} evidence"))
+    elif kind == "SUBSTITUTION":
+        # No substitute class or relation exists in the T-Box; the approved document
+        # is kept as a source document with its evidence (items stay attributes).
+        edge(document_node, "supportedBy", node("evidence", "Evidence", evidence, f"{typed.substitution_ref} evidence"))
     elif kind == "SCENARIO":
         # ScenarioRun → targetsRound → round; → usesProfile → profile → usesAssumption → each value.
         # The job's ProductionPlan uses the capacity assumption. All values are assumptions.

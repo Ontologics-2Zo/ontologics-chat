@@ -142,6 +142,40 @@ class ProcurementService(DomainService):
             round_entity = self._entity(payload, "DeliveryRound", round_["round_id"])
             return {"round_id": round_["round_id"], "round_entity_id": round_entity["id"], "stage": content.stage,
                     "pools_before": pools, "quantity": content.quantity}
+        if kind == "SUBSTITUTION":
+            # Only a candidate already recorded for this original item, up to its
+            # uncounted stock and the current planned shortage of the original.
+            round_ = payload.get("current_delivery_round", payload["opening_balance"]["delivery_round"])
+            if content.round_id != round_["round_id"]:
+                raise ServiceError("SUBSTITUTE_ENTITY_UNCONFIRMED", 409)
+            candidates = payload.get("current_substitutes", payload["opening_balance"].get("substitutes") or [])
+            matches = [row for row in candidates if row["original_item_id"] == content.original_item_id
+                       and row["candidate_item_id"] == content.candidate_item_id]
+            if len(matches) != 1:
+                raise ServiceError("SUBSTITUTE_CANDIDATE_UNCONFIRMED", 409)
+            candidate = matches[0]
+            if candidate.get("status") not in {"NOT_REVIEWED", "APPROVED"}:
+                raise ServiceError("SUBSTITUTE_CANDIDATE_REJECTED", 409)
+            uncounted = int(candidate["candidate_on_hand_qty"]) - int(candidate.get("counted_qty_for_selected_demand") or 0)
+            if content.quantity > uncounted:
+                raise ServiceError("SUBSTITUTE_EXCEEDS_CANDIDATE_STOCK", 409)
+            requirements = requirements_for_snapshot(payload)
+            rows = [row for row in requirements["items"] if row["item_id"] == content.original_item_id]
+            if len(rows) != 1 or rows[0]["planned_shortage_qty"] is None or rows[0]["unit"] != candidate["unit"]:
+                raise ServiceError("SUBSTITUTE_SHORTAGE_UNKNOWN", 409)
+            if Decimal(content.quantity) > Decimal(rows[0]["planned_shortage_qty"]):
+                raise ServiceError("SUBSTITUTE_EXCEEDS_SHORTAGE", 409)
+            original = self._entity(payload, "InternalItem", content.original_item_id)
+            replacement = self._entity(payload, "InternalItem", content.candidate_item_id)
+            round_entity = self._entity(payload, "DeliveryRound", round_["round_id"])
+            return {"round_id": round_["round_id"], "round_entity_id": round_entity["id"],
+                    "substitution_id": candidate["substitution_id"], "unit": candidate["unit"],
+                    "original_item_id": original["display_id"], "original_entity_id": original["id"],
+                    "candidate_item_id": replacement["display_id"], "candidate_entity_id": replacement["id"],
+                    "candidate_on_hand_qty": candidate["candidate_on_hand_qty"],
+                    "counted_before": int(candidate.get("counted_qty_for_selected_demand") or 0),
+                    "planned_shortage_before": rows[0]["planned_shortage_qty"],
+                    "approval_scope": "DEMO_APPLICATION_NOT_TECHNICAL_REVIEW"}
         if kind == "SCENARIO":
             # Assumptions target one existing delivery round and its job; no parent document.
             round_ = self._entity(payload, "DeliveryRound", content.round_id)
