@@ -290,7 +290,28 @@ function createPanel(name) {
   clearAgentWaiting(panels[name]);
   const root = $(`${name}-panel`); root.replaceChildren();
   const heading = element('div', 'panel-heading');
-  heading.append(element('h2', '', name === 'dashboard' ? '업무 에이전트' : name === 'network' ? '프로젝트 그래프 질의' : '업무 AI 질의'), element('span', 'tag', '원장 근거 조회'));
+  const title = name === 'dashboard' ? '업무 에이전트' : name === 'network' ? '프로젝트 그래프 질의' : name === 'twin' ? '디지털 트윈 질의' : '업무 AI 질의';
+  heading.append(element('h2', '', title), element('span', 'tag', '원장 근거 조회'));
+  // Collapse the assistant to a narrow strip so the dashboard or graph gets the
+  // width. A per-screen browser preference only; nothing is sent or stored on the server.
+  const toggle = element('button', 'btn sm panel-toggle'); toggle.type = 'button';
+  const storageKey = `mks2.panel.collapsed.${name}`;
+  const applyCollapsed = collapsed => {
+    root.classList?.toggle('collapsed', collapsed);
+    root.parentElement?.classList?.toggle('panel-collapsed', collapsed);
+    toggle.textContent = collapsed ? '펼치기' : '접기';
+    toggle.setAttribute('aria-expanded', String(!collapsed));
+    toggle.title = `${title} ${collapsed ? '펼치기' : '접기'}`;
+  };
+  toggle.addEventListener('click', () => {
+    const next = !root.classList?.contains('collapsed');
+    applyCollapsed(next);
+    try { globalThis.localStorage?.setItem(storageKey, next ? '1' : '0'); } catch { /* preference only */ }
+  });
+  heading.append(toggle);
+  let startCollapsed = false;
+  try { startCollapsed = globalThis.localStorage?.getItem(storageKey) === '1'; } catch { startCollapsed = false; }
+  applyCollapsed(startCollapsed);
   const context = element('div', 'panel-context', `원장 v${snapshot.meta.ledger_version}`);
   const messages = element('div', 'messages');
   messages.setAttribute('aria-live', 'polite'); messages.setAttribute('aria-relevant', 'additions');
