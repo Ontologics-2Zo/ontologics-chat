@@ -44,8 +44,8 @@ POSITIVE_DELIVERY = re.compile(r"(도착할 수 있(?!는지)|맞출 수 있(?!�
                                r"|충족(합니다|됩니다|한다)|문제\s*없|확정(입니다|됩니다|되었|했)|보장(합니다|됩니다|된다))")
 SYSTEM_PROMPT = (
     "You write a short Korean summary of a manufacturing answer for a planner. "
-    "Use only the facts and evidence IDs given. Never write numbers: refer to any quantity by its placeholder "
-    "such as ⟦F3⟧ exactly as listed, and write identifiers only as listed. Keep every UNKNOWN or 미확인 state "
+    "Use only the facts and evidence IDs given. Never write numbers: refer to a quantity by its placeholder "
+    "such as ⟦F3⟧ (only facts with has_value true have one), and write identifiers only as listed. Keep every UNKNOWN or 미확인 state "
     "as unknown; never call delivery possible, confirmed or guaranteed when the verdict is on hold. "
     "Be very brief: one paragraph of 2 or 3 short sentences, under 250 characters in total. Lead with the verdict, "
     "then the main shortage with its quantity placeholder, then the most important open condition. "
@@ -229,8 +229,6 @@ def verify(packet: AnswerPacket, values: dict, cites: dict, paragraphs) -> Verif
         holders = PLACEHOLDER.findall(text)
         if any(holder not in fact_ids for holder in holders):
             return reject("SUMMARY_PLACEHOLDER_UNKNOWN")
-        if any(holder not in values for holder in holders):
-            return reject("SUMMARY_PLACEHOLDER_WITHOUT_VALUE")
         bare = PLACEHOLDER.sub("", text)
         if "⟦" in bare or "⟧" in bare:
             return reject("SUMMARY_PLACEHOLDER_INVALID")
@@ -248,7 +246,10 @@ def verify(packet: AnswerPacket, values: dict, cites: dict, paragraphs) -> Verif
             return reject("SUMMARY_DECIDES_HELD_DELIVERY")
         if not HOLD.search(joined):
             return reject("SUMMARY_OMITS_HOLD")
-    rendered = tuple({"text": PLACEHOLDER.sub(lambda m: values[m.group(1)], text),
+    # A placeholder on a fact without a numeric value shows its server state
+    # text (for example "미확인"); that text is server-written and digit-free.
+    states = {fact.id: fact.state for fact in packet.facts}
+    rendered = tuple({"text": PLACEHOLDER.sub(lambda m: values.get(m.group(1), states[m.group(1)]), text),
                       "cites": [{"id": cite, **({"evidence": cites[cite]} if cite in cites else {})} for cite in used]}
                      for text, used in out)
     return Verified("VERIFIED", None, rendered)

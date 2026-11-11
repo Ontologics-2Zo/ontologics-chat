@@ -317,3 +317,16 @@
 .mk-supply-rows dt{color:var(--fg2,#667)}.mk-supply-rows dd{margin:0;font-family:var(--mono,ui-monospace,monospace)}
 .mk-supply-notice{margin:0 0 8px;font-size:12px;color:var(--fg2,#667)}.mk-supply-notice:empty{display:none}
 .mk-supply-progress .mk-bom-form{margin:4px 0 10px}
+
+/* Supply card in the shared MK-S2 style (flow3 / kv / warnbox) */
+.mk-supply-progress>h3{display:flex;align-items:center;gap:6px;margin:0 0 6px;font-size:14px}
+.mk-supply-steps{gap:4px;margin:6px 0 8px;font-size:11.5px}
+.mk-supply-steps i{color:var(--fg3,#94a3b8)}
+.mk-supply-steps span{padding:0 8px;font-size:11.5px;color:var(--fg3,#94a3b8);border-color:var(--line,#d9dde7);background:transparent}
+.mk-supply-steps span.mk-step-done{background:transparent;border-color:var(--ok,#16a34a);color:var(--ok,#16a34a)}
+.mk-supply-steps span.mk-step-current{border:1px solid var(--accent,#4f46e5);color:var(--accent,#4f46e5);font-weight:600}
+.mk-supply-rows{gap:3px 12px;margin:2px 0 8px;font-size:12.5px}
+.mk-supply-rows dt{color:var(--fg3,#94a3b8)}
+.mk-supply-rows dd{font-size:12px}
+.mk-supply-warn{border-left:3px solid var(--warn,#d97706);padding:6px 10px;background:var(--warn-soft,#fff7e6);border-radius:0 8px 8px 0;font-size:12.5px;margin:0 0 8px}
+.mk-supply-actions .mk-btn.primary{background:var(--accent,#4f46e5);border-color:var(--accent,#4f46e5);color:var(--accent-fg,#fff)}

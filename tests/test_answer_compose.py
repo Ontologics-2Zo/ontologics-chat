@@ -102,8 +102,11 @@ class VerifyTests(unittest.TestCase):
         for code, paragraph in cases.items():
             with self.subTest(code=code):
                 self.assertEqual(self.check(paragraph).reason, code)
+        # A placeholder on a fact without a value shows the fact's server state instead.
         no_value = fact(self.packet, "생산능력").id
-        self.assertEqual(self.check((f"⟦{no_value}⟧{hold}", [no_value])).reason, "SUMMARY_PLACEHOLDER_WITHOUT_VALUE")
+        shown = self.check((f"생산능력은 ⟦{no_value}⟧입니다.{hold}", [no_value]))
+        self.assertEqual(shown.status, "VERIFIED")
+        self.assertEqual(shown.paragraphs[0]["text"], f"생산능력은 미확인입니다.{hold}")
         self.assertEqual(verify(self.packet, self.values, self.cites, "text").reason, "SUMMARY_SHAPE_INVALID")
         long = [{"text": "가" * 300 + hold, "cites": [self.short]}] * 4
         self.assertEqual(verify(self.packet, self.values, self.cites, long).reason, "SUMMARY_TOO_LONG")

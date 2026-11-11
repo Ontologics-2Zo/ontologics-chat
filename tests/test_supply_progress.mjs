@@ -45,7 +45,7 @@ test('after posting, the card follows the order through receipt and inspection',
   const ordered = supplyProgress([pr('POSTED'), po('POSTED')], snapshot(0), author);
   assert.equal(ordered.status, '입하 예정'); assert.equal(states(ordered), 'done,done,done,done');
   assert.deepEqual(actions(ordered), ['new-confirmation']);
-  assert.equal(ordered.rows[1][1], 'po-00000 · sup-d · 23개');
+  assert.equal(ordered.rows[1][1], 'PO-PO00 · sup-d · 23개');  // short label derived from the real ID
   const confirmed = supplyProgress([pr('POSTED'), po('POSTED', { confirmed_qty: 23, receivable_qty: 23 })], snapshot(0), author);
   assert.deepEqual(actions(confirmed), ['new-receipt']);
   const receipt = { id: 'rc-1', kind: 'RECEIPT', status: 'POSTED', parent_id: 'po-00000002-x', quantity: 23, remaining_qty: 23, content: {} };
@@ -59,7 +59,8 @@ test('after posting, the card follows the order through receipt and inspection',
 });
 
 test('a grown shortage or a changed ledger basis is reported; only the author revises', () => {
-  assert.equal(supplyProgress([pr('DRAFT')], snapshot(28), author).shortfall, 5);
+  const grown = supplyProgress([pr('DRAFT')], snapshot(28), author);
+  assert.deepEqual([grown.shortfall, grown.needed], [5, 28]);
   const stale = supplyProgress([pr('DRAFT')], snapshot(28, 10), author);
   assert.deepEqual(stale.stale, { basis: 9, current: 10 });
   assert.deepEqual(actions(stale), ['revise']);

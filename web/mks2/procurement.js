@@ -52,6 +52,8 @@ export function supplyProgress(documents, snapshot, identity, editor = null) {
   const pr = rows.filter(row => row.kind === 'PR' && row.content?.resolved?.item_id === item
     && !(row.status === 'DRAFT' && row.rejection_reason)).at(-1) || null;
   const can = permission => (identity?.permitted_actions || []).includes(permission);
+  // Short readable document label from the real ID (for example PR-0857), like the shared screen.
+  const docLabel = (kind, id) => `${kind}-${String(id || '').replace(/[^0-9a-z]/gi, '').slice(0, 4).toUpperCase()}`;
   const short = id => String(id || '').slice(0, 8);
   const quoteOf = id => (documents || []).find(row => row.id === id);
   const stepsAt = reached => progressSteps.map((label, index) => ({ label, state: index < reached ? 'done' : index === reached ? 'current' : 'pending' }));
@@ -140,8 +142,8 @@ export function supplyProgress(documents, snapshot, identity, editor = null) {
     PRODUCTION: '생산 실적', FG_RECEIPT: '완성품 입고', SHIPMENT: '출하', ARRIVAL: '고객 도착' };
   const who = focus || po || pr;
   const progressRows = [
-    ['구매 요청', `${short(pr.id)} · ${pr.quantity}${unit}`],
-    ['내부 발주', po ? `${short(po.id)} · ${resolved.supplier_id || '공급사 미확인'} · ${po.quantity}${unit}` : `미작성 · 견적 ${resolved.supplier_id || '미확인'}`],
+    ['구매 요청', `${docLabel('PR', pr.id)} · ${pr.quantity}${unit}`],
+    ['내부 발주', po ? `${docLabel('PO', po.id)} · ${resolved.supplier_id || '공급사 미확인'} · ${po.quantity}${unit}` : `미작성 · 견적 ${resolved.supplier_id || '미확인'}`],
     ['납기 가정', quote.lead_business_days != null ? `견적 리드타임 ${quote.lead_business_days}영업일 · 필요일 근거 없음` : '리드타임·필요일 근거 없음'],
     ['작성 · 승인', `${who.created_by || '미확인'} · ${who.approved_by || '—'}`],
   ];
@@ -152,22 +154,27 @@ export function supplyProgress(documents, snapshot, identity, editor = null) {
   }
   return {
     item, status, tone, steps: stepsAt(focus ? reachedStep[focus.status] ?? 0 : 4), focusId: focus?.id || null,
-    focusLabel: focus && focus !== pr ? kindLabel[focus.kind] : null, next, shortfall, stale, rows: progressRows,
+    focusLabel: focus && focus !== pr ? kindLabel[focus.kind] : null, next, shortfall, needed: Number.isFinite(needed) ? needed : null, stale, rows: progressRows,
     notes: returned.length ? [...notes, `반려된 초안 ${returned.length}건은 작성자 수정 전까지 진행에서 제외했습니다.`] : notes,
   };
 }
 const toneClass = { ok: 'ok', warn: 'warn', mute: 'mute', info: 'info' };
 function progressCard(progress, busy, extra = '') {
   if (!progress) return '';
-  const head = `<h3>${esc(progress.item)} 확보 진행<span class="mk-spacer"></span>`
-    + (progress.shortfall > 0 ? `<span class="mk-pill bad">${esc(progress.shortfall)}개 미충족 · 재검토 필요</span>` : '')
-    + (progress.stale ? `<span class="mk-pill warn">기준 원장 v${esc(progress.stale.basis)}→v${esc(progress.stale.current)} · 초안 재검토 필요</span>` : '')
-    + `<span class="mk-pill ${toneClass[progress.tone] || 'mute'}">${esc(progress.status)}</span></h3>`;
+  // Same layout as the shared MK-S2 card: title + one status pill, step pills,
+  // label/value list, a warning box when the plan no longer covers the
+  // current shortage, then the action and the note.
+  const head = `<h3>${esc(progress.item)} 확보 진행<span class="mk-spacer"></span><span class="mk-pill ${toneClass[progress.tone] || 'mute'}">${esc(progress.status)}</span></h3>`;
   if (progress.empty) return `<section class="mk-supply-progress" data-supply-progress>${head}<p class="mk-supply-empty">${esc(progress.text)}</p>${extra}</section>`;
-  const buttons = progress.next.map(entry => `<button type="button" class="mk-btn${entry.primary ? ' primary' : ''}"${entry.action ? ` data-purchase-action="${entry.action}" data-doc="${esc(entry.target || progress.focusId || '')}"` : ''}${entry.disabled || busy ? ' disabled' : ''}>${esc(entry.label)}</button>`).join('');
+  const warnings = [];
+  if (progress.shortfall > 0) warnings.push(`현재 부족 ${esc(progress.needed)}개 기준으로 이 안은 <b>${esc(progress.shortfall)}개 미충족</b>입니다 · 재검토 필요 (자동 수정 없음)`);
+  if (progress.stale) warnings.push(`기준 원장 v${esc(progress.stale.basis)}→v${esc(progress.stale.current)} · 초안 재검토 필요`);
+  const primary = progress.next.findIndex(entry => !entry.disabled && entry.action);
+  const buttons = progress.next.map((entry, index) => `<button type="button" class="mk-btn${entry.primary || index === primary ? ' primary' : ''}"${entry.action ? ` data-purchase-action="${entry.action}" data-doc="${esc(entry.target || progress.focusId || '')}"` : ''}${entry.disabled || busy ? ' disabled' : ''}>${esc(entry.label)}</button>`).join('');
   return `<section class="mk-supply-progress" data-supply-progress>${head}
     <div class="mk-supply-steps" role="list" aria-label="확보 단계${progress.focusLabel ? ` · ${esc(progress.focusLabel)}` : ''}">${progress.steps.map(step => `<span role="listitem" class="mk-step-${step.state}"${step.state === 'current' ? ' aria-current="step"' : ''}>${esc(step.label)}</span>`).join('<i aria-hidden="true">→</i>')}${progress.focusLabel ? `<small>${esc(progress.focusLabel)}</small>` : ''}</div>
     <dl class="mk-supply-rows">${progress.rows.map(([label, value]) => `<dt>${esc(label)}</dt><dd>${esc(value)}</dd>`).join('')}</dl>
+    ${warnings.map(text => `<div class="mk-supply-warn">${text}</div>`).join('')}
     <div class="mk-supply-actions">${buttons}${progress.notes.map(note => `<span class="mk-small-note">${esc(note)}</span>`).join('')}</div>
     ${extra}<p class="mk-small-note">내부 발주는 공급사 확약이 아닙니다. 외부 송신은 없습니다.</p></section>`;
 }
