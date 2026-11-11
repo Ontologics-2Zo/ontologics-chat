@@ -642,3 +642,25 @@ test('with a model connected the graph assistant takes the agent path and the tw
   h.app.route('twin'); await h.app.askTwin('합성 트윈 질문');
   assert.equal(h.requests.filter(r => r.path === '/api/mks2/query').length, 1);
 });
+
+test('suggestions say why they are shown and mark questions that just appeared', async () => {
+  const h = await setup();
+  h.snapshot().suggested_questions = ['합성 회차 질문'];
+  h.snapshot().summary = { bom_status: 'POSTED_SOURCE', item_id: 'item-a' };
+  h.snapshot().material_requirements = { items: [{ item_id: 'item-a' }] };
+  h.app.panels().dashboard.topics.add('item-a');
+  await h.app.load();
+  const container = h.app.panels().dashboard.suggestions;
+  const texts = () => container.children.map(child => child.textContent);
+  assert.equal(texts()[0], '현재 원장 기준 추천 질문');
+  assert.equal(container.children.filter(child => child.className.includes('suggestion-new')).length, 0);
+  const next = reservedSnapshot();
+  next.summary = { bom_status: 'POSTED_SOURCE', item_id: 'item-a' };
+  next.suggested_questions = ['합성 후속 질문', '합성 회차 질문'];
+  h.setHandler(request => request.path.startsWith('/api/mks2/events') ? reservationChanges('READY') : undefined);
+  h.setNextSnapshot(next);
+  await h.app.poll();
+  assert.equal(texts()[0], '다른 주문 예약 반영 (v8) · 확인할 질문');
+  const fresh = container.children.filter(child => child.className.includes('suggestion-new'));
+  assert.deepEqual(fresh.map(child => child.textContent), ['합성 후속 질문새']);
+});

@@ -239,10 +239,32 @@ async function showBomGraph() {
   location.hash = '#graph';
   if (configuration) requestAnimationFrame(() => lane?.focus(configuration.id));
 }
+// Why these questions now: a short heading from the same snapshot state the
+// server used to choose them (BOM, reservation change, shortage, requests).
+function suggestionContext() {
+  const summary = snapshot.summary || {};
+  if (summary.bom_status !== 'POSTED_SOURCE') return 'BOM 등록 전 · 지금 답할 수 있는 질문';
+  const impact = (snapshot.reservation_impacts || []).at(-1);
+  if (impact && Number(impact.planned_shortage_after) > Number(impact.planned_shortage_before)) return `다른 주문 예약 반영 (v${impact.ledger_version}) · 확인할 질문`;
+  const focus = (snapshot.material_requirements?.items || []).find(item => item.item_id === summary.item_id);
+  const short = Number(focus?.planned_shortage_qty);
+  const requested = (snapshot.procurement?.documents || []).some(row => row.kind === 'PR' && !row.cancelled_by && !row.rejection_reason);
+  if (short > 0 && !requested) return `${summary.item_id} ${focus.planned_shortage_qty}개 부족 · 확보 검토 질문`;
+  if (short > 0) return `${summary.item_id} 확보 진행 중 · 확인할 질문`;
+  return '현재 원장 기준 추천 질문';
+}
 function updateSuggestions(container, name) {
+  const previous = container.shown || null;
   container.replaceChildren();
-  const questions = snapshot.suggested_questions || snapshot.suggestions || [];
-  for (const question of questions) if (typeof question === 'string') container.append(button(question, () => fillQuestion(question, name), 'suggestion'));
+  const questions = (snapshot.suggested_questions || snapshot.suggestions || []).filter(question => typeof question === 'string');
+  if (questions.length) container.append(element('div', 'suggestion-context', suggestionContext()));
+  for (const question of questions) {
+    const fresh = previous && !previous.includes(question);
+    const control = button(question, () => fillQuestion(question, name), fresh ? 'suggestion suggestion-new' : 'suggestion');
+    if (fresh) control.append(element('span', 'suggestion-tag', '새'));
+    container.append(control);
+  }
+  container.shown = questions;
 }
 function clearAgentWaiting(panel) {
   if (!panel) return;

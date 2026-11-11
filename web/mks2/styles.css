@@ -233,3 +233,10 @@ select,.btn { border:1px solid var(--line); background:var(--surface); border-ra
 @keyframes mk-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .mk-spinner { animation-duration: 2.4s; } }
 .query-ai-pending .query-paragraph { color: var(--fg2); }
+
+/* Situation heading and newly suggested questions */
+.suggestion-context { width: 100%; font-size: 11.5px; font-weight: 600; color: var(--fg2); margin: 2px 0 2px; }
+.suggestion.suggestion-new { border-color: var(--accent); animation: mk-suggest-in 1.6s ease-out 1; }
+.suggestion-tag { margin-left: 6px; font-size: 10.5px; font-weight: 700; color: var(--accent-fg, #fff); background: var(--accent); border-radius: 999px; padding: 0 6px; }
+@keyframes mk-suggest-in { 0% { background: color-mix(in srgb, var(--accent) 22%, transparent); } 100% { background: transparent; } }
+@media (prefers-reduced-motion: reduce) { .suggestion.suggestion-new { animation: none; } }
