@@ -172,7 +172,7 @@ export function supplyProgress(documents, snapshot, identity, editor = null) {
   return {
     item, status, tone, steps: stepsAt(focus ? reachedStep[focus.status] ?? 0 : 4), focusId: focus?.id || null,
     focusLabel: focus && focus !== pr ? kindLabel[focus.kind] : null,
-    focusSummary: focus ? `${kindLabel[focus.kind] || focus.kind} ${docLabel(focus.kind, focus.id)}${focus.quantity != null ? ` · ${focus.quantity}${unit}` : ''}` : null, next, shortfall, needed: Number.isFinite(needed) ? needed : null, stale, rows: progressRows,
+    focusSummary: focus ? `${kindLabel[focus.kind] || focus.kind} ${docLabel(focus.kind, focus.id)}${focus.quantity != null ? ` · ${focus.quantity}${['PRODUCTION', 'FG_RECEIPT', 'SHIPMENT', 'ARRIVAL'].includes(focus.kind) ? '대' : unit}` : ''}` : null, next, shortfall, needed: Number.isFinite(needed) ? needed : null, stale, rows: progressRows,
     notes: returned.length ? [...notes, `반려된 초안 ${returned.length}건은 작성자 수정 전까지 진행에서 제외했습니다.`] : notes,
   };
 }
@@ -499,8 +499,20 @@ export function mountProcurementFlow(container, { snapshot, api, getIdentity = (
       return;
     }
     if (action === 'new-next') {
-      const [kind, link] = nextStep[doc.kind], refs = { FG_RECEIPT: 'receipt_ref', SHIPMENT: 'shipment_ref', ARRIVAL: 'arrival_ref' };
-      start(kind, { [{ FG_RECEIPT: 'production_id', SHIPMENT: 'fg_receipt_id', ARRIVAL: 'shipment_id' }[kind]]: doc.id, [refs[kind]]: '', board_serials: boardsFor(doc, nextStep[doc.kind]).join(', ') });
+      // One click: the record number is generated and the boards are the ones
+      // still waiting for this step. Another account approves and posts it.
+      const [kind, link, , stepLabel] = nextStep[doc.kind], refs = { FG_RECEIPT: 'receipt_ref', SHIPMENT: 'shipment_ref', ARRIVAL: 'arrival_ref' };
+      const serials = boardsFor(doc, nextStep[doc.kind]);
+      if (!serials.length) return;
+      const stamp = Date.now().toString(36).toUpperCase();
+      const content = { kind, [link]: doc.id, [refs[kind]]: `${kind}-${stamp}`, board_serials: serials,
+        note: `자동 작성 · ${documentLabel(doc.kind, doc.id)} 보드 ${serials.length}대 ${stepLabel}` };
+      work(async () => {
+        const result = await command('/api/mks2/procurement/documents', { expected_ledger_version: ledgerVersion, content });
+        if (destroyed) return;
+        await reload(result.id);
+        message(`${kinds[kind]} 초안을 저장했습니다. 작성자와 다른 계정에서 승인·확정해 주세요.`);
+      });
       return;
     }
     if (action === 'review-approve') work(async () => {
