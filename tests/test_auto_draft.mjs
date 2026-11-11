@@ -33,7 +33,7 @@ test('board moves start after the purchased LOT passed inspection, one productio
 test('one draft at a time; its own stale draft is re-saved on the current version', () => {
   const next = [{ label: '내부 발주 초안', action: 'new-po', target: 'pr-1' }];
   const posted = { kind: 'QUOTE', status: 'DRAFT' };  // quotes never block
-  const waitingOther = { kind: 'COHORT', status: 'DRAFT', created_by: 'actor-a', content: { note: '자동 작성 · 수동', basis_ledger_version: 15 } };
+  const waitingOther = { kind: 'COHORT', status: 'DRAFT', created_by: 'actor-a', content: { note: '직접 작성 · 사람이 쓴 초안', basis_ledger_version: 15 } };
   const staleAgent = { kind: 'COHORT', status: 'REVIEWED', created_by: 'actor-a', content: { note: 'Agent 자동 작성 · 기초 보드', basis_ledger_version: 15 } };
   const freshAgent = { ...staleAgent, content: { ...staleAgent.content, basis_ledger_version: 17 } };
   const rejected = { ...staleAgent, status: 'DRAFT', rejection_reason: '수량 다시 확인' };
