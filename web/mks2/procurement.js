@@ -264,7 +264,7 @@ export function scenarioState(documents, identity) {
 // T13 substitute approval: an existing candidate for the focus item can be
 // counted for this round's shortage only after another account approves and
 // posts it. A demo application approval, not a manufacturing technical review.
-export function substituteState(snapshot, documents, identity) {
+export function substituteState(snapshot, documents, identity, { offer = true } = {}) {
   const item = snapshot?.summary?.item_id;
   const candidate = (snapshot?.substitutes || []).find(row => row.original_item_id === item);
   if (!candidate) return null;
@@ -276,6 +276,9 @@ export function substituteState(snapshot, documents, identity) {
   const shortage = Number(requirement?.planned_shortage_qty), counted = Number(candidate.counted_qty_for_selected_demand) || 0;
   // Before a BOM is posted there is no shortage to cover: nothing to show yet.
   if (requirement?.planned_shortage_qty == null && !doc && !counted) return null;
+  // The demo story secures the part by purchase. Substitution is shown only once
+  // a substitution document exists (to finish or reject it) or one was counted.
+  if (!offer && !doc && !counted) return null;
   const left = (Number(candidate.candidate_on_hand_qty) || 0) - counted, unit = unitWord(candidate.unit);
   const next = [], notes = [];
   if (!doc || doc.status === 'POSTED') {
@@ -613,7 +616,7 @@ export function mountProcurementFlow(container, { snapshot, api, getIdentity = (
     const otherEditing = scenarioEditing || substituteEditing;
     const progress = supply = supplyProgress(documents, snapshot, getIdentity(), otherEditing ? null : editor);
     if (progress && editor && !otherEditing) progress.next = [];
-    substitute = substituteState(snapshot, documents, getIdentity());
+    substitute = substituteState(snapshot, documents, getIdentity(), { offer: false });
     if (substitute && editor) substitute.next = [];
     const scenario = scenarioState(documents, getIdentity());
     if (scenarioEditing) scenario.next = [];
