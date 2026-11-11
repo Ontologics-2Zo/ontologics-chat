@@ -178,24 +178,25 @@ def _designators(requirements, row):
     return "·".join(names)
 
 
+def _quote_card(entry, unit, picked):
+    c = entry["calculation"]
+    chosen = bool(picked) and str(entry["quote_id"]) == picked["quote_id"]
+    return QueryQuoteCard(
+        quote_id=str(entry["quote_id"]), quote_ref=entry["quote_ref"], supplier_id=entry["supplier_id"],
+        material_basis="planned", quantity_condition=c["quantity_condition"],
+        recommended_qty=c.get("recommended_qty"), margin_qty=c.get("margin_qty"),
+        supply_limit_qty=entry["supply_limit_qty"], moq=entry["moq"], order_multiple=entry["order_multiple"],
+        unit_price=None if entry["unit_price"] is None else str(entry["unit_price"]), currency=entry["currency"],
+        freight=None if entry["freight"] is None else str(entry["freight"]), total=c.get("total"),
+        lead_business_days=entry["lead_business_days"], valid_until=entry["valid_until"],
+        reason=_quote_sentence(entry, unit),
+        recommended=chosen, recommendation_reason=picked["reason"] if chosen else None)
+
+
 def _quote_cards(view, item, planned_shortage):
-    cards = []
     entries = [_quote_view(row, planned_shortage) for row in _quote_rows(view, item["item_id"], item["unit"])]
     picked = recommend_quote(entries)
-    for entry in entries:
-        c = entry["calculation"]
-        chosen = bool(picked) and str(entry["quote_id"]) == picked["quote_id"]
-        cards.append(QueryQuoteCard(
-            quote_id=entry["quote_id"], quote_ref=entry["quote_ref"], supplier_id=entry["supplier_id"],
-            material_basis="planned", quantity_condition=c["quantity_condition"],
-            recommended_qty=c.get("recommended_qty"), margin_qty=c.get("margin_qty"),
-            supply_limit_qty=entry["supply_limit_qty"], moq=entry["moq"], order_multiple=entry["order_multiple"],
-            unit_price=None if entry["unit_price"] is None else str(entry["unit_price"]), currency=entry["currency"],
-            freight=None if entry["freight"] is None else str(entry["freight"]), total=c.get("total"),
-            lead_business_days=entry["lead_business_days"], valid_until=entry["valid_until"],
-            reason=_quote_sentence(entry, item["unit"]),
-            recommended=chosen, recommendation_reason=picked["reason"] if chosen else None))
-    return cards
+    return [_quote_card(entry, item["unit"], picked) for entry in entries]
 
 
 def _add_business_days(start, days):
@@ -635,7 +636,7 @@ def _material_change_answer(view, plan, req):
                   next((row["item_id"] for row in calculated if row.get("planned_shortage_qty") not in (None, "0")), None))
     item_row = next((row for row in calculated if row["item_id"] == focus_item), None)
     kinds = {"InternalItem", "PartLot", "BOMApplication", "BOMLine", "ProductConfiguration", "DeliveryRound", "ProductionJob"}
-    sections, answers, result_quotes, offer_documents = [], [], None, None
+    sections, answers, result_quotes, offer_documents, quote_cards = [], [], None, None, []
     status, conclusion = "PARTIAL", "같은 원장 버전의 자재 변경·확보안 조회"
     if item_row is None:
         answer = "현재 BOM에서 소요·부족이 계산된 품목이 없어 변경 원인과 확보안을 비교할 수 없습니다. BOM 적용 검토가 먼저 필요합니다."
@@ -704,13 +705,16 @@ def _material_change_answer(view, plan, req):
                 item("자동 처리", "없음", "공급사 선택·초안 수량 변경·분할·발주는 사람이 명시적으로 진행합니다."),
             ], "UNKNOWN"))
             result_quotes = {"current": now, "previous": previous, "recommendation": picked}
+            # Cards for any panel (the agent result keeps "calculation"): same
+            # recommendation, one button that opens the request draft form.
+            quote_cards = [_quote_card(entry, unit, picked).model_dump(mode="json") for entry in now]
             offer_documents = [row["id"] for row in quotes]
     result = _result(view, plan, answer=" ".join(answers), status=status, sections=sections, kinds=kinds,
                      include_bom=True, selected_items=[focus_item], conclusion=conclusion,
                      offer_documents=offer_documents)
     result["calculation"] = {"basis": deepcopy(basis), "scope_item_ids": [focus_item],
                              "material_requirements": req, "reservation_impacts": item_impacts,
-                             "sourcing": result_quotes, "actual_delivery_feasibility": None,
+                             "sourcing": result_quotes, "quote_cards": quote_cards, "actual_delivery_feasibility": None,
                              "estimated_arrival": None, "delivery_probability": None,
                              "automatic_selection": False, "automatic_order": False}
     result["steps"] = ["회사·회차·선택 품목과 조회 버전을 확인했습니다.",
@@ -1209,4 +1213,8 @@ def answer_query(question, view, ontology, *, context_entity_id=None):
         result["steps"] = _prerequisite_steps(view, prerequisite)
         if "delivery" in intents:
             result["answer_blocks"] = _delivery_blocks(view, plan, sections, prerequisite, req)
+            # Same quote cards for panels that do not draw answer blocks (graph view, agent result).
+            quotes = [quote for block in result["answer_blocks"] for quote in (block.get("quotes") or [])]
+            if quotes and isinstance(result.get("calculation"), dict):
+                result["calculation"]["quote_cards"] = quotes
     return result

@@ -1005,6 +1005,26 @@ test('reference-order delivery cards render table, open assumption table, quote 
   } finally { restore(); }
 });
 
+test('quote cards from the calculation render in the graph panel with the recommendation (DEC-H62)', () => {
+  const { message, restore } = setup();
+  try {
+    const data = response(); data.intent = ['sourcing', 'materials'];
+    const card = (id, ref, condition, recommended) => ({ quote_id: id, quote_ref: ref, supplier_id: 'sup-' + id, material_basis: 'planned',
+      quantity_condition: condition, recommended_qty: 30, margin_qty: 2, supply_limit_qty: condition === 'MET' ? 40 : 25, moq: 10, order_multiple: 10,
+      unit_price: '850', currency: 'KRW', freight: '3000', total: '28500', lead_business_days: 5, valid_until: null, reason: ref + ' 판정',
+      recommended, recommendation_reason: recommended ? '수량 조건을 충족하는 유효 견적이 이것 하나입니다.' : null });
+    data.calculation = { quote_cards: [card('a', 'CMP-A', 'MET', true), card('b', 'CMP-B', 'NOT_MET', false)] };
+    const chosen = [];
+    renderQueryAnswer(message, data, { mode: 'graph', onChooseQuote: quote => chosen.push(quote.quote_id) });
+    const buttons = descendants(message).filter(item => item.dataset.queryAction === 'choose-quote');
+    assert.equal(buttons.length, 2);
+    assert.equal(buttons[0].textContent, '추천 견적으로 구매 요청 초안'); assert.equal(buttons[1].disabled, true);
+    assert.equal(withClass(message, 'query-quote-recommended').length, 1);
+    assert.ok(message.textContent.includes('추천 이유 · 수량 조건을 충족하는 유효 견적이 이것 하나입니다.'));
+    buttons[0].click(); assert.deepEqual(chosen, ['a']);
+  } finally { restore(); }
+});
+
 test('a BOM-missing card carries the only registration entry', () => {
   const { message, restore } = setup();
   try {
