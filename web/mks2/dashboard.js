@@ -128,6 +128,51 @@ const segmentKeys = ['arrived_qty','transit_qty','warehouse_remaining_qty','good
 const segmentLabels = ['도착','운송 중','창고','입고 대기','남은 생산'];
 const segmentClass = ['arrived','transit','warehouse','pending','remaining'];
 
+// Detail of the one delivery round from the same snapshot (no fixed values):
+// stage counts, days to the due date and the latest fulfilment records.
+const FULFIL_KINDS = { PRODUCTION: '생산 실적', FG_RECEIPT: '완성품 입고', SHIPMENT: '출하', ARRIVAL: '고객 도착', COHORT: '기초 보드 이행' };
+const FLOW_STEPS = [['PR', '구매 요청'], ['PO', '발주'], ['SUPPLY_CONFIRMATION', '공급확인'], ['RECEIPT', '입하'], ['IQC', '수입검사'],
+  ['PRODUCTION', '생산'], ['FG_RECEIPT', '입고'], ['SHIPMENT', '출하'], ['ARRIVAL', '도착']];
+function docQty(doc) {
+  const content = doc?.content || {};
+  if (Array.isArray(content.board_serials) && content.board_serials.length) return `${content.board_serials.length}대`;
+  if (content.kind === 'IQC' && content.passed_qty != null) return `합격 ${content.passed_qty}`;
+  if (content.kind === 'SUPPLY_CONFIRMATION' && content.confirmed_qty != null) return `${content.confirmed_qty}`;
+  return content.quantity != null ? `${content.quantity}${['COHORT'].includes(content.kind) ? '대' : ''}` : '';
+}
+export function roundStageRows(row) {
+  const total = Number(row.promised_qty ?? row.promise_qty) || 0;
+  return segmentKeys.map((key, i) => ({ key, label: segmentLabels[i], cls: segmentClass[i], qty: row[key],
+    share: total && Number.isFinite(Number(row[key])) ? Math.round(Number(row[key]) / total * 100) : null }));
+}
+export function daysToDue(due, today = new Date()) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(due || ''));
+  if (!match) return null;
+  const end = Date.UTC(+match[1], +match[2] - 1, +match[3]);
+  const start = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+  return Math.round((end - start) / 86400000);
+}
+export function fulfilmentRecords(snapshot, limit = 4) {
+  const docs = new Map(((snapshot.procurement || {}).documents || []).map(doc => [doc.id, doc]));
+  return (Array.isArray(snapshot.events) ? snapshot.events : [])
+    .filter(event => FULFIL_KINDS[event?.document_kind] && event.document_ref?.id)
+    .sort((a, b) => String(b.recorded_at || '').localeCompare(String(a.recorded_at || '')) || (b.ledger_version || 0) - (a.ledger_version || 0))
+    .slice(0, limit)
+    .map(event => ({ at: event.recorded_at, version: event.ledger_version, label: `${FULFIL_KINDS[event.document_kind]} ${documentLabel(event.document_kind, event.document_ref.id)}`,
+      qty: docQty(docs.get(event.document_ref.id)) }));
+}
+export function roundFlowSteps(snapshot) {
+  const posted = ((snapshot.procurement || {}).documents || []).filter(doc => doc.status === 'POSTED' && !doc.cancelled_by);
+  let current = false;
+  return FLOW_STEPS.map(([kind, label]) => {
+    const docs = posted.filter(doc => doc.kind === kind);
+    const last = docs.at(-1);
+    let state = docs.length ? 'done' : 'todo';
+    if (!docs.length && !current) { current = true; state = 'next'; }
+    return { kind, label, state, count: docs.length, doc: last ? documentLabel(last.kind, last.id) : null, qty: last ? docQty(last) : '' };
+  });
+}
+
 function bars(row, total = row.promised_qty, compact=false) {
   return `<div class="mk-segments${compact ? ' compact' : ''}" aria-label="${segmentLabels.map((label,i) => `${label} ${num(row[segmentKeys[i]])}`).join(', ')}">${segmentKeys.map((key,i) => `<i class="${segmentClass[i]}" style="flex-basis:${pct(row[key],total)}%" title="${segmentLabels[i]} ${num(row[key])}"></i>`).join('')}</div>`;
 }
@@ -307,6 +352,26 @@ export function mountDashboard(container, { snapshot, onSelect = () => {}, onAsk
       <article class="mk-kpi">${headerCard('수입검사')}<div class="mk-big">${num(summary.inspection_pending_qty)}<small>개 대기</small></div><div class="mk-inspection-meter"><i style="width:${pct(summary.inspection_passed_qty, summary.inspection_total_qty)}%"></i></div><div class="mk-small-legend"><span class="warn">대기 ${num(summary.inspection_pending_qty)}</span><span class="good">합격 ${num(summary.inspection_passed_qty)}</span></div><div class="mk-kpi-sub">입하·합격은 별도 사건입니다. 검사대기 수량은 가용으로 보지 않습니다.</div></article>
     </section>`;
   }
+  function roundDetail() {
+    const row = rows[0];
+    if (!row) return '';
+    const days = daysToDue(row.arrival_due_date), records = fulfilmentRecords(snapshot);
+    const due = days == null ? '도착기한 미확인' : days >= 0 ? `도착기한 ${esc(shortDate(row.arrival_due_date))}까지 ${num(days)}일` : `도착기한 ${esc(shortDate(row.arrival_due_date))} · ${num(-days)}일 지남`;
+    return `<div class="mk-round-detail" data-round-detail="${esc(row.delivery_round_id)}">
+      <div class="mk-round-detail-head"><b>${esc(row.delivery_round_id)} 단계별</b><span>${due} · 달력 기준, 납기 판단 아님</span></div>
+      <table class="mk-stage-table"><tbody>${roundStageRows(row).map(stage => `<tr><td><i class="${stage.cls}"></i>${esc(stage.label)}</td><td class="mk-numeric"><b>${num(stage.qty)}</b>대</td><td class="mk-numeric mk-muted">${stage.share == null ? '—' : `${stage.share}%`}</td></tr>`).join('')}</tbody></table>
+      <div class="mk-round-detail-head"><b>최근 이행 기록</b><span>원장 확정 순</span></div>
+      ${records.length ? `<ul class="mk-record-list">${records.map(record => { const time = formatLedgerEventTime(record.at); return `<li><time title="${esc(time.full)}">${esc(time.short)}</time><span>${esc(record.label)}</span><b>${esc(record.qty)}</b><small>v${num(record.version)}</small></li>`; }).join('')}</ul>`
+        : '<p class="mk-small-note">아직 입고·출하·도착 기록이 없습니다. 확정되면 여기에 쌓입니다.</p>'}
+    </div>`;
+  }
+  function roundFlow() {
+    const row = rows[0];
+    if (!row) return '';
+    const steps = roundFlowSteps(snapshot);
+    return `<div class="mk-round-flow" data-round-flow="${esc(row.delivery_round_id)}"><div class="mk-round-detail-head"><b>${esc(row.delivery_round_id)} 진행 흐름</b><span>확정된 원장 문서 기준 · 승인 대기 문서는 진행 현황에서 확인</span></div>
+      <ol class="mk-flow-steps">${steps.map(step => `<li class="${step.state}"><span>${esc(step.label)}</span><small>${step.state === 'done' ? `${esc(step.doc)}${step.qty ? ` · ${esc(step.qty)}` : ''}${step.count > 1 ? ` 외 ${num(step.count - 1)}건` : ''}` : step.state === 'next' ? '다음 단계' : '대기'}</small></li>`).join('')}</ol></div>`;
+  }
   function roundContent() {
     const visible = rows.filter(row => filter === 'all' || (filter === 'done' ? row.promise_remaining_qty === 0 : row.promise_remaining_qty > 0));
     return `<div class="mk-table-scroll"><table class="mk-round-table"><thead><tr><th>계약 · 회차</th><th>보드 / 개정 · 구성</th><th>도착기한</th><th>약속 / 실제 도착</th><th>남은 약속</th><th>현재 상태</th><th>다음 조치</th><th>담당</th></tr></thead><tbody>${visible.map(row => `<tr${selected === row.id ? ' class="selected"' : ''}>
@@ -349,8 +414,8 @@ export function mountDashboard(container, { snapshot, onSelect = () => {}, onAsk
       ${renderReservationImpact(snapshot)}${renderArrivalCard(snapshot)}${canReserve ? reservationForm(snapshot) : ''}
       ${renderKpis()}
       <div class="mk-viz-grid"><section class="mk-card" data-material-coverage><h3>자재 충족률${summary.production_job_id ? ` · ${esc(summary.production_job_id)}` : ''}<span class="mk-spacer"></span><span class="mk-toggle" role="group" aria-label="계산 기준"><button type="button" data-basis="production_remaining" aria-pressed="${basis === 'production_remaining'}">남은 생산 ${num(summary.production_remaining_qty)}대</button><button type="button" data-basis="planned" aria-pressed="${basis === 'planned'}">수율 반영 ${num(requirements.basis?.planned_input_qty)}대</button></span></h3><div data-region="materials">${materialContent()}</div></section>
-      <section class="mk-card"><h3>회차별 이행 단계<span class="mk-spacer"></span>${tag('단위: 대')}</h3>${rows.map(row => `<button type="button" class="mk-round-bar" data-select="${esc(row.id || row.node_id)}"><span class="mk-round-label">${esc(row.delivery_round_id || row.display_id)}<small>${num(row.promised_qty ?? row.promise_qty)}대</small></span><span class="mk-bar-width">${bars(row, row.promised_qty ?? row.promise_qty)}</span><span class="mk-round-remaining">${num(row.promise_remaining_qty)}</span></button>`).join('')}<p class="mk-small-note">오른쪽 숫자는 남은 고객 도착 약속입니다.</p><div class="mk-inline-legend">${segmentLabels.map((label, i) => `<span><i class="${segmentClass[i]}"></i>${label}</span>`).join('')}</div></section></div>
-      <section class="mk-card mk-rounds-card"><h3>계약 회차별 이행 현황 ${tag(num(rows.length))}<span class="mk-spacer"></span><span class="mk-toggle" role="group" aria-label="회차 상태">${[['all', '전체'], ['open', '미완료'], ['done', '납품 완료']].map(([id, label]) => `<button type="button" data-filter="${id}" aria-pressed="${filter === id}">${label}</button>`).join('')}</span></h3><div data-region="rounds">${roundContent()}</div></section>
+      <section class="mk-card"><h3>회차별 이행 단계<span class="mk-spacer"></span>${tag('단위: 대')}</h3>${rows.map(row => `<button type="button" class="mk-round-bar" data-select="${esc(row.id || row.node_id)}"><span class="mk-round-label">${esc(row.delivery_round_id || row.display_id)}<small>${num(row.promised_qty ?? row.promise_qty)}대</small></span><span class="mk-bar-width">${bars(row, row.promised_qty ?? row.promise_qty)}</span><span class="mk-round-remaining">${num(row.promise_remaining_qty)}</span></button>`).join('')}<p class="mk-small-note">오른쪽 숫자는 남은 고객 도착 약속입니다.</p><div class="mk-inline-legend">${segmentLabels.map((label, i) => `<span><i class="${segmentClass[i]}"></i>${label}</span>`).join('')}</div>${roundDetail()}</section></div>
+      <section class="mk-card mk-rounds-card"><h3>계약 회차별 이행 현황 ${tag(num(rows.length))}<span class="mk-spacer"></span><span class="mk-toggle" role="group" aria-label="회차 상태">${[['all', '전체'], ['open', '미완료'], ['done', '납품 완료']].map(([id, label]) => `<button type="button" data-filter="${id}" aria-pressed="${filter === id}">${label}</button>`).join('')}</span></h3><div data-region="rounds">${roundContent()}</div>${roundFlow()}</section>
       <div class="mk-lower-grid">${renderEvents()}<section class="mk-card mk-supply-card" aria-label="공급 흐름"><div data-region="procurement"></div></section>
       <section class="mk-card"><h3>품목별 재고<span class="mk-spacer"></span>${tag('원장 조회', 'info')}</h3><div class="mk-table-scroll"><table class="mk-round-table"><thead><tr><th>품목 / LOT</th><th>보유</th><th>예약</th><th>가용</th></tr></thead><tbody>${inventory.map(item => `<tr><td><button class="mk-link" type="button" data-graph="${esc(item.id || item.node_id)}">${esc(item.display_id || item.item_id)}</button></td><td>${num(item.on_hand_qty)}</td><td>${num(item.reserved_qty)}</td><td>${num(item.available_qty)}</td></tr>`).join('') || '<tr><td colspan="4">조회된 재고 근거가 없습니다.</td></tr>'}</tbody></table></div></section></div>`;
   }

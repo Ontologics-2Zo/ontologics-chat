@@ -356,3 +356,27 @@
 /* DEC-H63 fulfilment plan approval card */
 .mk-batch{border:1px solid var(--accent,#4f46e5);border-radius:10px;padding:10px 12px;margin:0 0 10px;background:var(--accent-soft,#eef0fe)}
 .mk-batch-steps{margin:6px 0 8px;padding-left:18px;font-size:12px;line-height:1.6}
+/* One delivery round in detail (ledger values only) */
+.mk-round-detail,.mk-round-flow{margin-top:12px;padding-top:10px;border-top:1px solid var(--mk-soft);font-size:12px}
+.mk-round-detail-head{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin:0 0 6px}
+.mk-round-detail-head b{font-size:12.5px;color:var(--mk-fg)}
+.mk-round-detail-head span{font-size:11px;color:var(--mk-muted)}
+.mk-stage-table{width:100%;border-collapse:collapse;margin-bottom:10px}
+.mk-stage-table td{padding:4px 6px;border-bottom:1px solid var(--mk-soft)}
+.mk-stage-table tr:last-child td{border-bottom:0}
+.mk-stage-table td:first-child i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+.mk-stage-table .mk-numeric{text-align:right;font-family:var(--mk-font)}
+.mk-stage-table .mk-muted{color:var(--mk-muted)}
+.mk-record-list{list-style:none;margin:0;padding:0;display:grid;gap:4px}
+.mk-record-list li{display:grid;grid-template-columns:44px 1fr auto auto;gap:8px;align-items:baseline}
+.mk-record-list time{font-family:var(--mk-font);color:var(--mk-muted);font-size:11px}
+.mk-record-list b{font-family:var(--mk-font)}
+.mk-record-list small{color:var(--accent,#4f46e5);font-family:var(--mk-font)}
+.mk-flow-steps{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(68px,1fr));gap:5px}
+.mk-flow-steps li{border:1px solid var(--mk-line);border-radius:8px;padding:5px 6px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.mk-flow-steps li span{font-weight:600;font-size:12px}
+.mk-flow-steps li small{font-size:10.5px;color:var(--mk-muted);overflow-wrap:anywhere}
+.mk-flow-steps li.done{border-color:var(--ok,#047857);background:var(--ok-soft,#e3f5ec)}
+.mk-flow-steps li.done span{color:var(--ok,#047857)}
+.mk-flow-steps li.next{border-color:var(--accent,#4f46e5);background:var(--accent-soft,#eef0fe)}
+.mk-flow-steps li.next span{color:var(--accent,#4f46e5)}
