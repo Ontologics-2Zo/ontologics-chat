@@ -46,6 +46,13 @@ class SyntheticProjectionReader:
         self.calls += 1
         return deepcopy(projection["graph"])
 
+    reason_calls = 0
+
+    def reason(self, payload, version, company_id, run_id):
+        self.reason_calls += 1
+        return {"state": "TYPE_MISMATCH", "engine": "test", "type_mismatch_count": 1, "blocks_ready": False,
+                "type_mismatches": [{"entity_id": payload["entities"][0]["id"], "declared": "A", "entailed": ["B"], "via": []}]}
+
 
 @unittest.skipUnless(os.environ.get("TEST_DATABASE_URL"), "TEST_DATABASE_URL not configured")
 class ServiceApiIntegrationTests(unittest.TestCase):
@@ -215,7 +222,7 @@ class ServiceApiIntegrationTests(unittest.TestCase):
         session = self.client.get("/api/mks2/session")
         self.assertEqual(session.status_code, 200)
         self.assertFalse(session.json()["authenticated"])
-        for path in ("/api/mks2/snapshot", "/api/mks2/ontology", "/api/mks2/events", "/api/mks2/documents"):
+        for path in ("/api/mks2/snapshot", "/api/mks2/ontology", "/api/mks2/events", "/api/mks2/documents", "/api/mks2/reasoning"):
             with self.subTest(path=path):
                 self.error(self.client.get(path), 401, "IDENTITY_REQUIRED")
 
@@ -294,6 +301,20 @@ class ServiceApiIntegrationTests(unittest.TestCase):
         self.assertNotIn("EXPECTED_SENTINEL", result.text)
         self.assertEqual(len(view["graph"]["data"]["nodes"]), len(view["entities"]))
         self.assertGreater(self.projector.calls, 0)
+
+    def test_reasoning_check_is_read_only_and_cached_per_version(self):
+        self.select()
+        self.mark_projection_ready()
+        first = self.client.get("/api/mks2/reasoning")
+        self.assertEqual(first.status_code, 200, first.text)
+        report = first.json()
+        self.assertEqual((report["state"], report["source"], report["ledger_version"]), ("TYPE_MISMATCH", "on_demand", 1))
+        self.assertFalse(report["blocks_ready"])
+        self.assertEqual(self.client.get("/api/mks2/reasoning").json()["type_mismatch_count"], 1)
+        self.assertEqual(self.projector.reason_calls, 1)  # same version: computed once
+        with self.db.connect() as conn:
+            row = conn.execute("SELECT projection FROM service_snapshots ORDER BY ledger_version DESC LIMIT 1").fetchone()
+        self.assertNotIn("reasoning", row["projection"])  # nothing written back
 
     def test_full_ontology_catalog_not_scenario_pruned(self):
         self.select()
@@ -408,6 +429,7 @@ class ServiceApiIntegrationTests(unittest.TestCase):
         routes = {"/": "shell.html", "/current/": "index.html", "/app.js": "app.js", "/mks2/": "mks2/index.html", "/mks2/graph-layout.js": "mks2/graph-layout.js",
                   "/mks2/twin2.js": "mks2/twin2.js", "/mks2/twin2.css": "mks2/twin2.css",
                   "/mks2/material_watch.js": "mks2/material_watch.js",
+                  "/mks2/reasoning_panel.js": "mks2/reasoning_panel.js",
                   "/mks2/vendor/three/three.module.min.js": "mks2/vendor/three/three.module.min.js",
                   "/mks2/vendor/three/OrbitControls.js": "mks2/vendor/three/OrbitControls.js",
                   "/mks2/vendor/three/CSS2DRenderer.js": "mks2/vendor/three/CSS2DRenderer.js"}
