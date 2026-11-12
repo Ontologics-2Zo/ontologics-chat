@@ -147,7 +147,7 @@ class PreviewBoundaryTests(unittest.TestCase):
                     self.assertEqual(self.request(server, path, headers={"Sec-Fetch-Site": "cross-site", "Sec-Fetch-Dest": "iframe"})[0], 403)
 
     def test_twin_assets_are_individually_allowlisted_without_exposing_vendor_directory(self):
-        files = {"twin.js": "text/javascript", "twin.css": "text/css",
+        files = {"twin2.js": "text/javascript", "twin2.css": "text/css",
                  "vendor/three/three.module.min.js": "text/javascript",
                  "vendor/three/OrbitControls.js": "text/javascript",
                  "vendor/three/CSS2DRenderer.js": "text/javascript"}
@@ -164,7 +164,7 @@ class PreviewBoundaryTests(unittest.TestCase):
                     self.assertTrue(headers["Content-Type"].startswith(mime))
                     self.assertEqual(content, (self.web / "mks2" / filename).read_bytes())
             for path in ("/mks2/vendor/", "/mks2/vendor/three/", "/mks2/vendor/three/unlisted.js",
-                         "/mks2/twin.js?file=private.txt", "/mks2/vendor/three/%2e%2e/twin.js"):
+                         "/mks2/twin2.js?file=private.txt", "/mks2/vendor/three/%2e%2e/twin2.js", "/mks2/twin.js"):
                 self.assertEqual(self.request(server, path)[0], 404)
 
     def test_writes_rejected_and_cross_origin_cannot_read_private_data(self):

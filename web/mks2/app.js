@@ -2,7 +2,6 @@ import { mountDashboard } from './dashboard.js';
 import { mountGraph } from './graph.js';
 import { mountLaneGraph } from './lanegraph.js';
 import { renderQueryAnswer, updateAiSummary } from './query.js';
-import { mountTwin } from './twin.js';
 import { mountTwin as mountTwin2 } from './twin2.js';
 
 // UI state is ephemeral. Identity, quantities, versions and answers come from the server.
@@ -18,7 +17,7 @@ function button(text, action, className = 'btn sm') {
   node.type = 'button'; node.addEventListener('click', action); return node;
 }
 // graph = project ontology graph tab (#network); lane = MK-S2 relationship graph (#graph).
-let snapshot, ontology, graph, lane, dashboard, twin, twin2, identity, csrfToken;
+let snapshot, ontology, graph, lane, dashboard, twin2, identity, csrfToken;
 let liveEnabled = true;
 const handledEvents = new Set();
 let contextId, twinContextId, noticeTimer, generation = 0, replayGeneration = 0, schemaMode = false;
@@ -29,9 +28,9 @@ const refreshButton = button('최신 원장 조회', refreshSnapshot);
 refreshButton.id = 'refresh-ledger'; refreshButton.hidden = true;
 $('reset').before(refreshButton);
 const panels = {};
-const SCREENS = ['graph', 'dashboard', 'network', 'twin', 'twin2'];
-// Both digital twin tabs share one selection context and the read API.
-const TWIN_SCREENS = new Set(['twin', 'twin2']);
+// DEC-H65: the original digital twin tab is removed; #twin2 is the digital twin.
+const SCREENS = ['graph', 'dashboard', 'network', 'twin2'];
+const TWIN_SCREENS = new Set(['twin2']);
 // One toolbar button next to 초기화 opens or closes the current screen's assistant panel.
 const panelControls = {};
 const agentButton = element('button', 'btn sm agent-toggle');
@@ -125,7 +124,6 @@ function route() {
 function updateTwinActivity() {
   settleHiddenAnswers();
   const visible = !document.hidden && (!window.frameElement || window.frameElement.getBoundingClientRect().height > 0);
-  twin?.setActive(currentScreen() === 'twin' && visible);
   twin2?.setActive(currentScreen() === 'twin2' && visible);
 }
 function setContext(value) {
@@ -319,7 +317,7 @@ function createPanel(name) {
   clearAgentWaiting(panels[name]);
   const root = $(`${name}-panel`); root.replaceChildren();
   const heading = element('div', 'panel-heading');
-  const title = name === 'dashboard' ? '업무 에이전트' : name === 'network' ? '프로젝트 그래프 질의' : name === 'twin' ? '디지털 트윈 질의' : name === 'twin2' ? '디지털 트윈 2 질의' : '업무 AI 질의';
+  const title = name === 'dashboard' ? '업무 에이전트' : name === 'network' ? '프로젝트 그래프 질의' : name === 'twin2' ? '디지털 트윈 질의' : '업무 AI 질의';
   heading.append(element('h2', '', title), element('span', 'tag', '원장 근거 조회'));
   // Collapse the assistant into a round icon button so the dashboard or graph gets
   // the full width. A per-screen browser preference only; nothing is sent or stored on the server.
@@ -547,7 +545,7 @@ async function runQuery(name, question) {
       ledgerVersion: answer.meta.ledger_version, projectionVersion: answer.meta.projection_version,
       snapshotId: answer.meta.snapshot_id ?? answer.meta.read_snapshot_id,
       companyId: answer.meta.company_id, identityRevision: answer.meta.identity_revision };
-    twin?.highlight(twinEvidence); twin2?.highlight(twinEvidence);
+    twin2?.highlight(twinEvidence);
     const evidenceAtVersion = action => {
       if (!answerSnapshotMatches(answer)) {
         // A button on an old answer never sends a question by itself (no
@@ -669,7 +667,7 @@ function mountCurrentGraph() {
 function invalidateView() {
   for (const panel of Object.values(panels)) { settleAnswer(panel, true); clearAgentWaiting(panel); }
   generation++; requests.abort(); requests = new AbortController(); cancelPendingReplay();
-  graph?.destroy(); lane?.destroy(); dashboard?.destroy(); twin?.destroy(); twin2?.destroy(); graph = null; lane = null; dashboard = null; twin = null; twin2 = null; snapshot = null; ontology = null; twinContextId = null;
+  graph?.destroy(); lane?.destroy(); dashboard?.destroy(); twin2?.destroy(); graph = null; lane = null; dashboard = null; twin2 = null; snapshot = null; ontology = null; twinContextId = null;
   handledEvents.clear();
   for (const name of SCREENS) { $(`${name}-view`).hidden = true; $(`${name}-panel`).replaceChildren(); }
   $('load-state').hidden = false; $('load-state').textContent = '서버의 개발 계정을 선택해 원장을 조회하세요.';
@@ -718,9 +716,6 @@ async function loadSnapshot({ preserveMessages = false } = {}) {
     activeBom: data.bom ? { bom_id: data.bom.bom_id, bom_version: data.bom.bom_version } : null,
     onSelect: setContext, onBom: () => dashboard.openBom() });
   mountCurrentGraph();
-  twin?.destroy();
-  twin = mountTwin($('twin-stage'), { snapshot, ontology, labelFor, onSelect: setTwinContext,
-    onAsk: text => fillQuestion(text, 'twin'), onGraph: focusEvidence });
   twin2?.destroy();
   twin2 = mountTwin2($('twin2-stage'), { snapshot, ontology, labelFor, onSelect: setTwinContext,
     onAsk: text => fillQuestion(text, 'twin2'), onGraph: focusEvidence });
@@ -926,7 +921,7 @@ $('theme').addEventListener('click', () => {
 $('reset').addEventListener('click', () => {
   if (!snapshot) return;
   generation++; requests.abort(); requests = new AbortController();
-  cancelPendingReplay(); graph.reset(); lane?.reset(); dashboard.select(null); twin?.reset(); twin2?.reset(); twinContextId = null;
+  cancelPendingReplay(); graph.reset(); lane?.reset(); dashboard.select(null); twin2?.reset(); twinContextId = null;
   for (const name of SCREENS) createPanel(name);
   notify('화면 선택과 대화를 초기화했습니다. 원장은 유지됩니다.');
 });

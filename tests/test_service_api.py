@@ -406,7 +406,6 @@ class ServiceApiIntegrationTests(unittest.TestCase):
 
     def test_static_routes_preserve_both_tabs_and_reject_private_paths(self):
         routes = {"/": "shell.html", "/current/": "index.html", "/app.js": "app.js", "/mks2/": "mks2/index.html", "/mks2/graph-layout.js": "mks2/graph-layout.js",
-                  "/mks2/twin.js": "mks2/twin.js", "/mks2/twin.css": "mks2/twin.css",
                   "/mks2/twin2.js": "mks2/twin2.js", "/mks2/twin2.css": "mks2/twin2.css",
                   "/mks2/material_watch.js": "mks2/material_watch.js",
                   "/mks2/vendor/three/three.module.min.js": "mks2/vendor/three/three.module.min.js",
@@ -419,7 +418,7 @@ class ServiceApiIntegrationTests(unittest.TestCase):
             self.assertEqual(result.headers["Cache-Control"], "no-store")
             self.assertIn("frame-ancestors 'self'", result.headers["content-security-policy"])
         for route in ("/.env", "/AGENTS.md", "/SOURCE_MANIFEST.json", "/private_inputs/", "/mks2/%2e%2e/app.js", "/app.js?path=.env",
-                      "/mks2/vendor/three/", "/mks2/vendor/three/unlisted.js", "/mks2/twin.js?path=.env"):
+                      "/mks2/vendor/three/", "/mks2/vendor/three/unlisted.js", "/mks2/twin2.js?path=.env", "/mks2/twin.js"):
             with self.subTest(route=route):
                 self.error(self.client.get(route), 404, "NOT_FOUND")
 
