@@ -208,6 +208,55 @@ function tokens() {
   };
 }
 
+/* ---------- 원장 이력 재생 (화면 연출만; 원장·질의 변경 없음) ---------- */
+// Confirmed ledger events from BOM registration onward, each mapped to the
+// process zone it belongs to. Quantities come from the posted documents in the
+// same snapshot; the running arrival total ends at the current ledger value.
+const REPLAY_KIND = { QUOTE: ['sup', '견적'], PR: ['sup', '구매 요청'], PO: ['sup', '내부 발주'], SUPPLY_CONFIRMATION: ['sup', '공급확인 · 모의'],
+  RECEIPT: ['mat', '입하'], IQC: ['mat', '수입검사'], CANCEL: ['sup', '잔여 취소'], PRODUCTION: ['line', '생산 실적'],
+  FG_RECEIPT: ['fg', '완성품 입고'], SHIPMENT: ['ship', '출하'], ARRIVAL: ['cust', '고객 도착'],
+  SCENARIO: ['core', '일정 가정'], SUBSTITUTION: ['core', '대체 적용 승인'] };
+const COHORT_STAGE = { FG_RECEIPT: ['fg', '기초 보드 입고'], SHIPMENT: ['ship', '기초 보드 출하'], ARRIVAL: ['cust', '기초 보드 도착'] };
+function replayDocLabel(kind, id) {
+  const prefix = { QUOTE: 'QT', PR: 'PR', PO: 'PO', SUPPLY_CONFIRMATION: 'SC', RECEIPT: 'RC', IQC: 'IQC', CANCEL: 'CX', PRODUCTION: 'PD',
+    FG_RECEIPT: 'FG', SHIPMENT: 'SH', ARRIVAL: 'AR', SCENARIO: 'SCN', COHORT: 'CH', SUBSTITUTION: 'SB' }[kind] || kind;
+  return `${prefix}-${String(id || '').replace(/[^0-9a-z]/gi, '').slice(0, 4).toUpperCase()}`;
+}
+export function buildTwinReplay(snapshot) {
+  const events = (Array.isArray(snapshot?.events) ? snapshot.events : []).filter(e => e && Number.isSafeInteger(e.ledger_version))
+    .slice().sort((a, b) => a.ledger_version - b.ledger_version);
+  const start = events.findIndex(e => e.event_type === 'BomRegistered');
+  if (start < 0) return null;
+  const docs = new Map(((snapshot.procurement || {}).documents || []).map(d => [d.id, d]));
+  const steps = [];
+  for (const e of events.slice(start)) {
+    let zone = 'core', title = '', detail = '', arrived = 0;
+    if (e.event_type === 'BomRegistered') { zone = 'line'; title = 'BOM 원본 등록 반영'; detail = '소요 계산 시작'; }
+    else if (e.event_type === 'InventoryReserved' || e.reservation) {
+      const r = e.reservation || {}; zone = 'mat'; title = `다른 주문 예약 ${r.demand_ref || ''}`.trim();
+      detail = `${r.item_id || ''} ${r.quantity ?? ''}개 · 가용 ${r.available_before ?? '?'}→${r.available_after ?? '?'}`.trim();
+    } else if (e.document_kind && e.document_ref?.id) {
+      const doc = docs.get(e.document_ref.id), c = doc?.content || {};
+      const map = e.document_kind === 'COHORT' ? COHORT_STAGE[c.stage] : REPLAY_KIND[e.document_kind];
+      if (!map) continue;
+      [zone, title] = map; title = `${title} ${replayDocLabel(e.document_kind, e.document_ref.id)}`;
+      const boards = Array.isArray(c.board_serials) ? c.board_serials.length : 0;
+      detail = boards ? `${boards}대` : e.document_kind === 'IQC' && c.passed_qty != null ? `합격 ${c.passed_qty}개 · 가용 반영`
+        : c.quantity != null ? `${c.quantity}${e.document_kind === 'COHORT' ? '대' : '개'}` : c.confirmed_qty != null ? `${c.confirmed_qty}개` : '';
+      if (e.document_kind === 'ARRIVAL') arrived = boards;
+      if (e.document_kind === 'COHORT' && c.stage === 'ARRIVAL') arrived = Number(c.quantity) || 0;
+    } else continue;
+    steps.push({ version: e.ledger_version, at: e.recorded_at, zone, title, detail, arrived });
+  }
+  if (!steps.length) return null;
+  const summary = snapshot.summary || {}, promise = Number(summary.promise_qty ?? summary.promised_qty);
+  const total = steps.reduce((sum, step) => sum + step.arrived, 0);
+  let arrived = Number(summary.arrived_qty) - total;
+  for (const step of steps) { arrived += step.arrived; step.arrivedTotal = Number.isFinite(arrived) ? arrived : null;
+    step.remaining = Number.isFinite(arrived) && Number.isFinite(promise) ? promise - arrived : null; }
+  return { steps, startArrived: Number(summary.arrived_qty) - total, promise: Number.isFinite(promise) ? promise : null };
+}
+
 export function mountTwin(container, { snapshot, ontology, labelFor = id => id, onSelect = () => {}, onAsk = () => {}, onGraph = () => {} } = {}) {
   container.replaceChildren();
   const summary = snapshot.summary || {};
@@ -845,12 +894,67 @@ export function mountTwin(container, { snapshot, ontology, labelFor = id => id, 
   const themeObserver = new MutationObserver(recolor);
   themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
   const ease = k => k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
+  /* ---------- 원장 이력 재생 ---------- */
+  const replay = buildTwinReplay(snapshot);
+  const rp = { i: -1, timer: null, speed: 1, playing: false, token: null, tokenMesh: null };
+  const ZONE_XZ = Object.fromEntries([...FACILITIES.map(f => [f.key, f.pos]), [CORE.key, CORE.pos]]);
+  const replayBar = element('div', 'twin2-replay');
+  if (replay) {
+    const top = element('div', 'row'), playB = element('button', 'btn sm pri', '▶ 이력 재생'), firstB = element('button', 'btn sm', '⏮'), stopB = element('button', 'btn sm', '끝내기');
+    const speedS = element('select', 'twin2-replay-speed'); for (const v of [1, 2, 4]) { const o = element('option', '', `${v}×`); o.value = String(v); speedS.append(o); }
+    const slider = element('input'); slider.type = 'range'; slider.min = '0'; slider.max = String(replay.steps.length - 1); slider.value = '0';
+    [playB, firstB, stopB].forEach(b => { b.type = 'button'; });
+    const count = element('span', 'cnt', `${replay.steps.length}건 · v${replay.steps[0].version}–v${replay.steps.at(-1).version}`);
+    top.append(playB, firstB, slider, speedS, stopB, count);
+    const card = element('div', 'card'); card.hidden = true;
+    replayBar.append(top, card); view.append(replayBar);
+    const restore = () => {
+      for (const f of FACILITIES) { const tag = facilityTags[f.key]; tag?.anchor.classList.remove('replay', 'mute'); if (facilityPads[f.key]) facilityPads[f.key].pad.opacity = 0.13; }
+      if (rp.tokenMesh) rp.tokenMesh.visible = false; rp.token = null; dirty = true;
+    };
+    const show = i => {
+      const step = replay.steps[i], prev = replay.steps[i - 1]; rp.i = i; slider.value = String(i);
+      for (const f of FACILITIES) {
+        const on = f.key === step.zone, tag = facilityTags[f.key];
+        tag?.anchor.classList.toggle('replay', on); tag?.anchor.classList.toggle('mute', !on);
+        if (facilityPads[f.key]) facilityPads[f.key].pad.opacity = on ? 0.5 : 0.07;
+      }
+      card.hidden = false; card.replaceChildren(
+        element('b', '', `v${step.version} · ${step.title}`),
+        element('span', 'z', `${step.zone === 'core' ? CORE.name : FACILITIES.find(f => f.key === step.zone)?.name}${step.detail ? ' · ' + step.detail : ''}`),
+        element('span', 'm', step.arrivedTotal == null ? '' : `도착 누계 ${fmt(step.arrivedTotal)}대 · 남은 약속 ${fmt(step.remaining)}대`),
+        element('small', '', `${i + 1} / ${replay.steps.length} · 원장 사건 재생 · 원장은 바뀌지 않습니다`));
+      if (renderer && !reduce && prev && prev.zone !== step.zone) {
+        if (!rp.tokenMesh) { rp.tokenMesh = new THREE.Mesh(new THREE.SphereGeometry(0.9, 20, 14), tm(new THREE.MeshBasicMaterial({}), 'accent')); scene.add(rp.tokenMesh); }
+        const a = ZONE_XZ[prev.zone], b = ZONE_XZ[step.zone];
+        rp.token = { from: new THREE.Vector3(a[0], 2, a[1]), to: new THREE.Vector3(b[0], 2, b[1]), t: 0 }; rp.tokenMesh.visible = true;
+      }
+      dirty = true;
+    };
+    const stop = () => { rp.playing = false; clearTimeout(rp.timer); playB.textContent = '▶ 이력 재생'; };
+    const tick = () => {
+      if (!rp.playing) return;
+      if (rp.i >= replay.steps.length - 1) { stop(); return; }
+      show(rp.i + 1); rp.timer = setTimeout(tick, 1700 / rp.speed);
+    };
+    playB.addEventListener('click', () => {
+      if (rp.playing) { stop(); return; }
+      if (rp.i >= replay.steps.length - 1) rp.i = -1;
+      rp.playing = true; playB.textContent = '⏸ 멈춤'; tick();
+    });
+    firstB.addEventListener('click', () => { stop(); show(0); });
+    stopB.addEventListener('click', () => { stop(); rp.i = -1; card.hidden = true; restore(); });
+    speedS.addEventListener('change', () => { rp.speed = Number(speedS.value) || 1; });
+    slider.addEventListener('input', () => { stop(); show(Number(slider.value)); });
+    rp.stop = () => { stop(); clearTimeout(rp.timer); };
+  }
   function frame(now) {
     raf = requestAnimationFrame(frame);
     const dt = Math.min((now - last) / 1000, 0.1); last = now;
     if (!renderer || !active || document.hidden || !view.clientWidth) return;
     if (!reduce) {
       flowDots.forEach(o => { o.t = (o.t + dt * 0.1) % 1; o.d.position.copy(o.curve.getPoint(o.t)); });
+      if (rp.token && rp.tokenMesh) { rp.token.t = Math.min(1, rp.token.t + dt * 1.4); const p = rp.token.from.clone().lerp(rp.token.to, rp.token.t); p.y += Math.sin(rp.token.t * Math.PI) * 6; rp.tokenMesh.position.copy(p); if (rp.token.t >= 1) { rp.tokenMesh.visible = false; rp.token = null; } }
       if (alertRings.length) { const k = 1 + 0.2 * (Math.sin(now / 280) + 1) / 2; alertRings.forEach(r => r.scale.setScalar(k)); }
       pulses.forEach(p => { if (!p.edge) return; p.t = (p.t + dt * 0.45) % 1; p.d.position.copy(p.edge.curve.getPoint(p.t)); });
       if (truckRig.truck) {
@@ -901,6 +1005,7 @@ export function mountTwin(container, { snapshot, ontology, labelFor = id => id, 
     },
     reset() { state.highlight = null; state.answerZones = state.answerMain = null; hlBox.hidden = true; clearSelection(); if (renderer) fly(HOME.pos, HOME.target); },
     destroy() {
+      rp.stop?.();
       cancelAnimationFrame(raf); observer.disconnect(); themeObserver.disconnect();
       for (const [target, type, fn, opts] of listeners) target.removeEventListener(type, fn, opts);
       if (renderer) {

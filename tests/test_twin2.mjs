@@ -159,3 +159,26 @@ test('node name labels start hidden when the ledger graph is large', async () =>
   assert.equal(namesShownByDefault(NAMES_AUTO_LIMIT), true);
   assert.equal(namesShownByDefault(NAMES_AUTO_LIMIT + 1), false);
 });
+
+test('the ledger replay maps events to process zones and ends at the current arrival total', async () => {
+  const { buildTwinReplay } = await import('../web/mks2/twin2.js');
+  const doc = (id, kind, content) => ({ id, kind, status: 'POSTED', content: { kind, ...content } });
+  const snapshot = { summary: { promise_qty: 100, arrived_qty: 72 },
+    procurement: { documents: [doc('pr000001', 'PR', { quantity: 30 }), doc('iqc00002', 'IQC', { passed_qty: 30 }),
+      doc('ar000003', 'ARRIVAL', { board_serials: ['B1', 'B2', 'B3'] }), doc('ch000004', 'COHORT', { stage: 'ARRIVAL', quantity: 5 })] },
+    events: [
+      { event_type: 'OPENING_BALANCE_IMPORTED', ledger_version: 1 },
+      { event_type: 'BomRegistered', ledger_version: 6 },
+      { event_type: 'InventoryReserved', ledger_version: 7, reservation: { demand_ref: 'ORD-2', item_id: 'IM-0016', quantity: 5, available_before: 20, available_after: 15 } },
+      { event_type: 'ProcurementPosted', document_kind: 'PR', document_ref: { id: 'pr000001' }, ledger_version: 8 },
+      { event_type: 'ProcurementPosted', document_kind: 'IQC', document_ref: { id: 'iqc00002' }, ledger_version: 9 },
+      { event_type: 'ProcurementPosted', document_kind: 'ARRIVAL', document_ref: { id: 'ar000003' }, ledger_version: 10 },
+      { event_type: 'ProcurementPosted', document_kind: 'COHORT', document_ref: { id: 'ch000004' }, ledger_version: 11 }] };
+  const replay = buildTwinReplay(snapshot);
+  assert.deepEqual(replay.steps.map(step => [step.version, step.zone]), [[6, 'line'], [7, 'mat'], [8, 'sup'], [9, 'mat'], [10, 'cust'], [11, 'cust']]);
+  assert.equal(replay.steps[1].detail, 'IM-0016 5개 · 가용 20→15');
+  assert.equal(replay.steps[3].detail, '합격 30개 · 가용 반영');
+  assert.deepEqual(replay.steps.map(step => step.arrivedTotal), [64, 64, 64, 64, 67, 72]);
+  assert.equal(replay.steps.at(-1).remaining, 28);
+  assert.equal(buildTwinReplay({ events: [{ event_type: 'OPENING_BALANCE_IMPORTED', ledger_version: 1 }] }), null);
+});
