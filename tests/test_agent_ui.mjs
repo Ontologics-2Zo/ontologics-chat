@@ -44,7 +44,7 @@ function stateAt(snapshot, { execution_id = 'synthetic-execution', revision = 2,
     result: status === 'COMPLETED' ? { answer: '합성 조회 결과', status: 'ANSWERED', meta: { ...snapshot.meta } } : null };
 }
 async function setup({ animated = false, reduced = false, agent = 'fake' } = {}) {
-  const elements = new Map(), requests = [], twins = [], twins2 = [], answers = [], bomOpens = [], bomOpenArguments = [], documentEvents = {};
+  const elements = new Map(), requests = [], twins = [], answers = [], bomOpens = [], bomOpenArguments = [], documentEvents = {};
   let data = snapshotAt(), handler = null, serial = 0;
   const get = id => { if (!elements.has(id)) elements.set(id, new Element('div')); return elements.get(id); };
   const context = vm.createContext({
@@ -61,18 +61,12 @@ async function setup({ animated = false, reduced = false, agent = 'fake' } = {})
     mountGraph: () => ({ destroy() {}, cancelReplay() {}, resize() {}, reset() {}, focus() {}, replay() {} }),
     // DEC-H47 relationship graph (#graph); the existing project graph is mountGraph (#network).
     mountLaneGraph: () => ({ destroy() {}, cancelReplay() {}, resize() {}, reset() {}, focus() {}, replay() {}, setLag() {} }),
-    mountTwin: (stage, options) => {
-      const instance = { options, highlights: [], active: [], destroyed: false, resets: 0,
-        destroy() { this.destroyed = true; }, setActive(value) { this.active.push(value); },
-        highlight(value) { this.highlights.push(value); }, reset() { this.resets++; } };
-      twins.push(instance); return instance;
-    },
-    // Digital twin 2 (#twin2): same contract, recorded apart so twin-1 checks stay exact.
+    // The digital twin (#twin2, DEC-H65).
     mountTwin2: (stage, options) => {
       const instance = { options, highlights: [], active: [], destroyed: false, resets: 0,
         destroy() { this.destroyed = true; }, setActive(value) { this.active.push(value); },
         highlight(value) { this.highlights.push(value); }, reset() { this.resets++; } };
-      twins2.push(instance); return instance;
+      twins.push(instance); return instance;
     },
     updateAiSummary: () => true,
     renderQueryAnswer: (message, answer, options) => {
@@ -105,12 +99,12 @@ async function setup({ animated = false, reduced = false, agent = 'fake' } = {})
   vm.runInContext(`identity = fixture.principal; snapshot = fixture.snapshot;
     for (const name of SCREENS) createPanel(name);
     globalThis.app = { ask: question => runQuery('dashboard', question), refresh: refreshSnapshot,
-      askTwin: question => runQuery('twin', question), askGraph: question => runQuery('graph', question), panel: () => panels.dashboard,
-      twinPanel: () => panels.twin, graphPanel: () => panels.graph, generation: () => generation,
+      askTwin: question => runQuery('twin2', question), askGraph: question => runQuery('graph', question), panel: () => panels.dashboard,
+      twinPanel: () => panels.twin2, graphPanel: () => panels.graph, generation: () => generation,
       route: name => { location.hash = '#' + name; route(); }, invalidate: invalidateView,
       load: loadSnapshot, setContext, setTwinContext, twinActive: updateTwinActivity,
       poll: pollChanges, panels: () => panels, current: () => snapshot, setLive: value => { liveEnabled = value; } };`, context);
-  return { requests, app: context.app, twins, twins2, answers, bomOpens, bomOpenArguments, document: context.document, window: context.window, location: context.location,
+  return { requests, app: context.app, twins, answers, bomOpens, bomOpenArguments, document: context.document, window: context.window, location: context.location,
     documentEvents, element: get, setHandler(value) { handler = value; },
     snapshot: () => data, setNextSnapshot(value) { data = value; } };
 }
@@ -212,26 +206,13 @@ test('digital twin mounts the same authorized snapshot and preserves separate dr
   const count = h.requests.length;
   twin.options.onAsk('합성 트윈 초안'); twin.options.onSelect('synthetic-twin-context');
   h.app.setContext('synthetic-graph-context');
-  h.app.route('twin'); h.app.route('graph'); h.app.route('twin');
+  h.app.route('twin2'); h.app.route('graph'); h.app.route('twin2');
   assert.equal(h.app.twinPanel().input.value, '합성 트윈 초안');
   assert.equal(h.app.graphPanel().input.value, '합성 그래프 초안');
   assert.equal(h.app.panel().input.value, '합성 에이전트 초안');
   assert.match(h.app.twinPanel().context.textContent, /synthetic-twin-context/);
   assert.match(h.app.graphPanel().context.textContent, /synthetic-graph-context/);
   assert.equal(h.requests.length, count); assert.equal(JSON.stringify(h.snapshot()), original);
-});
-
-test('digital twin 2 mounts the same snapshot, uses the read API and receives the same evidence highlight', async () => {
-  const h = await setup(); await h.app.load();
-  const twin2 = h.twins2.at(-1);
-  assert.equal(twin2.options.snapshot, h.snapshot());
-  h.app.route('twin2'); assert.equal(twin2.active.at(-1), true); assert.equal(h.twins.at(-1).active.at(-1), false);
-  h.app.route('graph'); assert.equal(twin2.active.at(-1), false);
-  h.app.setTwinContext('synthetic-twin-context');
-  h.setHandler(request => { assert.equal(request.path, '/api/mks2/query'); return twinAnswer(h); });
-  await h.app.askTwin('합성 원장 질문');
-  assert.deepEqual(JSON.parse(JSON.stringify(twin2.highlights[0])), JSON.parse(JSON.stringify(h.twins.at(-1).highlights[0])));
-  assert.equal(apiCalls(h).length, 0);
 });
 
 test('digital twin queries the read API and forwards exact answer evidence and identity to highlight', async () => {
@@ -275,15 +256,15 @@ test('session invalidation destroys the twin and clears its visible answer surfa
   const h = await setup(); await h.app.load(); const oldTwin = h.twins.at(-1);
   h.setHandler(() => ({ httpStatus: 409, code: 'IDENTITY_CHANGED' }));
   await h.app.askTwin('합성 권한 질문');
-  assert.equal(oldTwin.destroyed, true); assert.equal(h.element('twin-view').hidden, true);
+  assert.equal(oldTwin.destroyed, true); assert.equal(h.element('twin2-view').hidden, true);
   assert.equal(h.element('twin-panel').textContent, '');
 });
 
 test('digital twin pauses outside its tab, hidden document, or hidden shell frame', async () => {
   const h = await setup(); await h.app.load(); const twin = h.twins.at(-1);
-  h.app.route('twin'); assert.equal(twin.active.at(-1), true);
+  h.app.route('twin2'); assert.equal(twin.active.at(-1), true);
   h.app.route('dashboard'); assert.equal(twin.active.at(-1), false);
-  h.app.route('twin'); h.document.hidden = true; h.documentEvents.visibilitychange();
+  h.app.route('twin2'); h.document.hidden = true; h.documentEvents.visibilitychange();
   assert.equal(twin.active.at(-1), false);
   h.document.hidden = false; h.documentEvents.visibilitychange(); assert.equal(twin.active.at(-1), true);
   h.window.frameElement = { getBoundingClientRect: () => ({ height: 0 }) }; h.app.twinActive();
@@ -300,7 +281,7 @@ test('screen reset clears twin presentation state without requests or ledger cha
 });
 
 test('the current answer BOM action opens source reception without changing tabs or issuing a command', async () => {
-  const h = await setup(); await h.app.load(); h.app.route('twin');
+  const h = await setup(); await h.app.load(); h.app.route('twin2');
   h.setHandler(() => ({ ...twinAnswer(h), calculation: {
     material_requirements: { state: 'BLOCKED_BOM', bom_id: null } } }));
   await h.app.askTwin('합성 미등록 질문');
@@ -308,7 +289,7 @@ test('the current answer BOM action opens source reception without changing tabs
   const count = h.requests.length, before = JSON.stringify(h.snapshot());
   h.answers[0].options.onOpenBom();
   assert.deepEqual(h.bomOpens, [0]); assert.equal(h.requests.length, count);
-  assert.equal(h.location.hash, '#twin'); assert.equal(JSON.stringify(h.snapshot()), before);
+  assert.equal(h.location.hash, '#twin2'); assert.equal(JSON.stringify(h.snapshot()), before);
 });
 
 test('an old answer cannot reopen BOM registration after refresh or identity invalidation', async () => {
@@ -324,7 +305,7 @@ test('an old answer cannot reopen BOM registration after refresh or identity inv
 });
 
 test('graph playback and request completion do not prematurely finish the active text presentation', async () => {
-  const h = await setup(); await h.app.load(); h.app.route('twin');
+  const h = await setup(); await h.app.load(); h.app.route('twin2');
   h.setHandler(() => twinAnswer(h)); await h.app.askTwin('합성 표시 질문');
   const shown = h.answers[0];
   assert.equal(shown.options.animate, true); assert.equal(shown.playCalls, 1);
@@ -349,7 +330,7 @@ test('workflow uses server cards without automatic graph replay and the manual a
 });
 
 test('animated graph hands one replay hook to the renderer while twin and reduced motion never wait for it', async () => {
-  for (const [surface, reduced] of [['graph', false], ['graph', true], ['twin', false]]) {
+  for (const [surface, reduced] of [['graph', false], ['graph', true], ['twin2', false]]) {
     // Graph presentation on the read API, as when the model is off.
     const h = await setup({ animated: true, reduced, agent: 'disabled' }); await h.app.load(); h.app.route(surface);
     h.setHandler(() => twinAnswer(h)); await (surface === 'graph' ? h.app.askGraph('합성 그래프 질문') : h.app.askTwin('합성 트윈 질문'));
@@ -365,7 +346,7 @@ test('animated graph hands one replay hook to the renderer while twin and reduce
 });
 
 test('progress follows the bottom only until the reader scrolls up and releases its own scroll listener', async () => {
-  const h = await setup(); await h.app.load(); h.app.route('twin'); h.setHandler(() => twinAnswer(h));
+  const h = await setup(); await h.app.load(); h.app.route('twin2'); h.setHandler(() => twinAnswer(h));
   const messages = h.app.twinPanel().messages;
   messages.scrollHeight = 1000; messages.clientHeight = 400; messages.scrollTop = 0;
   await h.app.askTwin('합성 스크롤 질문'); const shown = h.answers[0];
@@ -381,7 +362,7 @@ test('progress follows the bottom only until the reader scrolls up and releases 
 });
 
 test('a new question finishes the old answer and late completion cannot release the newer presentation', async () => {
-  const h = await setup(); await h.app.load(); h.app.route('twin'); h.setHandler(() => twinAnswer(h));
+  const h = await setup(); await h.app.load(); h.app.route('twin2'); h.setHandler(() => twinAnswer(h));
   await h.app.askTwin('합성 이전 질문');
   const older = h.answers[0], previousMessage = h.app.twinPanel().messages.children.at(-1), text = previousMessage.textContent;
   await h.app.askTwin('합성 새 질문'); const newer = h.answers[1];
@@ -393,18 +374,18 @@ test('a new question finishes the old answer and late completion cannot release 
 });
 
 test('tab and document visibility settle text without additional queries or changing the original answer', async () => {
-  const h = await setup(); await h.app.load(); h.app.route('twin'); h.setHandler(() => twinAnswer(h));
+  const h = await setup(); await h.app.load(); h.app.route('twin2'); h.setHandler(() => twinAnswer(h));
   await h.app.askTwin('합성 탭 질문'); const before = h.app.twinPanel().messages.textContent;
   let count = h.requests.length; h.app.route('graph');
   assert.equal(h.answers[0].finishCalls, 1); assert.equal(h.app.twinPanel().messages.textContent, before);
   assert.equal(h.requests.length, count);
-  h.app.route('twin'); await h.app.askTwin('합성 숨김 질문'); count = h.requests.length;
+  h.app.route('twin2'); await h.app.askTwin('합성 숨김 질문'); count = h.requests.length;
   h.document.hidden = true; h.documentEvents.visibilitychange();
   assert.equal(h.answers[1].finishCalls, 1); assert.equal(h.requests.length, count);
 });
 
 test('refresh finishes the exact old answer before changing the snapshot and keeps its version guards', async () => {
-  const h = await setup(); await h.app.load(); h.app.route('twin'); h.setHandler(() => twinAnswer(h));
+  const h = await setup(); await h.app.load(); h.app.route('twin2'); h.setHandler(() => twinAnswer(h));
   await h.app.askTwin('합성 과거 질문'); const before = h.app.twinPanel().messages.textContent;
   h.setNextSnapshot(snapshotAt(8)); await h.app.refresh();
   assert.equal(h.answers[0].finishCalls, 1); assert.equal(h.answers[0].disposeCalls, 0);
@@ -414,7 +395,7 @@ test('refresh finishes the exact old answer before changing the snapshot and kee
 });
 
 test('reset and identity invalidation dispose presentations before removing their visible messages', async () => {
-  const h = await setup(); await h.app.load(); h.app.route('twin'); h.setHandler(() => twinAnswer(h));
+  const h = await setup(); await h.app.load(); h.app.route('twin2'); h.setHandler(() => twinAnswer(h));
   await h.app.askTwin('합성 초기화 질문'); let count = h.requests.length;
   h.element('reset').dispatchClick();
   assert.equal(h.answers[0].disposeCalls, 1); assert.equal(h.answers[0].finishCalls, 0);
@@ -426,7 +407,7 @@ test('reset and identity invalidation dispose presentations before removing thei
 });
 
 test('a response arriving on a hidden tab is complete without animation or mixing parallel panel answers', async () => {
-  const h = await setup({ agent: 'disabled' }); await h.app.load(); h.app.route('twin');
+  const h = await setup({ agent: 'disabled' }); await h.app.load(); h.app.route('twin2');
   let replyTwin, replyGraph;
   h.setHandler(request => new Promise(resolve => {
     if (request.body.question === '합성 트윈 요청') replyTwin = resolve; else replyGraph = resolve;
@@ -443,7 +424,7 @@ test('a response arriving on a hidden tab is complete without animation or mixin
 });
 
 test('the BOM entry finishes only its answer presentation and opens the existing drawer without a command', async () => {
-  const h = await setup(); await h.app.load(); h.app.route('twin'); h.setHandler(() => twinAnswer(h));
+  const h = await setup(); await h.app.load(); h.app.route('twin2'); h.setHandler(() => twinAnswer(h));
   await h.app.askTwin('합성 원본 질문'); const count = h.requests.length;
   h.answers[0].options.onOpenBom();
   assert.equal(h.answers[0].finishCalls, 1); assert.equal(h.answers[0].disposeCalls, 0);
@@ -451,7 +432,7 @@ test('the BOM entry finishes only its answer presentation and opens the existing
 });
 
 test('BOM application review opens the exact current document and old or changed references cannot reopen it', async () => {
-  const h = await setup(); h.snapshot().summary.configuration_id = 'synthetic-config'; await h.app.load(); h.app.route('twin');
+  const h = await setup(); h.snapshot().summary.configuration_id = 'synthetic-config'; await h.app.load(); h.app.route('twin2');
   const ref = { document_id: '00000000-0000-4000-8000-000000000123', version: 3, payload_hash: 'b'.repeat(64) };
   const answer = { ...twinAnswer(h), prerequisite: { configuration_id: 'synthetic-config', bom: { ...ref } },
     calculation: { material_requirements: { bom_id: ref.document_id, bom_version: ref.version } } };
@@ -462,7 +443,7 @@ test('BOM application review opens the exact current document and old or changed
   shown.options.onReviewBom(ref);
   assert.deepEqual(JSON.parse(JSON.stringify(h.bomOpenArguments)), [{ step: 4, id: ref.document_id, reference: ref }]);
   assert.equal(shown.finishCalls, 1); assert.equal(shown.disposeCalls, 0);
-  assert.equal(h.requests.length, count); assert.equal(h.location.hash, '#twin');
+  assert.equal(h.requests.length, count); assert.equal(h.location.hash, '#twin2');
   answer.prerequisite.configuration_id = 'another-config'; shown.options.onReviewBom(ref);
   assert.equal(h.bomOpens.length, 1);
   answer.prerequisite.configuration_id = 'synthetic-config';
@@ -659,7 +640,7 @@ test('with a model connected the graph assistant takes the agent path and the tw
   assert.deepEqual(h.requests.filter(r => r.path.startsWith('/api/mks2/')).map(r => r.path).filter(p => /agent|query/.test(p)),
     ['/api/mks2/agent/executions', '/api/mks2/agent/executions/synthetic-execution/run']);
   assert.match(h.app.graphPanel().messages.textContent, /합성 조회 결과/);
-  h.app.route('twin'); await h.app.askTwin('합성 트윈 질문');
+  h.app.route('twin2'); await h.app.askTwin('합성 트윈 질문');
   assert.equal(h.requests.filter(r => r.path === '/api/mks2/query').length, 1);
 });
 
