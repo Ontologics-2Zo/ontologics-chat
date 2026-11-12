@@ -231,9 +231,12 @@ export function buildTwinReplay(snapshot) {
   const steps = [];
   for (const e of events.slice(start)) {
     let zone = 'core', title = '', detail = '', arrived = 0;
+    const delta = {};
+    const add = (key, value) => { if (Number.isFinite(value) && value) delta[key] = (delta[key] || 0) + value; };
     if (e.event_type === 'BomRegistered') { zone = 'line'; title = 'BOM 원본 등록 반영'; detail = '소요 계산 시작'; }
     else if (e.event_type === 'InventoryReserved' || e.reservation) {
       const r = e.reservation || {}; zone = 'mat'; title = `다른 주문 예약 ${r.demand_ref || ''}`.trim();
+      if (r.item_id === snapshot.summary?.item_id) { add('reserved_qty', Number(r.quantity)); add('available_qty', Number(r.available_after) - Number(r.available_before)); }
       detail = `${r.item_id || ''} ${r.quantity ?? ''}개 · 가용 ${r.available_before ?? '?'}→${r.available_after ?? '?'}`.trim();
     } else if (e.document_kind && e.document_ref?.id) {
       const doc = docs.get(e.document_ref.id), c = doc?.content || {};
@@ -245,8 +248,21 @@ export function buildTwinReplay(snapshot) {
         : c.quantity != null ? `${c.quantity}${e.document_kind === 'COHORT' ? '대' : '개'}` : c.confirmed_qty != null ? `${c.confirmed_qty}개` : '';
       if (e.document_kind === 'ARRIVAL') arrived = boards;
       if (e.document_kind === 'COHORT' && c.stage === 'ARRIVAL') arrived = Number(c.quantity) || 0;
+      // Same-snapshot quantity moves, so the zone tags can show each point in time.
+      const moved = e.document_kind === 'COHORT' ? Number(c.quantity) || 0 : boards;
+      const stage = e.document_kind === 'COHORT' ? c.stage : e.document_kind;
+      const focus = snapshot.summary?.item_id, item = c.resolved?.item_id;
+      if (e.document_kind === 'RECEIPT' && item === focus) add('on_hand_qty', Number(c.quantity));
+      if (e.document_kind === 'IQC' && (item === focus || c.resolved?.item_id == null)) add('available_qty', Number(c.passed_qty));
+      if (e.document_kind === 'PRODUCTION') {
+        add('good_qty', moved); add('production_remaining_qty', -moved); add('good_not_received_qty', moved);
+        if (item === focus) { const used = Number(c.resolved?.consumed_qty); add('on_hand_qty', -used); add('available_qty', -used); }
+      }
+      if (stage === 'FG_RECEIPT') { add('fg_received_qty', moved); add('good_not_received_qty', -moved); add('warehouse_remaining_qty', moved); }
+      if (stage === 'SHIPMENT') { add('shipped_qty', moved); add('warehouse_remaining_qty', -moved); add('transit_qty', moved); }
+      if (stage === 'ARRIVAL') { add('arrived_qty', moved); add('transit_qty', -moved); add('promise_remaining_qty', -moved); }
     } else continue;
-    steps.push({ version: e.ledger_version, at: e.recorded_at, zone, title, detail, arrived });
+    steps.push({ version: e.ledger_version, at: e.recorded_at, zone, title, detail, arrived, delta });
   }
   if (!steps.length) return null;
   const summary = snapshot.summary || {}, promise = Number(summary.promise_qty ?? summary.promised_qty);
@@ -254,6 +270,13 @@ export function buildTwinReplay(snapshot) {
   let arrived = Number(summary.arrived_qty) - total;
   for (const step of steps) { arrived += step.arrived; step.arrivedTotal = Number.isFinite(arrived) ? arrived : null;
     step.remaining = Number.isFinite(arrived) && Number.isFinite(promise) ? promise - arrived : null; }
+  // Zone values at each step: current summary minus the moves still ahead.
+  const keys = [...new Set(steps.flatMap(step => Object.keys(step.delta)))];
+  const ahead = Object.fromEntries(keys.map(key => [key, steps.reduce((sum, step) => sum + (step.delta[key] || 0), 0)]));
+  for (const step of steps) {
+    for (const key of keys) ahead[key] -= step.delta[key] || 0;
+    step.state = Object.fromEntries(keys.filter(key => Number.isFinite(Number(summary[key]))).map(key => [key, Number(summary[key]) - ahead[key]]));
+  }
   return { steps, startArrived: Number(summary.arrived_qty) - total, promise: Number.isFinite(promise) ? promise : null };
 }
 
@@ -669,22 +692,26 @@ export function mountTwin(container, { snapshot, ontology, labelFor = id => id, 
     tag.value.textContent = value; tag.sub.textContent = text; tag.pill.textContent = pill; tag.pill.className = `pill ${tone}`;
     tag.bar.hidden = pct === null; if (pct !== null) tag.fill.style.width = `${Math.max(0, Math.min(1, pct)) * 100}%`;
   };
-  if (renderer) {
+  function paintTags(summary, replaying = false) {
+    if (!renderer) return;
     const quotes = snapshot.quotations, subs = snapshot.substitutes;
     setTag('sup', { value: `기초 견적 ${fmt(arrayCount(quotes))}건`, sub: `대체 후보 ${fmt(arrayCount(subs))}건`, pill: '조회', tone: 'info' });
     const materialState = twinMaterialSummary(requirements);
     setTag('mat', { value: `가용 ${fmt(summary.available_qty)}`, sub: `보유 ${fmt(summary.on_hand_qty)} · 예약 ${fmt(summary.reserved_qty)}`,
-      pill: materialState.text, tone: materialState.k });
+      pill: replaying ? '재생 시점' : materialState.text, tone: replaying ? 'mute' : materialState.k });
     const made = isNum(summary.good_qty) && isNum(summary.production_remaining_qty) && summary.good_qty + summary.production_remaining_qty > 0 ? summary.good_qty / (summary.good_qty + summary.production_remaining_qty) : null;
-    setTag('line', { value: `남은 생산 ${fmt(summary.production_remaining_qty)}`, sub: `양품 ${fmt(summary.good_qty)} · 불량 ${fmt(summary.defect_qty)} · 판정대기 ${fmt(summary.pending_judgement_qty)}`,
+    // Defect and pending-judgement counts are not replayed, so replay shows good boards only.
+    if (replaying) setTag('line', { value: `남은 생산 ${fmt(summary.production_remaining_qty)}`, sub: `양품 ${fmt(summary.good_qty)}`, pill: '재생 시점', pct: made });
+    else setTag('line', { value: `남은 생산 ${fmt(summary.production_remaining_qty)}`, sub: `양품 ${fmt(summary.good_qty)} · 불량 ${fmt(summary.defect_qty)} · 판정대기 ${fmt(summary.pending_judgement_qty)}`,
       pill: summary.pending_judgement_qty > 0 ? '판정대기' : '원장 기준', tone: summary.pending_judgement_qty > 0 ? 'warn' : 'mute', pct: made });
-    setTag('fg', { value: `입고 대기 ${fmt(summary.good_not_received_qty)}`, sub: `완성품 입고 ${fmt(summary.fg_received_qty)} · 창고 ${fmt(summary.warehouse_remaining_qty)}`, pill: '원장 기준' });
-    setTag('ship', { value: `운송 중 ${fmt(summary.transit_qty)}`, sub: `출하 ${fmt(summary.shipped_qty)} · 도착 ${fmt(summary.arrived_qty)}`, pill: '원장 기준',
+    setTag('fg', { value: `입고 대기 ${fmt(summary.good_not_received_qty)}`, sub: `완성품 입고 ${fmt(summary.fg_received_qty)} · 창고 ${fmt(summary.warehouse_remaining_qty)}`, pill: replaying ? '재생 시점' : '원장 기준' });
+    setTag('ship', { value: `운송 중 ${fmt(summary.transit_qty)}`, sub: `출하 ${fmt(summary.shipped_qty)} · 도착 ${fmt(summary.arrived_qty)}`, pill: replaying ? '재생 시점' : '원장 기준',
       pct: isNum(summary.shipped_qty) && isNum(summary.promise_qty) && summary.promise_qty ? summary.shipped_qty / summary.promise_qty : null });
     setTag('cust', { value: `${fmt(summary.arrived_qty)} / ${fmt(summary.promise_qty)}`, sub: `남은 약속 ${fmt(summary.promise_remaining_qty)} · 도착기한 ${summary.arrival_due_date ?? '미확인'}`,
       pill: twinPromiseStatus(summary.promise_remaining_qty).text, tone: twinPromiseStatus(summary.promise_remaining_qty).tone,
       pct: isNum(summary.arrived_qty) && summary.promise_qty ? summary.arrived_qty / summary.promise_qty : null });
   }
+  paintTags(summary);
 
   /* ---------- 공정 색 · 질의 근거 공정의 현재 원장 값 ---------- */
   function paintProcess() {
@@ -910,10 +937,12 @@ export function mountTwin(container, { snapshot, ontology, labelFor = id => id, 
     replayBar.append(top, card); view.append(replayBar);
     const restore = () => {
       for (const f of FACILITIES) { const tag = facilityTags[f.key]; tag?.anchor.classList.remove('replay', 'mute'); if (facilityPads[f.key]) facilityPads[f.key].pad.opacity = 0.13; }
+      paintTags(summary);
       if (rp.tokenMesh) rp.tokenMesh.visible = false; rp.token = null; dirty = true;
     };
     const show = i => {
       const step = replay.steps[i], prev = replay.steps[i - 1]; rp.i = i; slider.value = String(i);
+      paintTags({ ...summary, ...step.state }, true);
       for (const f of FACILITIES) {
         const on = f.key === step.zone, tag = facilityTags[f.key];
         tag?.anchor.classList.toggle('replay', on); tag?.anchor.classList.toggle('mute', !on);
