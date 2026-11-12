@@ -142,3 +142,19 @@
 .twin2-change.unknown { color:var(--warn); }
 @keyframes twin2-change-fade { 0%,85% { opacity:1; } 100% { opacity:0; } }
 @media (prefers-reduced-motion:reduce) { .twin2-change { animation:none; } }
+
+/* Ledger history replay (DEC-H66): presentation only */
+.twin2-replay { position:absolute; top:52px; left:262px; right:324px; max-width:640px; z-index:3; display:flex; flex-direction:column; gap:6px;
+  padding:8px 10px; background:var(--surface); border:1px solid var(--line); border-radius:10px; font-size:12px; box-shadow:0 6px 18px #0f172a1f; }
+.twin2-replay .row { display:flex; align-items:center; gap:6px; }
+.twin2-replay input[type=range] { flex:1; min-width:80px; accent-color:var(--accent); }
+.twin2-replay .cnt { color:var(--fg3); font-size:11px; white-space:nowrap; }
+.twin2-replay-speed { font-size:11.5px; }
+.twin2-replay .card { display:flex; flex-direction:column; gap:2px; padding:6px 8px; border-radius:8px; background:var(--accent-soft); }
+.twin2-replay .card b { font-family:var(--mono); font-size:12.5px; color:var(--fg); }
+.twin2-replay .card .z { color:var(--fg2); }
+.twin2-replay .card .m { font-family:var(--mono); font-weight:700; color:var(--accent); }
+.twin2-replay .card small { color:var(--fg3); font-size:10.5px; }
+.twin2-anc.replay .twin2-tag { box-shadow:0 0 0 3px color-mix(in srgb,var(--pc) 70%,transparent),0 8px 22px #0f172a29; transform:scale(1.06); }
+@media (max-width:1280px) { .twin2-replay { left:262px; right:12px; } }
+@media (max-width:980px) { .twin2-replay { position:static; order:2; max-width:none; } }
