@@ -153,3 +153,9 @@ test('without WebGL the supplied panel still shows current unknown data and lite
     view.destroy(); assert.equal(container.children.length, 0);
   } finally { for (const key of keys) { if (previous[key] === undefined) delete globalThis[key]; else globalThis[key] = previous[key]; } }
 });
+
+test('node name labels start hidden when the ledger graph is large', async () => {
+  const { namesShownByDefault, NAMES_AUTO_LIMIT } = await import('../web/mks2/twin2.js');
+  assert.equal(namesShownByDefault(NAMES_AUTO_LIMIT), true);
+  assert.equal(namesShownByDefault(NAMES_AUTO_LIMIT + 1), false);
+});

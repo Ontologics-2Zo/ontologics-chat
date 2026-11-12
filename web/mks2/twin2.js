@@ -113,6 +113,10 @@ const FLOWS = [['sup', 'mat'], ['mat', 'line'], ['line', 'fg'], ['fg', 'ship'], 
 const SHAPE_OF = { design: 'std', doc: 'doc', party: 'party', phys: 'real', event: 'evt' };
 const SHAPE_NAME = { std: '설계·기준', doc: '문서', party: '주체', real: '실물(LOT)', evt: '사건', agg: '축약 묶음' };
 const AGG_LIMIT = 6;
+// With many ledger nodes the node name labels cover the scene, so they start
+// hidden; selected and answer-evidence nodes keep their label (CSS .on).
+export const NAMES_AUTO_LIMIT = 40;
+export const namesShownByDefault = shownCount => shownCount <= NAMES_AUTO_LIMIT;
 const edgeSource = edge => edge.source_node_id || edge.source;
 const edgeTarget = edge => edge.target_node_id || edge.target;
 const edgeId = edge => edge.edge_id || edge.id;
@@ -229,6 +233,7 @@ export function mountTwin(container, { snapshot, ontology, labelFor = id => id, 
   /* ---------- 원장 그래프 → 표시 노드 (축약 포함) ---------- */
   const prepared = prepareTwinGraph(ledgerNodes, ledgerEdges);
   const { shown, displayOf, shownEdges } = prepared;
+  const namesOn = namesShownByDefault(shown.filter(n => !n.aggregate).length);
   const shownById = Object.fromEntries(shown.map(n => [n.id, n]));
 
   /* ---------- 원장 값으로 정하는 노드 상태 ---------- */
@@ -268,7 +273,7 @@ export function mountTwin(container, { snapshot, ontology, labelFor = id => id, 
   if (renderer) {
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     view.append(renderer.domElement);
-    labels = new CSS2DRenderer(); labels.domElement.className = 'twin2-labels'; view.append(labels.domElement);
+    labels = new CSS2DRenderer(); labels.domElement.className = namesOn ? 'twin2-labels' : 'twin2-labels hide-names'; view.append(labels.domElement);
     scene = new THREE.Scene();
     camera = new THREE.PerspectiveCamera(40, 1, 0.5, 700);
     controls = new OrbitControls(camera, renderer.domElement);
@@ -504,7 +509,7 @@ export function mountTwin(container, { snapshot, ontology, labelFor = id => id, 
     toggleButton('현장', true, v => { layers?.site.forEach(o => { o.visible = v; }); dirty = true; }),
     toggleButton('원장 그래프', true, v => { layers?.onto.forEach(o => { o.visible = v; }); dirty = true; }),
     toggleButton('관계선', true, v => { layers?.edge.forEach(o => { o.visible = v; }); dirty = true; }),
-    toggleButton('이름표', true, v => { labels?.domElement.classList.toggle('hide-names', !v); dirty = true; }));
+    toggleButton('이름표', namesOn, v => { labels?.domElement.classList.toggle('hide-names', !v); dirty = true; }));
   const rowView = element('div', 'twin2-row');
   const viewButton = (text, fn) => { const b = element('button', 'btn sm', text); b.type = 'button'; b.addEventListener('click', fn); return b; };
   rowView.append(viewButton('전체 보기', () => fly(HOME.pos, HOME.target)), viewButton('위에서', () => fly(new THREE.Vector3(0.1, 175, 18), new THREE.Vector3(-4, 0, 2))));
@@ -512,6 +517,7 @@ export function mountTwin(container, { snapshot, ontology, labelFor = id => id, 
   const line = (label, value) => { const p = element('span'); p.append(document.createTextNode(label + ' '), element('b', '', value)); return p; };
   scope.append(line('원장', `v${meta.ledger_version ?? '?'}`), line('그래프', `v${meta.projection_version ?? '?'}`),
     line('표시 노드', `${shownLedger} / ${ledgerNodes.length}`), line('묶음으로 축약', `${aggregated}개`),
+    line('노드 이름표', namesOn ? '모두 표시' : '노드가 많아 숨김 · 선택·질의 근거만 표시'),
     line('전체 T-Box', `클래스 ${fmt(classes)} · 관계 ${fmt(relations)} · shape ${fmt(shapes)}`));
   const hlBox = element('div', 'twin2-hl'); hlBox.hidden = true;
   const procLegend = element('div', 'twin2-proc');
