@@ -10,7 +10,7 @@
 .twin2-legend,.twin2-tools,.twin2-side,.twin2-detail { z-index:2; }
 .twin2-view canvas { display:block; }
 .twin2-labels { position:absolute; inset:0; pointer-events:none; }
-.twin2-labels.hide-names .twin2-nl { display:none; }
+.twin2-labels.hide-names .twin2-nl:not(.on) { display:none; }
 .twin2-fallback { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; padding:24px; text-align:center; color:var(--fg2); font-size:13px; }
 
 .twin2-legend { position:absolute; left:14px; top:12px; display:flex; flex-wrap:wrap; gap:4px 10px; align-items:center; max-width:calc(100% - 360px);
