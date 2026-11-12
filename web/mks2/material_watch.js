@@ -27,7 +27,9 @@ function changeKind(before, after) {
 /** Per-item alert state for this snapshot, with a recent change when one is fresh. */
 export function materialAlerts(snapshot, now = Date.now(), { basis = 'planned' } = {}) {
   const meta = snapshot?.meta || {}, requirements = snapshot?.material_requirements || {};
-  const scope = `${meta.company_id}|${meta.identity_revision}`, version = Number(meta.ledger_version);
+  // Company ledger scope: switching between the demo accounts (author/reviewer)
+  // reads the same ledger, so the comparison must survive the switch.
+  const scope = String(meta.company_id), version = Number(meta.ledger_version);
   const items = Array.isArray(requirements.items) ? requirements.items : [];
   const blocked = requirements.state === 'BLOCKED_BOM';
   if (!current || current.scope !== scope || current.version !== version) {

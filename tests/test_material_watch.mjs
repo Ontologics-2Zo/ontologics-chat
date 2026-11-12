@@ -40,3 +40,14 @@ test('the change follows the chosen basis (planned input or production target)',
   assert.equal(changeText(materialAlerts(item(28, 25), 1)[0].change), '부족 23 → 28 ↑');
   assert.equal(changeText(materialAlerts(item(28, 25), 1, { basis: 'base' })[0].change), '부족 20 → 25 ↑');
 });
+
+test('switching account in the same company keeps the comparison', () => {
+  resetMaterialWatch();
+  const at = (version, revision, shortage) => ({ meta: { company_id: 'c', identity_revision: revision, ledger_version: version },
+    material_requirements: { state: 'PARTIAL', items: [{ item_id: 'IM-0016', planned_shortage_qty: String(shortage) }] } });
+  materialAlerts(at(11, 'author-1', 28), 0);
+  assert.equal(changeText(materialAlerts(at(12, 'reviewer-7', 0), 1)[0].change), '부족 28 → 0 · 해소 ✓');
+  resetMaterialWatch();
+  materialAlerts({ ...at(11, 'a', 28), meta: { company_id: 'other', ledger_version: 11 } }, 0);
+  assert.equal(materialAlerts(at(12, 'a', 0), 1)[0].change, null);  // another company never compares
+});
