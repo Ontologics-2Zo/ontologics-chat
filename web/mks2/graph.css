@@ -124,3 +124,25 @@
 .mks-area-chip.mks-area-pro { --c: #d97706; } .mks-area-chip.mks-area-ev { --c: #94a3b8; }
 .mks-node.mks-area-plan { --area: var(--area-plan); }
 .mks-area-chip.mks-area-plan { --c: #0d9488; }
+
+/* 논리 검사 (SHACL + OWL RL) */
+.mks-reasoning { position:absolute; left:14px; bottom:76px; z-index:3; max-width:min(440px, calc(100% - 28px)); border:1px solid var(--line, #d7dee8); border-radius:8px;
+  background:var(--surface, #fff); color:var(--fg, #0f172a); font-size:12px; box-shadow:0 2px 8px rgba(15,23,42,.08); }
+.mks-reasoning summary { display:flex; align-items:center; gap:8px; padding:5px 9px; cursor:pointer; list-style:none; }
+.mks-reasoning summary::-webkit-details-marker { display:none; }
+.mks-reasoning summary::after { content:'▸'; margin-left:auto; color:var(--fg3, #64748b); }
+.mks-reasoning[open] summary::after { content:'▾'; }
+.mks-reasoning-pill { padding:1px 7px; border-radius:99px; font-size:11px; font-weight:700; border:1px solid currentColor; }
+.mks-reasoning-pill.ok, .mks-reasoning b.ok { color:var(--ok, #15803d); }
+.mks-reasoning-pill.warn, .mks-reasoning b.warn { color:var(--warn, #b45309); }
+.mks-reasoning-pill.bad, .mks-reasoning b.bad { color:var(--bad, #b91c1c); }
+.mks-reasoning-pill.mute { color:var(--fg3, #64748b); }
+.mks-reasoning-body { padding:2px 10px 8px; max-height:300px; overflow:auto; border-top:1px solid var(--line2, #e7ecf2); }
+.mks-reasoning .row { display:flex; justify-content:space-between; gap:12px; margin:4px 0; color:var(--fg2, #475569); }
+.mks-reasoning ul { margin:6px 0; padding:0; list-style:none; display:flex; flex-direction:column; gap:4px; }
+.mks-reasoning li { display:flex; flex-direction:column; gap:1px; padding:4px 6px; border-radius:6px; background:var(--raised, #f8fafc); }
+.mks-reasoning li button { align-self:flex-start; border:0; background:none; padding:0; font:inherit; font-family:var(--mono, monospace); font-weight:700; cursor:pointer; text-decoration:underline dotted; }
+.mks-reasoning li button.warn { color:var(--warn, #b45309); }
+.mks-reasoning li button.bad { color:var(--bad, #b91c1c); }
+.mks-reasoning li span { color:var(--fg3, #64748b); font-size:11px; }
+.mks-reasoning small { display:block; margin-top:6px; color:var(--fg3, #64748b); font-size:10.5px; }

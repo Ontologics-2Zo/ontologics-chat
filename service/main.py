@@ -355,6 +355,25 @@ def create_app(db, *, private_root: str, origin="http://127.0.0.1:8870", dev_mod
         actor=principal(request);identity.authorize(actor,actor.company_id,"ontology.read")
         return {**ontology,"meta":{**ontology["meta"],"identity_revision":actor.identity_revision,"company_id":actor.company_id}}
 
+    reasoning_cache={}
+    @app.get("/api/mks2/reasoning")
+    def get_reasoning(request:Request):
+        """OWL RL check of the current snapshot. Read-only: never re-projects or writes."""
+        actor=principal(request);payload=ledger.read(actor)
+        meta=payload["metadata"];version=meta["server_ledger_version"];stored=(payload.get("projection") or {}).get("reasoning")
+        base={"ledger_version":version,"ontology_version":(payload.get("projection") or {}).get("ontology_version"),
+              "identity_revision":actor.identity_revision,"company_id":actor.company_id}
+        if isinstance(stored,dict):
+            return {**stored,**base,"source":"projection"}
+        if projector is None:
+            return {"state":"NOT_RUN","code":"PROJECTOR_NOT_CONFIGURED",**base}
+        key=(actor.company_id,meta.get("run_id") or "INITIAL",version)
+        if key not in reasoning_cache:
+            if len(reasoning_cache)>=8:reasoning_cache.pop(next(iter(reasoning_cache)))
+            try:reasoning_cache[key]=projector.reason(payload,version,actor.company_id,key[1])
+            except Exception:reasoning_cache[key]={"state":"ERROR","code":"REASONING_FAILED","blocks_ready":False}
+        return {**reasoning_cache[key],**base,"source":"on_demand"}
+
     @app.post("/api/mks2/query")
     def query(request:Request,body:Query):
         actor=principal(request,write=True);payload=ledger.read(actor);ctx=context(actor,payload)

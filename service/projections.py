@@ -18,6 +18,7 @@ from pyshacl import validate
 from rdflib import Graph, Literal, Namespace, OWL, RDF, RDFS, SH, URIRef, XSD
 
 from service.ontology import OntologyCatalog
+from service.reasoning import reasoning_report
 
 
 PROJECTION = Namespace("urn:ontologics:projection:")
@@ -123,6 +124,27 @@ class OntologyProjector:
         return Literal(value, datatype=datatype, normalize=False) if valid else Literal(value)
 
     def project(self, payload: dict, version: int, company_id: str, run_id: str) -> dict[str, Any]:
+        graph, entity_uris, nodes, edges, unsupported, scope, snapshot_key, payload_hash = self._build(payload, version, company_id, run_id)
+        report = self._validate(graph, entity_uris, unsupported)
+        # OWL RL check next to SHACL; reported only, it does not change READY.
+        reasoning = reasoning_report(self.tbox, graph, entity_uris, self.classes, self.predicates)
+        neo = self._project_neo4j(snapshot_key, scope, payload_hash, nodes, edges, report)
+        ready = report["state"] == "CONFORMS" and neo["state"] == "READY"
+        return {"state": "READY" if ready else "NOT_READY", **scope, "projection_version": version,
+                "snapshot_key": snapshot_key, "payload_sha256": payload_hash,
+                # N-Triples is a Turtle subset. Sorted explicit IRIs make the
+                # serialized snapshot stable across process restarts, unlike
+                # auto-assigned Turtle prefixes and hash iteration order.
+                "rdf_turtle": "\n".join(sorted(graph.serialize(format="nt").splitlines())) + "\n",
+                "graph": {"nodes": nodes, "edges": edges, "complete": True, "node_count": len(nodes), "edge_count": len(edges)},
+                "validation": report, "reasoning": reasoning, "neo4j": neo}
+
+    def reason(self, payload: dict, version: int, company_id: str, run_id: str) -> dict[str, Any]:
+        """OWL RL check for a stored snapshot without re-projecting or writing it."""
+        graph, entity_uris, *_ = self._build(payload, version, company_id, run_id)
+        return reasoning_report(self.tbox, graph, entity_uris, self.classes, self.predicates)
+
+    def _build(self, payload: dict, version: int, company_id: str, run_id: str):
         if isinstance(version, bool) or not isinstance(version, int) or version < 1 or not company_id or not run_id:
             raise ProjectionError("INVALID_PROJECTION_SCOPE")
         metadata = payload.get("metadata", {})
@@ -190,17 +212,7 @@ class OntologyProjector:
                 graph.add((statement, RDF.predicate, predicate))
             graph.add((statement, PROJECTION.evidence, Literal(_json(relationship.get("evidence", {})), datatype=RDF.JSON)))
             edges.append({**deepcopy(relationship), "ontology_predicate": str(predicate) if predicate else None})
-        report = self._validate(graph, entity_uris, unsupported)
-        neo = self._project_neo4j(snapshot_key, scope, payload_hash, nodes, edges, report)
-        ready = report["state"] == "CONFORMS" and neo["state"] == "READY"
-        return {"state": "READY" if ready else "NOT_READY", **scope, "projection_version": version,
-                "snapshot_key": snapshot_key, "payload_sha256": payload_hash,
-                # N-Triples is a Turtle subset. Sorted explicit IRIs make the
-                # serialized snapshot stable across process restarts, unlike
-                # auto-assigned Turtle prefixes and hash iteration order.
-                "rdf_turtle": "\n".join(sorted(graph.serialize(format="nt").splitlines())) + "\n",
-                "graph": {"nodes": nodes, "edges": edges, "complete": True, "node_count": len(nodes), "edge_count": len(edges)},
-                "validation": report, "neo4j": neo}
+        return graph, entity_uris, nodes, edges, unsupported, scope, snapshot_key, payload_hash
 
     def _validate(self, graph: Graph, entity_uris: dict, unsupported: list) -> dict:
         if not self.schema["imports_resolved"]:

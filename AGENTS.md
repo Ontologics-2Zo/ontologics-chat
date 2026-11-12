@@ -144,3 +144,7 @@ E2E 시연에서 사람은 승인·확정만 한다. 작성자 계정 화면에�
 ## 디지털 트윈 탭 하나로 · DEC-H65
 
 기존 `#twin` 탭과 `twin.*`는 사용자 요청으로 제거했다. 디지털 트윈은 `#twin2`(탭 이름 "디지털 트윈") 하나다.
+
+## OWL RL 추론 검사 · DEC-H67
+
+SHACL+RDFS 옆에 OWL 2 RL 검사(`service/reasoning.py`)를 둔다. 모순(disjoint)·유형 불일치(추론 클래스를 선언 유형이 함의하지 않음)·추론 관계를 보고하며, 결과는 프로젝트 그래프의 "논리 검사"에 표시만 한다. 그래프 READY·수량·답변·승인에 쓰지 않고 T-Box를 바꾸지 않는다. 재측정은 `dev/measure_reasoning.py`(집계만 출력). [기록](docs/handoff/SERVICE-OWL-REASONING-20261112.md)

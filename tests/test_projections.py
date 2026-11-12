@@ -60,6 +60,10 @@ class ProjectionTests(unittest.TestCase):
         rdf = Graph().parse(data=result["rdf_turtle"], format="turtle")
         self.assertEqual(len(list(rdf.triples((None, URIRef("urn:test:lotOf"), None)))), 1)
         self.assertEqual(self.catalog.export()["counts"]["classes"], 3)  # Future vocabulary is retained.
+        # OWL RL check is reported next to SHACL and never decides READY.
+        self.assertEqual(result["reasoning"]["state"], "CONSISTENT")
+        self.assertFalse(result["reasoning"]["blocks_ready"])
+        self.assertEqual(self.projector.reason(self.payload, 1, "test-company", "test-run")["state"], "CONSISTENT")
 
     def test_missing_required_fact_is_not_invented(self):
         payload = deepcopy(self.payload)

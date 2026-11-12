@@ -3,6 +3,7 @@ import { mountGraph } from './graph.js';
 import { mountLaneGraph } from './lanegraph.js';
 import { renderQueryAnswer, updateAiSummary } from './query.js';
 import { mountTwin as mountTwin2 } from './twin2.js';
+import { mountReasoningPanel } from './reasoning_panel.js';
 
 // UI state is ephemeral. Identity, quantities, versions and answers come from the server.
 const $ = id => document.getElementById(id);
@@ -23,6 +24,7 @@ const handledEvents = new Set();
 let contextId, twinContextId, noticeTimer, generation = 0, replayGeneration = 0, schemaMode = false;
 let requests = new AbortController();
 let polling = false, latestVersion = null;
+let reasoning = null;   // { key, report } for the current company and ledger version
 let agentMode = 'disabled';
 const refreshButton = button('최신 원장 조회', refreshSnapshot);
 refreshButton.id = 'refresh-ledger'; refreshButton.hidden = true;
@@ -663,6 +665,21 @@ function mountCurrentGraph() {
   const switcher = button(schemaMode ? '업무 원장 보기' : '전체 온톨로지', () => { schemaMode = !schemaMode; mountCurrentGraph(); }, 'mks-graph-button');
   switcher.dataset.action = 'schema'; switcher.setAttribute('aria-pressed', String(schemaMode));
   controls.prepend(switcher);
+  if (!schemaMode) showReasoning(graph);
+}
+// 논리 검사 (SHACL + OWL RL) for the shown ledger version; read-only, fetched once per version.
+async function showReasoning(target) {
+  const meta = snapshot?.meta || {}, key = `${meta.company_id}|${meta.ledger_version}`;
+  let report = reasoning?.key === key ? reasoning.report : null;
+  if (!report) {
+    try { report = await api('/api/mks2/reasoning'); } catch (error) { if (error.name === 'AbortError') return; report = { state: 'ERROR' }; }
+    if (report.ledger_version != null && report.ledger_version !== meta.ledger_version) return;
+    reasoning = { key, report };
+  }
+  if (target !== graph || schemaMode) return;
+  const canvas = $('network-stage').firstElementChild;
+  if (!canvas || canvas.querySelector('.mks-reasoning')) return;
+  mountReasoningPanel(canvas, report, { shaclState: meta.projection_state, labelFor, onFocus: id => graph?.focus(id) });
 }
 function invalidateView() {
   for (const panel of Object.values(panels)) { settleAnswer(panel, true); clearAgentWaiting(panel); }
