@@ -48,6 +48,7 @@ STATIC_FILES = {
     "/mks2/twin.css": ("mks2/twin.css", "text/css; charset=utf-8"),
     "/mks2/twin2.js": ("mks2/twin2.js", "text/javascript; charset=utf-8"),
     "/mks2/twin2.css": ("mks2/twin2.css", "text/css; charset=utf-8"),
+    "/mks2/material_watch.js": ("mks2/material_watch.js", "text/javascript; charset=utf-8"),
     "/mks2/vendor/three/three.module.min.js": ("mks2/vendor/three/three.module.min.js", "text/javascript; charset=utf-8"),
     "/mks2/vendor/three/OrbitControls.js": ("mks2/vendor/three/OrbitControls.js", "text/javascript; charset=utf-8"),
     "/mks2/vendor/three/CSS2DRenderer.js": ("mks2/vendor/three/CSS2DRenderer.js", "text/javascript; charset=utf-8"),

@@ -7,6 +7,7 @@
 import * as THREE from './vendor/three/three.module.min.js';
 import { OrbitControls } from './vendor/three/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from './vendor/three/CSS2DRenderer.js';
+import { materialAlerts, changeText } from './material_watch.js';
 
 const element = (tag, className = '', text) => {
   const node = document.createElement(tag);
@@ -238,6 +239,9 @@ export function mountTwin(container, { snapshot, ontology, labelFor = id => id, 
 
   /* ---------- 원장 값으로 정하는 노드 상태 ---------- */
   const reqItems = requirements.items || [];
+  // Shortage alerts and recent changes (same snapshot; see material_watch.js).
+  const alerts = materialAlerts(snapshot), alertRings = [];
+  const alertFor = n => alerts.find(a => a.item_entity_id === n.id || a.item_id === n.label) || null;
   function statusOf(n) {
     if (n.aggregate) return null;
     if (n.type === 'InternalItem') {
@@ -425,6 +429,25 @@ export function mountTwin(container, { snapshot, ontology, labelFor = id => id, 
       nodes3d[n.id] = { n, mesh, fill, hull, dash, label, em, status: statusOf(n), on: false, dim: false };
       const st = nodes3d[n.id].status;
       if (st) { em.textContent = st.text; em.className = st.k === 'bad' ? 'bad' : st.k === 'ok' ? 'ok' : ''; }
+      // Items that need sourcing stand out: a pulsing ring, a pillar and a label that stays
+      // visible when node names are hidden. A fresh change shows before → after.
+      const alert = n.type === 'InternalItem' ? alertFor(n) : null;
+      if (alert && (alert.state === 'short' || alert.change)) {
+        const key = alert.state === 'short' ? 'bad' : 'ok', pos = nodePos[n.id];
+        const ring = new THREE.Mesh(new THREE.RingGeometry(2.1, 2.6, 48), tm(new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false }), key));
+        ring.rotation.x = -Math.PI / 2; ring.position.copy(pos); ring.position.y -= 1.25; ontoGroup.add(ring); alertRings.push(ring);
+        if (alert.state === 'short') {
+          const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 6, 12), tm(new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.85 }), 'bad'));
+          pillar.position.copy(pos); pillar.position.y += 4.3; ontoGroup.add(pillar);
+        }
+        const tag = element('div', `twin2-alert ${alert.state === 'short' ? 'short' : 'ok'}`);
+        tag.append(element('b', '', alert.state === 'short' ? `${alert.item_id} 부족 ${fmt(alert.shortage)}` : `${alert.item_id} 부족 없음`));
+        if (alert.change) {
+          const chip = element('span', `twin2-change ${alert.change.kind}`, changeText(alert.change));
+          chip.style.animationDuration = `${Math.max(1, Math.round(alert.change.remainingMs / 1000))}s`; tag.append(chip);
+        }
+        const label = new CSS2DObject(tag); label.position.copy(pos); label.position.y += alert.state === 'short' ? 8.4 : 3.2; ontoGroup.add(label);
+      }
     }
     for (const e of shownEdges) {
       // Internal/own relations remain in the detail evidence, without adding
@@ -518,6 +541,7 @@ export function mountTwin(container, { snapshot, ontology, labelFor = id => id, 
   scope.append(line('원장', `v${meta.ledger_version ?? '?'}`), line('그래프', `v${meta.projection_version ?? '?'}`),
     line('표시 노드', `${shownLedger} / ${ledgerNodes.length}`), line('묶음으로 축약', `${aggregated}개`),
     line('노드 이름표', namesOn ? '모두 표시' : '노드가 많아 숨김 · 선택·질의 근거만 표시'),
+    line('자재 부족', `${alerts.filter(a => a.state === 'short').length}품목 (계획 투입 기준)`),
     line('전체 T-Box', `클래스 ${fmt(classes)} · 관계 ${fmt(relations)} · shape ${fmt(shapes)}`));
   const hlBox = element('div', 'twin2-hl'); hlBox.hidden = true;
   const procLegend = element('div', 'twin2-proc');
@@ -827,6 +851,7 @@ export function mountTwin(container, { snapshot, ontology, labelFor = id => id, 
     if (!renderer || !active || document.hidden || !view.clientWidth) return;
     if (!reduce) {
       flowDots.forEach(o => { o.t = (o.t + dt * 0.1) % 1; o.d.position.copy(o.curve.getPoint(o.t)); });
+      if (alertRings.length) { const k = 1 + 0.2 * (Math.sin(now / 280) + 1) / 2; alertRings.forEach(r => r.scale.setScalar(k)); }
       pulses.forEach(p => { if (!p.edge) return; p.t = (p.t + dt * 0.45) % 1; p.d.position.copy(p.edge.curve.getPoint(p.t)); });
       if (truckRig.truck) {
         // 오고 갈 때 모두 앞으로 달리도록 움직이는 방향을 바라보고, 양 끝에서 부드럽게 돈다.
