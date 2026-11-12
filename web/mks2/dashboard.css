@@ -385,3 +385,14 @@
 .mk-flow-steps li.done span{color:var(--ok,#047857)}
 .mk-flow-steps li.next{border-color:var(--accent,#4f46e5);background:var(--accent-soft,#eef0fe)}
 .mk-flow-steps li.next span{color:var(--accent,#4f46e5)}
+
+/* Material shortage alerts and recent changes (material_watch.js) */
+.mk-material-row.mk-material-alert{background:var(--bad-soft,#fce8ec);box-shadow:inset 3px 0 0 var(--bad,#be123c);border-radius:6px;padding:3px 4px}
+.mk-material-row.mk-material-alert .mk-material-label button,.mk-material-row.mk-material-alert .mk-material-label{color:var(--bad,#be123c)}
+.mk-change{display:inline-block;margin-top:3px;font:700 10.5px var(--mk-font);padding:1px 6px;border-radius:99px;border:1px solid currentColor;white-space:nowrap;animation:mk-change-fade 20s forwards}
+.mk-change.worse,.mk-change.new{color:var(--bad,#be123c);background:var(--bad-soft,#fce8ec)}
+.mk-change.better,.mk-change.resolved{color:var(--ok,#047857);background:var(--ok-soft,#e3f5ec)}
+.mk-change.unknown{color:var(--warn,#b45309);background:var(--warn-soft,#fef3df)}
+.mk-kpi .mk-change{align-self:flex-start}
+@keyframes mk-change-fade{0%,85%{opacity:1}100%{opacity:0}}
+@media(prefers-reduced-motion:reduce){.mk-change{animation:none}}

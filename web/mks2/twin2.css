@@ -129,3 +129,16 @@
   .twin2-detail { order:4; }
 }
 @media (prefers-reduced-motion:reduce) { .twin2-nl { transition:none; } }
+
+/* Material shortage alerts (material_watch.js) */
+.twin2-alert { display:flex; flex-direction:column; align-items:center; gap:3px; pointer-events:none; }
+.twin2-alert b { font-family:var(--mono); font-size:11px; font-weight:700; padding:2px 7px; border-radius:6px; color:var(--bg); white-space:nowrap; box-shadow:0 1px 4px rgba(0,0,0,.25); }
+.twin2-alert.short b { background:var(--bad); }
+.twin2-alert.ok b { background:var(--ok); }
+.twin2-change { font-family:var(--mono); font-size:10.5px; font-weight:700; padding:1px 6px; border-radius:99px; background:var(--surface); border:1px solid currentColor; white-space:nowrap;
+  animation:twin2-change-fade 20s forwards; }
+.twin2-change.worse,.twin2-change.new { color:var(--bad); }
+.twin2-change.better,.twin2-change.resolved { color:var(--ok); }
+.twin2-change.unknown { color:var(--warn); }
+@keyframes twin2-change-fade { 0%,85% { opacity:1; } 100% { opacity:0; } }
+@media (prefers-reduced-motion:reduce) { .twin2-change { animation:none; } }

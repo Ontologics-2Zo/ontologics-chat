@@ -2,6 +2,7 @@
 // Explicit BOM commands are delegated to the authenticated server through the BOM drawer.
 import { createBomDrawer } from './bom.js';
 import { documentLabel, mountProcurementFlow } from './procurement.js';
+import { materialAlerts, changeText } from './material_watch.js';
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 export function formatQuantity(value) {
   if (typeof value === 'number') return Number.isFinite(value)
@@ -234,7 +235,7 @@ export function materialCoverage(item, { planned = false } = {}) {
   return { state: status === 'SHORTAGE' ? 'shortage' : 'covered', width, label };
 }
 
-export function renderMaterialCoverage(items, { planned = false } = {}) {
+export function renderMaterialCoverage(items, { planned = false, alerts = [] } = {}) {
   if (!items.length) return '';
   const requiredKey = planned ? 'planned_required_qty' : 'required_qty';
   const shortageKey = planned ? 'planned_shortage_qty' : 'shortage_qty';
@@ -242,7 +243,9 @@ export function renderMaterialCoverage(items, { planned = false } = {}) {
     const coverage = materialCoverage(item, { planned });
     const ratio = `${num(item.available_qty)}/${num(item[requiredKey])}`;
     const caption = `가용 ${num(item.available_qty)} / 필요 ${num(item[requiredKey])} ${item.unit_label || item.unit || '단위 미확인'} · ${coverage.state === 'shortage' ? `부족 ${num(item[shortageKey])}` : coverage.label}${item.conditional ? ' · 시연 적용 가정' : ''}`;
-    return `<div class="mk-material-row" data-material-item="${esc(item.item_id)}" data-coverage-state="${coverage.state}"><div class="mk-material-label">${item.item_entity_id ? `<button type="button" class="mk-link" data-graph="${esc(item.item_entity_id)}">${esc(item.item_id)}</button>` : esc(item.item_id)}<small>${esc(item.item_name || '품목명 미확인')}</small></div><div class="mk-material-track ${coverage.state}" role="img" tabindex="0" aria-label="${esc(caption)}" title="${esc(caption)}">${coverage.width === null ? '' : `<i style="width:${coverage.width}%"></i>`}<span class="mk-material-tick"></span></div><div class="mk-material-value"><b>${coverage.state === 'shortage' ? `−${num(item[shortageKey])}` : esc(coverage.label)}</b><span>${ratio}</span></div></div>`;
+    const alert = alerts.find(row => row.item_id === item.item_id), change = alert?.change;
+    const chip = change ? `<span class="mk-change ${esc(change.kind)}" style="animation-duration:${Math.max(1, Math.round(change.remainingMs / 1000))}s">${esc(changeText(change))}</span>` : '';
+    return `<div class="mk-material-row${coverage.state === 'shortage' ? ' mk-material-alert' : ''}" data-material-item="${esc(item.item_id)}" data-coverage-state="${coverage.state}"><div class="mk-material-label">${item.item_entity_id ? `<button type="button" class="mk-link" data-graph="${esc(item.item_entity_id)}">${esc(item.item_id)}</button>` : esc(item.item_id)}<small>${esc(item.item_name || '품목명 미확인')}</small></div><div class="mk-material-track ${coverage.state}" role="img" tabindex="0" aria-label="${esc(caption)}" title="${esc(caption)}">${coverage.width === null ? '' : `<i style="width:${coverage.width}%"></i>`}<span class="mk-material-tick"></span></div><div class="mk-material-value"><b>${coverage.state === 'shortage' ? `−${num(item[shortageKey])}` : esc(coverage.label)}</b><span>${ratio}</span>${chip}</div></div>`;
   }).join('');
   return `<div class="mk-material-bars" aria-label="품목별 자재 충족률">${rows}</div><div class="mk-material-axis" aria-hidden="true"><span></span><div><span>0%</span><span>50%</span><span>100% = 필요량</span></div><span></span></div>`;
 }
@@ -336,7 +339,7 @@ export function mountDashboard(container, { snapshot, onSelect = () => {}, onAsk
     const waiting = Number(summary.inspection_pending_qty) || 0, incoming = Math.max(0, ordered - received);
     const pipeline = [incoming > 0 ? `발주 ${num(incoming)}개 입하 전` : '', waiting > 0 ? `입하 ${num(waiting)}개 검사 대기` : ''].filter(Boolean);
     const basisNote = planned ? `계획 투입 기준${Number(focusItem.shortage_qty) !== short ? ` · 수율 미반영 시 ${num(focusItem.shortage_qty)}개` : ''}` : `남은 생산 ${num(summary.production_remaining_qty)}대 기준`;
-    return `<article class="mk-kpi">${headerCard('자재', summary.item_id)}<div class="mk-big${short > 0 ? ' mk-warning' : ''}">${short > 0 ? num(short) : '부족 없음'}<small>${short > 0 ? '개 부족' : ''}</small></div><div class="mk-inspection-meter"><i style="width:${cover}%"></i></div><div class="mk-small-legend"><span>가용 ${num(focusItem.available_qty)} / 필요 ${num(need)}</span><span>${cover}%</span></div><div class="mk-kpi-sub">${esc(basisNote)} · ${calculationLabel}</div>${pipeline.length ? `<div class="mk-kpi-sub mk-kpi-pipeline">${esc(pipeline.join(' · '))} · 검사 합격 후 가용 반영</div>` : ''}</article>`;
+    return `<article class="mk-kpi">${headerCard('자재', summary.item_id)}<div class="mk-big${short > 0 ? ' mk-warning' : ''}">${short > 0 ? num(short) : '부족 없음'}<small>${short > 0 ? '개 부족' : ''}</small></div><div class="mk-inspection-meter"><i style="width:${cover}%"></i></div><div class="mk-small-legend"><span>가용 ${num(focusItem.available_qty)} / 필요 ${num(need)}</span><span>${cover}%</span></div><div class="mk-kpi-sub">${esc(basisNote)} · ${calculationLabel}</div>${(() => { const change = materialAlerts(snapshot).find(row => row.item_id === focusItem.item_id)?.change; return change ? `<span class="mk-change ${esc(change.kind)}" style="animation-duration:${Math.max(1, Math.round(change.remainingMs / 1000))}s">${esc(changeText(change))}</span>` : ''; })()}${pipeline.length ? `<div class="mk-kpi-sub mk-kpi-pipeline">${esc(pipeline.join(' · '))} · 검사 합격 후 가용 반영</div>` : ''}</article>`;
   }
   function renderKpis() {
     return `<section class="mk-kpis" aria-label="운영 지표">
@@ -389,7 +392,7 @@ export function mountDashboard(container, { snapshot, onSelect = () => {}, onAsk
     const label = planned ? `계획 투입 ${num(basisData.planned_input_qty)}대 · 수율 ${esc(basisData.plan_yield)} 가정` : `추가 양품 목표 ${num(basisData.production_remaining_qty)}대 기준`;
     const policy = requirements.calculation_policy;
     const issueLabel = value => ({ UNRESOLVED: '적용 미확인', MAPPING_UNKNOWN: '품목 매핑 미확인', INVENTORY_UNKNOWN: '재고 미확인', APPLICATION_UNREVIEWED: '적용 미검수', ITEM_MAPPING_UNCONFIRMED: '품목 매핑 미확인', QUANTITY_UNCONFIRMED: '수량 미확인', UNIT_UNCONFIRMED: '단위 미확인', INVENTORY_UNIT_UNCONFIRMED: '재고 단위 미확인', INVENTORY_COVERAGE_AMBIGUOUS: '재고 범위 대조 필요', CALCULATED: '계산됨', APPLICABLE: '적용 가정', UNIT_UNKNOWN: '단위 미확인', NOT_MOUNTED: '비실장', SETTING: '설정', UNREVIEWED: '미검수', DEMO_ASSUMPTION: '시연 가정' }[value] || value);
-    const chart = renderMaterialCoverage(requirementItems, { planned });
+    const chart = renderMaterialCoverage(requirementItems, { planned, alerts: materialAlerts(snapshot, Date.now(), { basis: planned ? 'planned' : 'base' }) });
     const assumption = requirements.has_demo_assumptions || requirementItems.some(item => item.conditional);
     return `${chart || `<div class="mk-empty" data-material-pending><b>품목 연결·수량 검수가 필요합니다</b><p>계산 대상 ${num(requirementItems.length)}개 품목 · 원문 ${num(requirementRows.length)}행 중 적용 미확인 ${num(requirements.unresolved_count)}행</p>${button('BOM 원문·검수 근거', 'bom-evidence')}</div>`}
       <p class="mk-small-note">${planned ? `${label} · 양품 수량 보장 아님` : `남은 생산 ${num(targetQty)}대 × 1대당 소요량`}${chart ? ' · 100% 넘는 막대는 100%에서 자름' : ''}</p>

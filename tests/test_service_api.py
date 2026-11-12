@@ -408,6 +408,7 @@ class ServiceApiIntegrationTests(unittest.TestCase):
         routes = {"/": "shell.html", "/current/": "index.html", "/app.js": "app.js", "/mks2/": "mks2/index.html", "/mks2/graph-layout.js": "mks2/graph-layout.js",
                   "/mks2/twin.js": "mks2/twin.js", "/mks2/twin.css": "mks2/twin.css",
                   "/mks2/twin2.js": "mks2/twin2.js", "/mks2/twin2.css": "mks2/twin2.css",
+                  "/mks2/material_watch.js": "mks2/material_watch.js",
                   "/mks2/vendor/three/three.module.min.js": "mks2/vendor/three/three.module.min.js",
                   "/mks2/vendor/three/OrbitControls.js": "mks2/vendor/three/OrbitControls.js",
                   "/mks2/vendor/three/CSS2DRenderer.js": "mks2/vendor/three/CSS2DRenderer.js"}
