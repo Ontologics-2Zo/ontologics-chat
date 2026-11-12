@@ -2,7 +2,8 @@
 /* MK-S2 디지털 트윈 탭. 색은 styles.css 토큰과 아래 공정 구역 토큰(--tw-*)만 사용한다. */
 :root { --tw-proc-sup:#B0457A; --tw-proc-mat:#2F74C0; --tw-proc-line:#0E9F8E; --tw-proc-fg:#6A5ACD; --tw-proc-ship:#E07B24; --tw-proc-cust:#5B6577;
   --tw-truck:#FFFFFF; --tw-tyre:#2B3038; --tw-steel:#7C8592; --tw-glass:#26384F; --tw-lamp:#FFF4C8; }
-:root[data-theme="dark"] { --tw-proc-sup:#E0789F; --tw-proc-mat:#5A9BE6; --tw-proc-line:#2CC7B2; --tw-proc-fg:#9A8CF2; --tw-proc-ship:#F2A54A; --tw-proc-cust:#A3ACBB;
+/* 다크 모드는 형광 톤: 어두운 바닥 위에서 공정 구역이 바로 구분되게 채도·밝기를 올린다. */
+:root[data-theme="dark"] { --tw-proc-sup:#FF4FB0; --tw-proc-mat:#33B5FF; --tw-proc-line:#1EF2C8; --tw-proc-fg:#B08CFF; --tw-proc-ship:#FFAA2B; --tw-proc-cust:#B8F34A;
   --tw-truck:#DDE2EA; --tw-tyre:#15181E; --tw-steel:#4A5260; --tw-glass:#0E1A2A; --tw-lamp:#FFF4C8; }
 #twin2-stage { height:100%; position:relative; min-width:0; min-height:0; overflow:hidden;
   background:var(--bg); background-image:radial-gradient(var(--grid) 1px,transparent 1px); background-size:22px 22px; }
@@ -168,3 +169,8 @@
 .twin2-anc.replay .twin2-tag { box-shadow:0 0 0 3px color-mix(in srgb,var(--pc) 70%,transparent),0 8px 22px #0f172a29; transform:scale(1.06); }
 @media (max-width:1280px) { .twin2-replay { left:262px; right:12px; } }
 @media (max-width:980px) { .twin2-replay { position:static; order:2; max-width:none; } }
+
+/* 다크 모드 형광 공정 색: 태그 테두리·점에 은은한 빛, 밝은 배지 위 글자는 어둡게 */
+:root[data-theme="dark"] .twin2-anc:not(.ans):not(.main):not(.replay) .twin2-tag { box-shadow:0 0 0 1px color-mix(in srgb,var(--pc) 45%,transparent),0 0 14px color-mix(in srgb,var(--pc) 28%,transparent); }
+:root[data-theme="dark"] .twin2-anc::before { box-shadow:0 0 8px var(--pc); }
+:root[data-theme="dark"] .twin2-tag .n i { color:#0b1220; }
