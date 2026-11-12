@@ -1,5 +1,7 @@
 # ontologics-chat 개발 인계
 
+> 코드 검토·평가는 [검토 안내](docs/REVIEW_GUIDE.md)부터 보세요. 무엇을 만들었는지, 어디부터 보면 되는지, 테스트 실행 방법과 한계를 정리했습니다.
+
 MK-S2의 화면·핵심 동선을 유지하면서 제조 업무를 실제 서버 원장·온톨로지·Agent에 연결하기 위한 개발 기준이다. 공식 설계 v1.7과 시연 데이터 v1.3은 서로 다른 버전 축이다.
 
 **현재 코드: INITIAL 원장·같은 버전 그래프 조회와 BOM 원본 등록·검토·승인·소요 조회를 연결한 개발 서비스다.** Mac arm64의 제한 Runner 검사를 통과해 실제 원본 74행을 보존하고, 선택 5품목의 조건부 결정을 독립 검토·승인 후 개발 원장에 반영했다. 나머지 69행은 UNRESOLVED이며 전체 판정은 PARTIAL/제조 가능성 UNKNOWN이다. 최신 범위와 UI·보존·재시작 검증 결과는 [Mac BOM 실행 기록](docs/handoff/SERVICE-BOM-MAC-20261108.md)을 따른다. 과거 [Cloud 차단·합성 검사 기록](docs/handoff/SERVICE-BOM-20261108.md)과 [INITIAL 증거](docs/handoff/SERVICE-INITIAL-20261108.md)는 별도로 보존한다. 구매·검사·Agent·모델·영속 복구·전체 서비스 인수는 미완료다.
