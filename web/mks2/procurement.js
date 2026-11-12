@@ -478,6 +478,13 @@ export function mountProcurementFlow(container, { snapshot, api, getIdentity = (
       // A newer ledger event (for example another order's reservation) makes
       // this form's basis stale; offer the existing refresh instead of a dead end.
       if (error.message === 'PROCUREMENT_LEDGER_VERSION_CHANGED') needsRefresh = true;
+      // Another screen already wrote the next step (the server allows one waiting
+      // flow document). Show that draft and carry on; this is not a failure.
+      if (error.message === 'PROCUREMENT_DOCUMENT_WAITING' && !destroyed) {
+        try { await reload(); } catch { /* the next refresh shows it */ }
+        if (!destroyed) message('다른 화면에서 다음 단계 초안을 이미 작성했습니다. 그 초안으로 이어서 진행합니다.');
+        return;
+      }
       if (!destroyed && error.name !== 'AbortError') message(errors[error.message] || (error.status === 403
         ? '현재 계정의 권한과 작성자·검토자 구분을 확인해 주세요.'
         : error.status === 409 ? '문서 상태나 기준이 변경되었습니다. 서버 문서를 다시 확인해 주세요.'

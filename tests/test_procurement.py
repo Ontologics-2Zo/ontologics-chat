@@ -221,13 +221,48 @@ class ProcurementDomainTests(unittest.TestCase):
         self.assert_code("APPROVAL_PERMISSION_CHANGED", lambda: self.action("post", doc))
         self.assertEqual(self.version(), 2)
 
-    def test_concurrent_receipts_cannot_exceed_order(self):
+    def test_concurrent_flow_drafts_leave_one_waiting_document(self):
+        # Two screens writing the next step at the same time: one draft, one refusal.
         _, order = self.order()
-        drafts = []
-        for suffix in ("a", "b"):
-            draft = self.create(ReceiptContent(po_id=order["id"], receipt_ref="concurrent-" + suffix,
-                lot_code="concurrent-lot-" + suffix, quantity=8, note="Concurrent receipt against same remaining order"))
-            drafts.append(self.action("approve", self.action("review", draft)))
+        def attempt(suffix):
+            try:
+                return self.create(ReceiptContent(po_id=order["id"], receipt_ref="concurrent-" + suffix,
+                    lot_code="concurrent-lot-" + suffix, quantity=8, note="Concurrent receipt against same remaining order"))["status"]
+            except ServiceError as error:
+                return error.code
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(attempt, ("a", "b")))
+        self.assertEqual(sorted(results), sorted(["DRAFT", "PROCUREMENT_DOCUMENT_WAITING"]))
+        with self.db.connect() as conn:
+            self.assertEqual(conn.execute("SELECT count(*) AS n FROM procurement_documents WHERE kind='RECEIPT'").fetchone()["n"], 1)
+
+    def test_returned_flow_draft_frees_the_step_and_quotes_do_not_block(self):
+        _, order = self.order()
+        self.create(offer(quote_ref="extra-quote"))  # quotes are not flow documents
+        first = self.create(ReceiptContent(po_id=order["id"], receipt_ref="returned", lot_code="returned-lot", quantity=8,
+            note="Draft that the reviewer returns"))
+        self.assert_code("PROCUREMENT_DOCUMENT_WAITING", lambda: self.create(InspectionContent(receipt_id=first["id"],
+            inspection_ref="too-early", passed_qty=1, failed_qty=0, note="A second flow draft while one is waiting")))
+        self.service.reject(self.reviewer, self.company, first["id"], ProcurementReject(expected_version=first["version"],
+            payload_hash=first["payload_hash"], idempotency_key="return-" + uuid4().hex, reason="Returned duplicate receipt draft"))
+        second = self.create(ReceiptContent(po_id=order["id"], receipt_ref="after-return", lot_code="after-return-lot", quantity=8,
+            note="Next draft after the return"))
+        self.assertEqual(second["status"], "DRAFT")
+
+    def test_concurrent_receipt_posts_cannot_exceed_order(self):
+        # A returned draft revised back next to another open one still cannot over-receive at posting.
+        _, order = self.order()
+        first = self.create(ReceiptContent(po_id=order["id"], receipt_ref="concurrent-a", lot_code="concurrent-lot-a", quantity=8,
+            note="Concurrent receipt against same remaining order"))
+        first = self.service.reject(self.reviewer, self.company, first["id"], ProcurementReject(expected_version=first["version"],
+            payload_hash=first["payload_hash"], idempotency_key="return-" + uuid4().hex, reason="Returned for a later revision"))
+        second = self.create(ReceiptContent(po_id=order["id"], receipt_ref="concurrent-b", lot_code="concurrent-lot-b", quantity=8,
+            note="Concurrent receipt against same remaining order"))
+        first = self.service.revise(self.author, self.company, first["id"], ProcurementRevise(expected_version=first["version"],
+            payload_hash=first["payload_hash"], idempotency_key="revise-" + uuid4().hex, expected_ledger_version=self.version(),
+            content=ReceiptContent(po_id=order["id"], receipt_ref="concurrent-a", lot_code="concurrent-lot-a", quantity=8,
+                note="Concurrent receipt against same remaining order")))
+        drafts = [self.action("approve", self.action("review", doc)) for doc in (first, second)]
         def attempt(doc):
             try:
                 return self.action("post", doc)["status"]

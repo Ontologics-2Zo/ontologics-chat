@@ -192,6 +192,8 @@ CONTENT_TYPES = {cls.model_fields["kind"].default: cls for cls in
                  (QuoteContent, RequestContent, OrderContent, ReceiptContent, SupplyConfirmationContent, InspectionContent, CancelContent,
                   ProductionContent, FinishedGoodsContent, ShipmentContent, ArrivalContent, ScenarioContent, CohortContent, SubstitutionContent)}
 FULFILLMENT_KINDS = {"PRODUCTION", "FG_RECEIPT", "SHIPMENT", "ARRIVAL"}
+# Order-to-arrival steps that the dashboard and the Agent write one at a time.
+FLOW_DRAFT_KINDS = {"PO", "SUPPLY_CONFIRMATION", "RECEIPT", "IQC", "CANCEL", "COHORT"} | FULFILLMENT_KINDS
 
 
 class ProcurementCreate(Contract):

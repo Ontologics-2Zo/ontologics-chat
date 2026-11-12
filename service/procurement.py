@@ -16,7 +16,7 @@ from service.domain import DomainService, _public
 from service.errors import ServiceError
 from service.materials import requirements_for_snapshot
 from service.procurement_state import legacy_pools
-from service.procurement_contracts import CONTENT_TYPES, FULFILLMENT_KINDS, ProcurementCreate, ProcurementReject, ProcurementRevise
+from service.procurement_contracts import CONTENT_TYPES, FLOW_DRAFT_KINDS, FULFILLMENT_KINDS, ProcurementCreate, ProcurementReject, ProcurementRevise
 
 
 def quote_calculation(quote, shortage):
@@ -426,9 +426,27 @@ class ProcurementService(DomainService):
         if any(str(row["id"]) != str(excluding) for row in rows):
             raise ServiceError("PROCUREMENT_REFERENCE_ALREADY_EXISTS", 409)
 
+    def _one_open_flow_document(self, conn, company):
+        """Flow documents (order to arrival) move one at a time per company.
+
+        Two screens with the same author (for example two open tabs with the Agent
+        auto draft on) could each write the next step on the same ledger version;
+        once one is posted the other is stale and blocks the run. A company-wide
+        transaction lock makes the check and the insert atomic across requests.
+        """
+        lock_key = int.from_bytes(sha256(canonical_bytes([company, "procurement-flow-draft"])).digest()[:8], "big", signed=True)
+        conn.execute("SELECT pg_advisory_xact_lock(%s)", (lock_key,))
+        waiting = conn.execute("SELECT id FROM procurement_documents WHERE company_id=%s AND kind = ANY(%s) AND status<>'POSTED' "
+                               "AND cancelled_by IS NULL AND rejection_reason IS NULL LIMIT 1",
+                               (company, sorted(FLOW_DRAFT_KINDS))).fetchone()
+        if waiting:
+            raise ServiceError("PROCUREMENT_DOCUMENT_WAITING", 409)
+
     def create(self, principal, company_id, body: ProcurementCreate):
         body = ProcurementCreate.model_validate(body)
         def work(conn):
+            if body.content.kind in FLOW_DRAFT_KINDS:
+                self._one_open_flow_document(conn, company_id)
             payload = self._snapshot(conn, company_id, body.expected_ledger_version)
             resolved = self._resolve(conn, company_id, payload, body.content)
             value = {**body.content.model_dump(mode="json"), "basis_ledger_version": body.expected_ledger_version, "resolved": resolved}
