@@ -182,3 +182,61 @@ test('the ledger replay maps events to process zones and ends at the current arr
   assert.equal(replay.steps.at(-1).remaining, 28);
   assert.equal(buildTwinReplay({ events: [{ event_type: 'OPENING_BALANCE_IMPORTED', ledger_version: 1 }] }), null);
 });
+
+test('each replay step carries the zone values at that point, ending at the current summary', async () => {
+  const { buildTwinReplay } = await import('../web/mks2/twin2.js');
+  const doc = (id, kind, content) => ({ id, kind, status: 'POSTED', content: { kind, ...content } });
+  const boards = n => Array.from({ length: n }, (_, i) => `B${i}`);
+  const summary = { item_id: 'IM-0016', promise_qty: 100, on_hand_qty: 40, reserved_qty: 35, available_qty: 15,
+    good_qty: 70, production_remaining_qty: 30, good_not_received_qty: 0, fg_received_qty: 70, warehouse_remaining_qty: 0,
+    shipped_qty: 70, transit_qty: 0, arrived_qty: 70, promise_remaining_qty: 30 };
+  const posted = (version, kind, id) => ({ event_type: 'ProcurementPosted', document_kind: kind, document_ref: { id }, ledger_version: version });
+  const snapshot = { summary,
+    procurement: { documents: [doc('rc', 'RECEIPT', { quantity: 30, resolved: { item_id: 'IM-0016' } }),
+      doc('iq', 'IQC', { passed_qty: 30, resolved: { item_id: 'IM-0016' } }),
+      doc('pd', 'PRODUCTION', { board_serials: boards(30), resolved: { item_id: 'IM-0016', consumed_qty: 30 } }),
+      doc('fg', 'FG_RECEIPT', { board_serials: boards(30) }), doc('sh', 'SHIPMENT', { board_serials: boards(30) }),
+      doc('ar', 'ARRIVAL', { board_serials: boards(30) }), doc('ch', 'COHORT', { stage: 'ARRIVAL', quantity: 8 })] },
+    events: [{ event_type: 'BomRegistered', ledger_version: 6 },
+      { event_type: 'InventoryReserved', ledger_version: 7, reservation: { item_id: 'IM-0016', quantity: 5, available_before: 20, available_after: 15 } },
+      posted(8, 'RECEIPT', 'rc'), posted(9, 'IQC', 'iq'), posted(10, 'PRODUCTION', 'pd'), posted(11, 'FG_RECEIPT', 'fg'),
+      posted(12, 'SHIPMENT', 'sh'), posted(13, 'ARRIVAL', 'ar'), posted(14, 'COHORT', 'ch')] };
+  const { steps } = buildTwinReplay(snapshot);
+  const pick = key => steps.map(step => step.state[key]);
+  assert.deepEqual(pick('available_qty'), [20, 15, 15, 45, 15, 15, 15, 15, 15]);
+  assert.deepEqual(pick('on_hand_qty'), [40, 40, 70, 70, 40, 40, 40, 40, 40]);
+  assert.deepEqual(pick('reserved_qty'), [30, 35, 35, 35, 35, 35, 35, 35, 35]);
+  assert.deepEqual(pick('good_qty'), [40, 40, 40, 40, 70, 70, 70, 70, 70]);
+  assert.deepEqual(pick('warehouse_remaining_qty'), [0, 0, 0, 0, 0, 30, 0, 0, 0]);
+  assert.deepEqual(pick('transit_qty'), [8, 8, 8, 8, 8, 8, 38, 8, 0]);
+  assert.deepEqual(pick('arrived_qty'), [32, 32, 32, 32, 32, 32, 32, 62, 70]);
+  assert.deepEqual(pick('promise_remaining_qty'), [68, 68, 68, 68, 68, 68, 68, 38, 30]);
+  for (const [key, value] of Object.entries(steps.at(-1).state)) assert.equal(value, summary[key], key);
+});
+
+test('replay steps show the focus part filling up on the server planned-input rule', async () => {
+  const { buildTwinReplay, plannedInputQty } = await import('../web/mks2/twin2.js');
+  assert.equal(plannedInputQty(40, '0.94'), 43);
+  assert.equal(plannedInputQty(10, '0.94'), 11);
+  assert.equal(plannedInputQty(0, '0.94'), 0);
+  assert.equal(plannedInputQty(40, '1.2'), null);
+  const doc = (id, kind, content) => ({ id, kind, status: 'POSTED', content: { kind, ...content } });
+  const posted = (version, kind, id) => ({ event_type: 'ProcurementPosted', document_kind: kind, document_ref: { id }, ledger_version: version });
+  const snapshot = {
+    summary: { item_id: 'IM-T1', promise_qty: 100, arrived_qty: 32, available_qty: 15, production_remaining_qty: 10, good_qty: 90 },
+    material_requirements: { state: 'PARTIAL', basis: { plan_yield: '0.94' },
+      items: [{ item_id: 'IM-T1', item_name: '테스트 부품', quantity_per_unit: '1', substitute_qty: '0', planned_required_qty: '11', available_qty: '15', planned_shortage_qty: '0' }] },
+    procurement: { documents: [doc('iq', 'IQC', { passed_qty: 30, resolved: { item_id: 'IM-T1' } }),
+      doc('pd', 'PRODUCTION', { board_serials: Array.from({ length: 30 }, (_, i) => `B${i}`), resolved: { item_id: 'IM-T1', consumed_qty: 30 } })] },
+    events: [{ event_type: 'BomRegistered', ledger_version: 6 },
+      { event_type: 'InventoryReserved', ledger_version: 7, reservation: { item_id: 'IM-T1', quantity: 5, available_before: 20, available_after: 15 } },
+      posted(8, 'IQC', 'iq'), posted(9, 'PRODUCTION', 'pd')] };
+  const { steps } = buildTwinReplay(snapshot);
+  assert.deepEqual(steps.map(step => [step.material.required, step.material.available, step.material.shortage]),
+    [[43, 20, 23], [43, 15, 28], [43, 45, 0], [11, 15, 0]]);
+  assert.equal(steps[0].material.item_name, '테스트 부품');
+  const last = snapshot.material_requirements.items[0];
+  assert.equal(String(steps.at(-1).material.required), last.planned_required_qty);
+  assert.equal(String(steps.at(-1).material.shortage), last.planned_shortage_qty);
+  assert.equal(buildTwinReplay({ ...snapshot, material_requirements: { state: 'BLOCKED_BOM' } }).steps[0].material, null);
+});
