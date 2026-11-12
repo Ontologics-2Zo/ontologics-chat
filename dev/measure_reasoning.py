@@ -9,6 +9,11 @@ Compared checks
   B  A + OWL RL contradictions (disjoint classes, owl:Nothing)
   C  A + full OWL RL check (contradictions + entailed-type mismatches)
 
+A fault counts as caught when the check reports something the clean copy did
+not: SHACL newly fails, or a contradiction or type mismatch appears that is not
+in the clean report (compared by content, so a new finding on an entity that
+was already flagged still counts).
+
 Faults (each in its own copy of the latest snapshot)
   F1 one relationship reversed, once per predicate in use
   F2 one entity given another class in use (seeded sample)
@@ -70,7 +75,12 @@ def main() -> int:
         t0 = time.perf_counter(); a = shacl_flags(graph); t1 = time.perf_counter()
         report = reasoning_report(projector.tbox, graph, uris, projector.classes, projector.predicates); t2 = time.perf_counter()
         b = report["inconsistency_count"] > 0
+        contradictions = {json.dumps(item, sort_keys=True) for item in report["inconsistencies"]}
+        mismatches = {json.dumps({k: item[k] for k in ("entity_id", "declared", "entailed")}, sort_keys=True) for item in report["type_mismatches"]}
+        if report["inconsistency_count"] > len(report["inconsistencies"]) or report["type_mismatch_count"] > len(report["type_mismatches"]):
+            sys.exit("REPORT_LIST_TRUNCATED")  # content comparison needs the full lists
         return {"A": a, "B": a or b, "C": a or b or report["type_mismatch_count"] > 0,
+                "contradiction_set": contradictions, "mismatch_set": mismatches,
                 "mismatches": report["type_mismatch_count"], "contradictions": report["inconsistency_count"],
                 "inferred": report["inferred_relationship_count"], "t_shacl": t1 - t0, "t_owl": t2 - t1}
 
@@ -106,15 +116,21 @@ def main() -> int:
         r["target"] = rng.choice(by_type[rng.choice([t for t in types if t != target_type and t in by_type])]); cases["F3"].append(p)
 
     def caught(result, key):
+        shacl = result["A"] and not base["A"]
+        new_contradiction = bool(result["contradiction_set"] - base["contradiction_set"])
+        new_mismatch = bool(result["mismatch_set"] - base["mismatch_set"])
         if key == "A":
-            return result["A"] and not base["A"]
-        more = result["mismatches"] > base["mismatches"] or result["contradictions"] > base["contradictions"]
-        return (result["A"] and not base["A"]) or (more if key == "C" else result["contradictions"] > base["contradictions"])
+            return shacl
+        if key == "B":
+            return shacl or new_contradiction
+        return shacl or new_contradiction or new_mismatch
 
     faults = {}
     for name, payloads in cases.items():
         results = [checks(p, version) for p in payloads]
-        faults[name] = {"cases": len(results), **{key: sum(caught(r, key) for r in results) for key in ("A", "B", "C")}}
+        count_rule = sum((r["A"] and not base["A"]) or r["mismatches"] > base["mismatches"] or r["contradictions"] > base["contradictions"] for r in results)
+        faults[name] = {"cases": len(results), **{key: sum(caught(r, key) for r in results) for key in ("A", "B", "C")},
+                        "C_by_count_only": count_rule}
 
     ms = lambda values: {"median_ms": round(statistics.median(values) * 1000), "max_ms": round(max(values) * 1000)}
     print(json.dumps({
