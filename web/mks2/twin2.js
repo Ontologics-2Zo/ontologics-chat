@@ -222,6 +222,26 @@ function replayDocLabel(kind, id) {
     FG_RECEIPT: 'FG', SHIPMENT: 'SH', ARRIVAL: 'AR', SCENARIO: 'SCN', COHORT: 'CH', SUBSTITUTION: 'SB' }[kind] || kind;
   return `${prefix}-${String(id || '').replace(/[^0-9a-z]/gi, '').slice(0, 4).toUpperCase()}`;
 }
+// Planned input boards = ceil(remaining good boards / plan yield), the same
+// exact ceiling as the server's material requirement (service/materials.py).
+export function plannedInputQty(remaining, planYield) {
+  const m = /^(\d+)(?:\.(\d{1,6}))?$/.exec(String(planYield ?? ''));
+  if (!m || !Number.isSafeInteger(remaining) || remaining < 0) return null;
+  const den = 10 ** (m[2]?.length || 0), num = Number(m[1] + (m[2] || ''));
+  if (!num || num > den) return null;
+  return Math.floor((remaining * den + num - 1) / num);
+}
+
+/** Shortage of one requirement item at a point in time (planned-input basis). */
+function itemShortageAt(item, planYield, remaining, available) {
+  const perUnit = Number(item?.quantity_per_unit), extra = Number(item?.substitute_qty ?? 0);
+  const planned = plannedInputQty(remaining, planYield);
+  if (planned == null || !Number.isFinite(perUnit) || !Number.isFinite(extra) || !Number.isFinite(available)) return null;
+  const required = planned * perUnit, have = available + extra;
+  return { item_id: item.item_id, item_name: typeof item.item_name === 'string' ? item.item_name : '', required, available: have,
+    shortage: Math.max(required - have, 0) };
+}
+
 export function buildTwinReplay(snapshot) {
   const events = (Array.isArray(snapshot?.events) ? snapshot.events : []).filter(e => e && Number.isSafeInteger(e.ledger_version))
     .slice().sort((a, b) => a.ledger_version - b.ledger_version);
@@ -276,6 +296,15 @@ export function buildTwinReplay(snapshot) {
   for (const step of steps) {
     for (const key of keys) ahead[key] -= step.delta[key] || 0;
     step.state = Object.fromEntries(keys.filter(key => Number.isFinite(Number(summary[key]))).map(key => [key, Number(summary[key]) - ahead[key]]));
+  }
+  // The focus part (summary.item_id) at each step: required, available and shortage.
+  const requirements = snapshot.material_requirements || {};
+  const focus = requirements.state !== 'BLOCKED_BOM' && Array.isArray(requirements.items)
+    ? requirements.items.find(item => item.item_id === summary.item_id) : null;
+  for (const step of steps) {
+    const remaining = step.state.production_remaining_qty ?? Number(summary.production_remaining_qty);
+    const available = step.state.available_qty ?? Number(summary.available_qty);
+    step.material = focus ? itemShortageAt(focus, requirements.basis?.plan_yield, remaining, available) : null;
   }
   return { steps, startArrived: Number(summary.arrived_qty) - total, promise: Number.isFinite(promise) ? promise : null };
 }
@@ -692,12 +721,23 @@ export function mountTwin(container, { snapshot, ontology, labelFor = id => id, 
     tag.value.textContent = value; tag.sub.textContent = text; tag.pill.textContent = pill; tag.pill.className = `pill ${tone}`;
     tag.bar.hidden = pct === null; if (pct !== null) tag.fill.style.width = `${Math.max(0, Math.min(1, pct)) * 100}%`;
   };
-  function paintTags(summary, replaying = false) {
+  // The focus part as the server computed it now (planned-input basis).
+  const focusReq = requirements.state !== 'BLOCKED_BOM' ? (requirements.items || []).find(item => item.item_id === summary.item_id) : null;
+  const liveMaterial = focusReq && isNum(Number(focusReq.planned_required_qty)) && focusReq.planned_shortage_qty != null
+    ? { item_id: focusReq.item_id, required: Number(focusReq.planned_required_qty), available: Number(focusReq.available_qty), shortage: Number(focusReq.planned_shortage_qty) } : null;
+  function paintTags(summary, replaying = false, material = liveMaterial) {
     if (!renderer) return;
     const quotes = snapshot.quotations, subs = snapshot.substitutes;
     setTag('sup', { value: `기초 견적 ${fmt(arrayCount(quotes))}건`, sub: `대체 후보 ${fmt(arrayCount(subs))}건`, pill: '조회', tone: 'info' });
     const materialState = twinMaterialSummary(requirements);
-    setTag('mat', { value: `가용 ${fmt(summary.available_qty)}`, sub: `보유 ${fmt(summary.on_hand_qty)} · 예약 ${fmt(summary.reserved_qty)}`,
+    if (material && isNum(material.shortage)) {
+      // Name the part and how full it is: available against the planned requirement.
+      setTag('mat', { value: material.shortage > 0 ? `${material.item_id} 부족 ${fmt(material.shortage)}` : `${material.item_id} 충족`,
+        sub: `가용 ${fmt(material.available)} / 필요 ${fmt(material.required)} · 보유 ${fmt(summary.on_hand_qty)} · 예약 ${fmt(summary.reserved_qty)}`,
+        pill: replaying ? (material.shortage > 0 ? '재생 · 부족' : '재생 · 충족') : materialState.text,
+        tone: replaying ? (material.shortage > 0 ? 'bad' : 'ok') : materialState.k,
+        pct: material.required > 0 ? material.available / material.required : 1 });
+    } else setTag('mat', { value: `가용 ${fmt(summary.available_qty)}`, sub: `보유 ${fmt(summary.on_hand_qty)} · 예약 ${fmt(summary.reserved_qty)}`,
       pill: replaying ? '재생 시점' : materialState.text, tone: replaying ? 'mute' : materialState.k });
     const made = isNum(summary.good_qty) && isNum(summary.production_remaining_qty) && summary.good_qty + summary.production_remaining_qty > 0 ? summary.good_qty / (summary.good_qty + summary.production_remaining_qty) : null;
     // Defect and pending-judgement counts are not replayed, so replay shows good boards only.
@@ -935,14 +975,53 @@ export function mountTwin(container, { snapshot, ontology, labelFor = id => id, 
     top.append(playB, firstB, slider, speedS, stopB, count);
     const card = element('div', 'card'); card.hidden = true;
     replayBar.append(top, card); view.append(replayBar);
+    // Card line: the part filling up, e.g. "IM-0016 · 가용 15 / 필요 43 · 부족 28" with a bar and the change.
+    const materialLine = (now, before) => {
+      const box = element('div', 'mat');
+      if (!now) return box;
+      box.classList.toggle('short', now.shortage > 0);
+      box.append(element('span', 'nm', `${now.item_id}${now.item_name ? ' ' + now.item_name : ''}`),
+        element('span', 'q', `가용 ${fmt(now.available)} / 필요 ${fmt(now.required)} · ${now.shortage > 0 ? `부족 ${fmt(now.shortage)}` : '충족'}`));
+      const bar = element('i', 'bar'), fill = element('i'); bar.append(fill);
+      fill.style.width = `${Math.max(0, Math.min(1, now.required > 0 ? now.available / now.required : 1)) * 100}%`; box.append(bar);
+      if (before && before.shortage !== now.shortage) {
+        const kind = now.shortage === 0 ? 'resolved' : now.shortage > before.shortage ? 'worse' : 'better';
+        box.append(element('span', `twin2-change ${kind}`, changeText({ before: before.shortage, after: now.shortage, kind })));
+      }
+      return box;
+    };
+    // Marker on the part's node in the graph while replaying.
+    const itemNode = Object.values(nodes3d).find(o => o.n.type === 'InternalItem' && (o.n.id === focusReq?.item_entity_id || o.n.label === focusReq?.item_id));
+    let marker = null;
+    if (renderer && itemNode) {
+      const pos = nodePos[itemNode.n.id], tag = element('div', 'twin2-alert'), group = itemNode.mesh.parent || scene;
+      const ring = key => {
+        const mesh = new THREE.Mesh(new THREE.RingGeometry(2.1, 2.6, 48), tm(new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false }), key));
+        mesh.rotation.x = -Math.PI / 2; mesh.position.copy(pos); mesh.position.y -= 1.25; mesh.visible = false; group.add(mesh); return mesh;
+      };
+      marker = { tag, b: element('b'), label: new CSS2DObject(tag), bad: ring('bad'), ok: ring('ok') };
+      tag.append(marker.b); marker.label.position.copy(pos); marker.label.position.y += 3.2;
+      marker.label.visible = false; group.add(marker.label);
+    }
+    function showItemMarker(material) {
+      if (!marker) return;
+      const short = Boolean(material) && material.shortage > 0;
+      marker.label.visible = Boolean(material); marker.bad.visible = short; marker.ok.visible = Boolean(material) && !short;
+      if (material) {
+        marker.tag.className = `twin2-alert ${short ? 'short' : 'ok'}`;
+        marker.b.textContent = short ? `${material.item_id} 부족 ${fmt(material.shortage)}` : `${material.item_id} 충족 ✓`;
+      }
+      dirty = true;
+    }
     const restore = () => {
       for (const f of FACILITIES) { const tag = facilityTags[f.key]; tag?.anchor.classList.remove('replay', 'mute'); if (facilityPads[f.key]) facilityPads[f.key].pad.opacity = 0.13; }
-      paintTags(summary);
+      paintTags(summary); showItemMarker(null);
       if (rp.tokenMesh) rp.tokenMesh.visible = false; rp.token = null; dirty = true;
     };
     const show = i => {
       const step = replay.steps[i], prev = replay.steps[i - 1]; rp.i = i; slider.value = String(i);
-      paintTags({ ...summary, ...step.state }, true);
+      paintTags({ ...summary, ...step.state }, true, step.material);
+      showItemMarker(step.material);
       for (const f of FACILITIES) {
         const on = f.key === step.zone, tag = facilityTags[f.key];
         tag?.anchor.classList.toggle('replay', on); tag?.anchor.classList.toggle('mute', !on);
@@ -951,6 +1030,7 @@ export function mountTwin(container, { snapshot, ontology, labelFor = id => id, 
       card.hidden = false; card.replaceChildren(
         element('b', '', `v${step.version} · ${step.title}`),
         element('span', 'z', `${step.zone === 'core' ? CORE.name : FACILITIES.find(f => f.key === step.zone)?.name}${step.detail ? ' · ' + step.detail : ''}`),
+        materialLine(step.material, prev?.material),
         element('span', 'm', step.arrivedTotal == null ? '' : `도착 누계 ${fmt(step.arrivedTotal)}대 · 남은 약속 ${fmt(step.remaining)}대`),
         element('small', '', `${i + 1} / ${replay.steps.length} · 원장 사건 재생 · 원장은 바뀌지 않습니다`));
       if (renderer && !reduce && prev && prev.zone !== step.zone) {

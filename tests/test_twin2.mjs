@@ -213,3 +213,30 @@ test('each replay step carries the zone values at that point, ending at the curr
   assert.deepEqual(pick('promise_remaining_qty'), [68, 68, 68, 68, 68, 68, 68, 38, 30]);
   for (const [key, value] of Object.entries(steps.at(-1).state)) assert.equal(value, summary[key], key);
 });
+
+test('replay steps show the focus part filling up on the server planned-input rule', async () => {
+  const { buildTwinReplay, plannedInputQty } = await import('../web/mks2/twin2.js');
+  assert.equal(plannedInputQty(40, '0.94'), 43);
+  assert.equal(plannedInputQty(10, '0.94'), 11);
+  assert.equal(plannedInputQty(0, '0.94'), 0);
+  assert.equal(plannedInputQty(40, '1.2'), null);
+  const doc = (id, kind, content) => ({ id, kind, status: 'POSTED', content: { kind, ...content } });
+  const posted = (version, kind, id) => ({ event_type: 'ProcurementPosted', document_kind: kind, document_ref: { id }, ledger_version: version });
+  const snapshot = {
+    summary: { item_id: 'IM-T1', promise_qty: 100, arrived_qty: 32, available_qty: 15, production_remaining_qty: 10, good_qty: 90 },
+    material_requirements: { state: 'PARTIAL', basis: { plan_yield: '0.94' },
+      items: [{ item_id: 'IM-T1', item_name: '테스트 부품', quantity_per_unit: '1', substitute_qty: '0', planned_required_qty: '11', available_qty: '15', planned_shortage_qty: '0' }] },
+    procurement: { documents: [doc('iq', 'IQC', { passed_qty: 30, resolved: { item_id: 'IM-T1' } }),
+      doc('pd', 'PRODUCTION', { board_serials: Array.from({ length: 30 }, (_, i) => `B${i}`), resolved: { item_id: 'IM-T1', consumed_qty: 30 } })] },
+    events: [{ event_type: 'BomRegistered', ledger_version: 6 },
+      { event_type: 'InventoryReserved', ledger_version: 7, reservation: { item_id: 'IM-T1', quantity: 5, available_before: 20, available_after: 15 } },
+      posted(8, 'IQC', 'iq'), posted(9, 'PRODUCTION', 'pd')] };
+  const { steps } = buildTwinReplay(snapshot);
+  assert.deepEqual(steps.map(step => [step.material.required, step.material.available, step.material.shortage]),
+    [[43, 20, 23], [43, 15, 28], [43, 45, 0], [11, 15, 0]]);
+  assert.equal(steps[0].material.item_name, '테스트 부품');
+  const last = snapshot.material_requirements.items[0];
+  assert.equal(String(steps.at(-1).material.required), last.planned_required_qty);
+  assert.equal(String(steps.at(-1).material.shortage), last.planned_shortage_qty);
+  assert.equal(buildTwinReplay({ ...snapshot, material_requirements: { state: 'BLOCKED_BOM' } }).steps[0].material, null);
+});
