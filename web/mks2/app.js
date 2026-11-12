@@ -111,7 +111,16 @@ function errorText(error) {
   if (error.status === 409) return '조회 기준이 바뀌었거나 같은 버전의 근거가 준비되지 않았습니다. 최신 원장을 다시 조회해 주세요.';
   return '서버 자료를 조회하지 못했습니다. 연결 상태를 확인한 뒤 다시 시도해 주세요.';
 }
+// 테마: 디지털 트윈 탭은 기본 어두운 테마(형광 공정 색), 다른 탭은 밝은 테마.
+// "테마" 버튼은 지금 보고 있는 쪽(디지털 트윈 / 나머지 탭)의 테마만 바꾼다. 브라우저에 저장하지 않는다.
+const themes = { twin2: 'dark', other: 'light' };
+function applyTheme() {
+  const key = currentScreen() === 'twin2' ? 'twin2' : 'other', dark = themes[key] === 'dark';
+  if (document.documentElement.dataset.theme !== themes[key]) document.documentElement.dataset.theme = themes[key];
+  $('theme').setAttribute('aria-label', dark ? '밝은 테마로 전환' : '어두운 테마로 전환');
+}
 function route() {
+  applyTheme();
   if (!snapshot) return;
   settleHiddenAnswers();
   for (const name of SCREENS) {
@@ -932,9 +941,11 @@ window.addEventListener('resize', updateTwinActivity);
 document.addEventListener('visibilitychange', updateTwinActivity);
 if (typeof ResizeObserver === 'function') new ResizeObserver(updateTwinActivity).observe($('workspace'));
 $('theme').addEventListener('click', () => {
-  const dark = document.documentElement.dataset.theme !== 'dark'; document.documentElement.dataset.theme = dark ? 'dark' : 'light';
-  $('theme').setAttribute('aria-label', dark ? '밝은 테마로 전환' : '어두운 테마로 전환');
+  const key = currentScreen() === 'twin2' ? 'twin2' : 'other';
+  themes[key] = themes[key] === 'dark' ? 'light' : 'dark';
+  applyTheme();
 });
+applyTheme();
 $('reset').addEventListener('click', () => {
   if (!snapshot) return;
   generation++; requests.abort(); requests = new AbortController();
