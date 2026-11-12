@@ -362,6 +362,9 @@ export function mountTwin(container, { snapshot, ontology, labelFor = id => id, 
 
   /* ---------- three.js ---------- */
   let T = tokens();
+  // Process-zone floor strength. Dark mode uses neon process colors, so the floor and rim show more of them.
+  const padOpacity = on => on ? (T.dark ? 0.42 : 0.26) : (T.dark ? 0.24 : 0.13);
+  const rimOpacity = on => on ? 1 : (T.dark ? 0.95 : 0.7);
   let renderer, labels, scene, camera, controls;
   const themed = [];
   const tc = key => typeof key === 'function' ? key(T) : T[key];
@@ -402,11 +405,11 @@ export function mountTwin(container, { snapshot, ontology, labelFor = id => id, 
       const group = new THREE.Group(); group.position.set(f.pos[0], 0, f.pos[1]);
       const [w, d] = f.size;
       // 공정 색: 반투명은 유지하고 바닥·테두리·건물에 같은 계열 색을 옅게 섞는다.
-      const pc = t => t.proc[f.key], fillC = t => mix(t.surface, t.proc[f.key], t.dark ? 0.38 : 0.3);
-      const edgeC = t => mix(t.nodeLine, t.proc[f.key], 0.8), solidC = t => mix(t.surface, t.proc[f.key], t.dark ? 0.45 : 0.38);
-      const pad = new THREE.Mesh(new THREE.PlaneGeometry(w, d), tm(new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.13, depthWrite: false }), pc));
+      const pc = t => t.proc[f.key], fillC = t => mix(t.surface, t.proc[f.key], t.dark ? 0.55 : 0.3);
+      const edgeC = t => mix(t.nodeLine, t.proc[f.key], 0.8), solidC = t => mix(t.surface, t.proc[f.key], t.dark ? 0.62 : 0.38);
+      const pad = new THREE.Mesh(new THREE.PlaneGeometry(w, d), tm(new THREE.MeshBasicMaterial({ transparent: true, opacity: padOpacity(false), depthWrite: false }), pc));
       pad.rotation.x = -Math.PI / 2; pad.position.y = 0.05;
-      const rim = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(w, 0.01, d)), tm(new THREE.LineBasicMaterial({ transparent: true, opacity: 0.7 }), pc));
+      const rim = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(w, 0.01, d)), tm(new THREE.LineBasicMaterial({ transparent: true, opacity: rimOpacity(false) }), pc));
       rim.position.y = 0.06;
       const stripe = new THREE.Mesh(new THREE.PlaneGeometry(w, 0.9), tm(new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.85, depthWrite: false }), pc));
       stripe.rotation.x = -Math.PI / 2; stripe.position.set(0, 0.07, d / 2 - 0.45);
@@ -608,7 +611,7 @@ export function mountTwin(container, { snapshot, ontology, labelFor = id => id, 
       item.material.opacity = act ? (on ? 1 : 0.05) : 0.55;
       if (on) list.push(item);
     }
-    for (const [key, pad] of Object.entries(facilityPads)) { const on = state.facility === key || state.answerMain === key; pad.pad.opacity = on ? 0.26 : 0.13; pad.rim.opacity = on ? 1 : 0.7; }
+    for (const [key, pad] of Object.entries(facilityPads)) { const on = state.facility === key || state.answerMain === key; pad.pad.opacity = padOpacity(on); pad.rim.opacity = rimOpacity(on); }
     showAnswerInfo();
     pulses.forEach((p, i) => { p.edge = i < list.length * 2 ? list[i % list.length] : null; p.t = (i / Math.max(1, list.length * 2)) % 1; p.d.visible = !!p.edge; });
     dirty = true;
@@ -1014,7 +1017,7 @@ export function mountTwin(container, { snapshot, ontology, labelFor = id => id, 
       dirty = true;
     }
     const restore = () => {
-      for (const f of FACILITIES) { const tag = facilityTags[f.key]; tag?.anchor.classList.remove('replay', 'mute'); if (facilityPads[f.key]) facilityPads[f.key].pad.opacity = 0.13; }
+      for (const f of FACILITIES) { const tag = facilityTags[f.key]; tag?.anchor.classList.remove('replay', 'mute'); if (facilityPads[f.key]) facilityPads[f.key].pad.opacity = padOpacity(false); }
       paintTags(summary); showItemMarker(null);
       if (rp.tokenMesh) rp.tokenMesh.visible = false; rp.token = null; dirty = true;
     };
@@ -1025,7 +1028,7 @@ export function mountTwin(container, { snapshot, ontology, labelFor = id => id, 
       for (const f of FACILITIES) {
         const on = f.key === step.zone, tag = facilityTags[f.key];
         tag?.anchor.classList.toggle('replay', on); tag?.anchor.classList.toggle('mute', !on);
-        if (facilityPads[f.key]) facilityPads[f.key].pad.opacity = on ? 0.5 : 0.07;
+        if (facilityPads[f.key]) facilityPads[f.key].pad.opacity = on ? (T.dark ? 0.6 : 0.5) : 0.07;
       }
       card.hidden = false; card.replaceChildren(
         element('b', '', `v${step.version} · ${step.title}`),
