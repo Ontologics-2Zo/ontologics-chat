@@ -148,3 +148,11 @@ E2E 시연에서 사람은 승인·확정만 한다. 작성자 계정 화면에�
 ## OWL RL 추론 검사 · DEC-H67
 
 SHACL+RDFS 옆에 OWL 2 RL 검사(`service/reasoning.py`)를 둔다. 모순(disjoint)·유형 불일치(추론 클래스를 선언 유형이 함의하지 않음)·추론 관계를 보고하며, 결과는 프로젝트 그래프의 "논리 검사"에 표시만 한다. 그래프 READY·수량·답변·승인에 쓰지 않고 T-Box를 바꾸지 않는다. 재측정은 `dev/measure_reasoning.py`(집계만 출력). [기록](docs/handoff/SERVICE-OWL-REASONING-20261112.md)
+
+## README 개요 캡처 공개 예외 · DEC-H69
+
+메인 README 맨 위 프로젝트 개요의 `docs/images/overview/` 화면 캡처(공개 하드웨어 BOM의 행·부품 이름이 보임)는 사용자의 명시적 승인으로 공개한다. 이 예외는 그 캡처에만 적용하며, 원본 BOM 파일·공식 원문·MK-S2 원본 HTML/fixture·평가 원문은 계속 Git 밖에 둔다. 새 캡처를 공개하려면 다시 승인을 받는다.
+
+## 답변 근거 행 묶음 · DEC-H70
+
+흐름 레인에서 답변 근거를 표시할 때 같은 묶음(BOM 행·원문 행·보드·장착 기록)의 근거가 6개 이하일 때만 펼치고, 넘으면 묶음 상자에 개수를 표시한다(`foldEvidence`). 화면 표시 규칙만 바꾸며 노드·관계·답변은 그대로다. PR #43으로 main에 병합했다.
