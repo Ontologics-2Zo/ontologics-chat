@@ -2,6 +2,30 @@
 // Presentation only. Nodes, edges and attributes are the authenticated ledger
 // snapshot's entities/relationships; derived class/attribute nodes and folded
 // row groups are display aids, never ledger relations. No fetch or write here.
+/** How many evidence rows of one folded group are opened one by one; more stay in the group box. */
+export const EVIDENCE_UNFOLD_LIMIT = 6;
+/**
+ * Split answer evidence into nodes to pin open and folded groups to highlight.
+ * groupOf(id) returns the fold key a node collapses into (or null when it never folds).
+ * Groups with more evidence members than the limit stay folded and report their count,
+ * so a long evidence list does not stretch the lane view; nothing is dropped.
+ */
+export function foldEvidence(ids, groupOf, limit = EVIDENCE_UNFOLD_LIMIT) {
+  const byGroup = new Map();
+  for (const id of new Set(ids)) {
+    const key = groupOf(id);
+    if (!key) continue;
+    if (!byGroup.has(key)) byGroup.set(key, []);
+    byGroup.get(key).push(id);
+  }
+  const pin = [], folded = new Map();
+  for (const [key, members] of byGroup) {
+    if (members.length <= limit) pin.push(...members);
+    else folded.set(key, members.length);
+  }
+  return { pin, folded };
+}
+
 export function mountLaneGraph(container, { data, summary = {}, itemOrder = [], activeBom = null, onSelect = () => {}, onBom = () => {} } = {}) {
   const root = document.createElement('div');
   root.className = 'lg-root';
@@ -97,7 +121,7 @@ export function mountLaneGraph(container, { data, summary = {}, itemOrder = [], 
   /* ---- 화면 상태 ---- */
   const PIN=new Set();
   const LAY={rows:true,docs:true,labels:false};
-  const G={hitN:new Set(),hitE:new Set(),sel:null,focus:null,vb:{x:0,y:0,w:1880,h:1000},anim:null,seen:new Set(),newIds:new Map(),init:false,fitted:false,view:null};
+  const G={hitN:new Set(),hitE:new Set(),evN:new Map(),sel:null,focus:null,vb:{x:0,y:0,w:1880,h:1000},anim:null,seen:new Set(),newIds:new Map(),init:false,fitted:false,view:null};
   const svg=$('svg');
   const pk=(a,b)=>a<b?a+'|'+b:b+'|'+a;
   
@@ -110,6 +134,11 @@ export function mountLaneGraph(container, { data, summary = {}, itemOrder = [], 
     if(MODE==='lane'&&!PIN.has(id)){if(t==='BoardUnit'&&BOARD_P.has(id)) return 'gB:'+BOARD_P.get(id); if(t==='InstallationEvent'&&INST_P.has(id)) return 'gI:'+INST_P.get(id);}
     return id;}
   function ensureVisible(id){const n=NB.get(id); if(!n) return; if((n.type==='BOMLine'||n.type==='SourceRow'||n.type==='BoardUnit'||n.type==='InstallationEvent')&&slot(id)!==id) PIN.add(id); if(DOCS.has(n.type)&&!LAY.docs){LAY.docs=true; syncLayerBtns();}}
+  const FOLDT=new Set(['BOMLine','SourceRow','BoardUnit','InstallationEvent']);
+  // Answer evidence: open a folded group's members only when they are few; larger groups stay folded with a count.
+  function showEvidence(ids){G.evN=new Map(); const known=ids.filter(id=>NB.has(id));
+    const {pin,folded}=foldEvidence(known,id=>{if(!FOLDT.has(NB.get(id).type)) return null; const s=slot(id); return s&&s!==id?s:null;});
+    pin.forEach(id=>PIN.add(id)); G.evN=folded; known.forEach(id=>{const n=NB.get(id); if(DOCS.has(n.type)&&!LAY.docs){LAY.docs=true; syncLayerBtns();}});}
   
   /* ---- 배치 계산 ---- */
   const COLA=[[90,'고객 · 계약'],[335,'납품 회차'],[580,'생산'],[800,'제품 구성'],[1040,'BOM 행 → 적용'],[1280,'사내 품목'],[1520,'재고 · 견적'],[1740,'공급사']];
@@ -198,13 +227,14 @@ export function mountLaneGraph(container, { data, summary = {}, itemOrder = [], 
   
   /* ---- 노드 그리기 ---- */
   function chipSVG(x,y,t,c){const w=t.length*6+10; return `<g class="nch ${c}" transform="translate(${x},${y})"><rect width="${w}" height="15" rx="4"/><text x="5" y="11">${esc(t)}</text></g>`;}
+  const evFold=(k,hint)=>{const n=G.evN&&G.evN.get(k); return n?`근거 ${n}개 포함 · ${hint}`:'';};
   function nodeSVG(b){
     const cls=['nd'], k=b.key; let kd='',og='',tt='',sb='',body='',cat='ev';
     if(b.group==='B'||b.group==='I'){cls.push('grp'); cat='dem'; const pr=NB.get(PRODS[b.pi]);
-      kd=b.group==='B'?'보드 묶음':'장착 기록 묶음'; tt=`${b.members.length}${b.group==='B'?'대':'건'}`; sb=`${pr?pr.display_id:'생산 실적'} · 눌러서 목록`; og='원장';
+      kd=b.group==='B'?'보드 묶음':'장착 기록 묶음'; tt=`${b.members.length}${b.group==='B'?'대':'건'}`; sb=evFold(k,'눌러서 목록')||`${pr?pr.display_id:'생산 실적'} · 눌러서 목록`; og='원장';
     } else if(b.group){const V=VER[b.vi]; cls.push('grp');
-      if(b.group==='L'){cat='bom'; const u=b.members.filter(l=>((A(l).decision||{}).application_status)==='UNRESOLVED').length; kd=`BOM 행 묶음 · v${V.v}`; tt=`${b.members.length}행`; sb=`UNRESOLVED ${u} · 눌러서 행 탐색`;}
-      else {cat='ev'; const rs=b.members.map(r=>A(r).source_row).filter(x=>x!=null); kd=`원문 행 묶음 · v${V.v}`; tt=`${b.members.length}행`; sb=rs.length?`시트 row ${Math.min(...rs)}–${Math.max(...rs)}`:'';}
+      if(b.group==='L'){cat='bom'; const u=b.members.filter(l=>((A(l).decision||{}).application_status)==='UNRESOLVED').length; kd=`BOM 행 묶음 · v${V.v}`; tt=`${b.members.length}행`; sb=evFold(k,'눌러서 행 탐색')||`UNRESOLVED ${u} · 눌러서 행 탐색`;}
+      else {cat='ev'; const rs=b.members.map(r=>A(r).source_row).filter(x=>x!=null); kd=`원문 행 묶음 · v${V.v}`; tt=`${b.members.length}행`; sb=evFold(k,'눌러서 행 탐색')||(rs.length?`시트 row ${Math.min(...rs)}–${Math.max(...rs)}`:'');}
       og='원본';
     } else {
       const n=NB.get(k), a=n.attributes||{}; cat=CAT[n.type]||'ev'; kd=TYPE_KO[n.type]||n.type; og=ORIGIN_S[n.origin]||n.origin||''; tt=n.display_id;
@@ -318,7 +348,7 @@ export function mountLaneGraph(container, { data, summary = {}, itemOrder = [], 
   $('fit').onclick=()=>{clearHits(); G.sel=null; renderGraph(); fitAll();};
   
   /* ---- 선택 · 초점 ---- */
-  function clearHits(){G.hitN.clear(); G.hitE.clear(); G.focus=null;}
+  function clearHits(){G.hitN.clear(); G.hitE.clear(); G.focus=null; G.evN=new Map();}
   function resolveKey(x){if(x==null) return null; if(G.view&&G.view.P.has(x)) return x; if(NB.has(x)) return x;
     const n=GD.nodes.find(n=>n.display_id===x&&n.type!=='BOMLine'&&n.type!=='SourceRow'); if(n) return n.id;
     const ap=APPS.find(a=>a.line&&(A(a.line).designators||[]).includes(x)); if(ap) return ap.line;
@@ -340,7 +370,7 @@ export function mountLaneGraph(container, { data, summary = {}, itemOrder = [], 
     return H;}
   function trace(hops,done){
     stopTrace(); clearHits();
-    hops.flat().forEach(ensureVisible);
+    showEvidence(hops.flat());
     if(!hops.length){renderGraph(); done&&done(); return;}
     renderGraph(); const s0=slot(hops[0][0]); G.hitN.add(s0); renderGraph(); fitTo([s0,slot(hops[0][1])]);
     const add=hp=>{const a=slot(hp[0]),b=slot(hp[1]); if(a&&b){G.hitE.add(pk(a,b)); G.hitN.add(a); G.hitN.add(b);}};
@@ -612,7 +642,7 @@ export function mountLaneGraph(container, { data, summary = {}, itemOrder = [], 
       return new Promise(resolve => {
         if (!pairs.length) {
           stopTrace(); clearHits();
-          nodeIds.filter(id => NB.has(id)).forEach(id => { ensureVisible(id); });
+          showEvidence(nodeIds);
           nodeIds.filter(id => NB.has(id)).forEach(id => { const s = slot(id); if (s) G.hitN.add(s); });
           renderGraph(); if (G.hitN.size) fitTo([...G.hitN], reduced() ? 0 : 600);
           resolve({ completed: true }); return;
