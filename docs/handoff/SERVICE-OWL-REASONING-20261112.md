@@ -62,6 +62,8 @@
 
 유형 불일치 6건은 모두 같은 원인이다. 투영(`service/procurement_state.py`)이 구매 요청 1·견적 4·발주 1 문서 노드에 `recordedByDocumentVersion`을 붙이는데, T-Box는 이 관계의 domain을 `BusinessRecord`로 두고 이 문서 클래스들은 `BusinessRecord`가 아니다. 이전 검사는 이를 조용히 통과시켰다. **오탐이 아니라 투영 매핑과 T-Box의 불일치**이며, T-Box는 읽기 전용이므로 투영 매핑을 고칠지는 별도 결정으로 남긴다.
 
+> **후속 (2026-11-23, DEC-H71):** 6건은 T-Box가 업무 문서의 버전 관계를 담지 못한 경우로 판단해 T-Box 새 판 `ontology-v1.4`로 고쳤다. 8874에서 깨끗한 원장의 불일치가 0건이 됐다. [기록](SERVICE-ONTOLOGY-V14-20261123.md)
+
 ### 비용 (버전당, 23개 버전)
 
 | 단계 | 중앙값 | 최대 |

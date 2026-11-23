@@ -178,12 +178,36 @@ class LedgerTests(unittest.TestCase):
         self.ledger.save_projection("DEMO-A", "INITIAL", 1, ready, "<urn:a> <urn:p> <urn:b> .")
         self.ledger.save_projection("DEMO-A", "INITIAL", 1, ready, "<urn:a> <urn:p> <urn:b> .")
         changed = deepcopy(ready)
-        changed["ontology_version"] = "different-schema"
+        changed["validation"]["engine_note"] = "changed"
         self.assert_error("READY_PROJECTION_IMMUTABLE", lambda: self.ledger.save_projection("DEMO-A", "INITIAL", 1, changed, "<urn:a> <urn:p> <urn:b> ."))
         self.assert_error("READY_PROJECTION_IMMUTABLE", lambda: self.ledger.save_projection("DEMO-A", "INITIAL", 1, blocked, "<urn:a> <urn:p> <urn:b> ."))
+        # A new schema version cannot replace a READY check with one that failed.
+        blocked_new = deepcopy(blocked); blocked_new["ontology_version"] = "next-schema"
+        self.assert_error("READY_PROJECTION_IMMUTABLE", lambda: self.ledger.save_projection("DEMO-A", "INITIAL", 1, blocked_new, "<urn:a> <urn:p> <urn:b> ."))
+        with self.db.connect() as conn:
+            self.assertEqual(conn.execute("SELECT count(*) AS n FROM service_projection_history").fetchone()["n"], 0)
         self.assertEqual(self.ledger.read(self.actor)["projection"], ready)
         with self.db.connect() as conn:
             self.assertEqual(conn.execute("SELECT status FROM outbox").fetchone()["status"], "PROJECTED")
+
+    def test_schema_change_replaces_ready_projection_and_keeps_the_old_one(self):
+        self.install()
+        payload = self.ledger.pending()[0]["payload"]
+        ready = self.projection(payload)
+        self.ledger.save_projection("DEMO-A", "INITIAL", 1, ready, "<urn:a> <urn:p> <urn:b> .")
+        newer = deepcopy(ready); newer["ontology_version"] = "next-schema"
+        self.ledger.save_projection("DEMO-A", "INITIAL", 1, newer, "<urn:c> <urn:p> <urn:d> .")
+        with self.db.connect() as conn:
+            current = conn.execute("SELECT projection,rdf_turtle FROM service_snapshots WHERE ledger_version=1").fetchone()
+            kept = conn.execute("SELECT ontology_version,projection,rdf_turtle FROM service_projection_history").fetchall()
+        self.assertEqual(current["projection"]["ontology_version"], "next-schema")
+        self.assertEqual(current["rdf_turtle"], "<urn:c> <urn:p> <urn:d> .")
+        self.assertEqual([(r["ontology_version"], r["rdf_turtle"]) for r in kept], [(ready["ontology_version"], "<urn:a> <urn:p> <urn:b> .")])
+        self.assertEqual(kept[0]["projection"]["ontology_version"], ready["ontology_version"])
+        # Once replaced, the new READY check is immutable under its own schema.
+        changed = deepcopy(newer); changed["validation"]["engine_note"] = "changed"
+        self.assert_error("READY_PROJECTION_IMMUTABLE", lambda: self.ledger.save_projection("DEMO-A", "INITIAL", 1, changed, "<urn:c> <urn:p> <urn:d> ."))
+        self.assertEqual(self.ledger.read(self.actor)["projection"], newer)
 
     def test_database_rejects_null_document_events_without_opening_record_type(self):
         for event_type, payload in (("ARBITRARY_EVENT", {}), ("EvidenceDocumentPosted", {}), ("OPENING_BALANCE_IMPORTED", {})):

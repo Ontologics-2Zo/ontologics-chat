@@ -37,6 +37,8 @@ def parse_args(argv=None):
     parser.add_argument("--model-budget-runtime-file",
                         help="Keep model budget records in another local runtime's PostgreSQL (one shared budget)")
     parser.add_argument("--model-budget-postgres-port",type=int)
+    parser.add_argument("--schema-slot",default="full-delivery-v1.3",
+                        help="Manifest slot of the T-Box/shapes to load (for example ontology-v1.4)")
     args=parser.parse_args(argv)
     if not 1<=args.port<=65535:
         parser.error("INVALID_PORT")
@@ -70,7 +72,7 @@ def main():
         identity=IdentityService(db,enabled=args.dev_mode)
         if args.dev_mode:identity.provision_dev_accounts()
         ledger=LedgerReader(db,identity)
-        catalog=OntologyCatalog.from_private_root(Path(private_root))
+        catalog=OntologyCatalog.from_private_root(Path(private_root),source_version=args.schema_slot)
         if args.import_initial:
             payload=load_initial(private_root,company_id="DEMO-A",run_id="INITIAL",profile_id="initial-baseline",imported_at=datetime.now(timezone.utc).isoformat())
             ledger.install_initial(payload,local_development=args.dev_mode)
@@ -80,7 +82,7 @@ def main():
 
         def project_pending():
             if hasattr(ledger,"advance_documents"):ledger.advance_documents()
-            for row in ledger.pending():
+            for row in ledger.pending(catalog.version):
                 result=projector.project(row["payload"],row["ledger_version"],row["company_id"],row["run_id"])
                 rdf=result.pop("rdf_turtle")
                 ledger.save_projection(row["company_id"],row["run_id"],row["ledger_version"],result,rdf)

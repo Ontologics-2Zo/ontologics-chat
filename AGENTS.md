@@ -156,3 +156,13 @@ SHACL+RDFS 옆에 OWL 2 RL 검사(`service/reasoning.py`)를 둔다. 모순(disj
 ## 답변 근거 행 묶음 · DEC-H70
 
 흐름 레인에서 답변 근거를 표시할 때 같은 묶음(BOM 행·원문 행·보드·장착 기록)의 근거가 6개 이하일 때만 펼치고, 넘으면 묶음 상자에 개수를 표시한다(`foldEvidence`). 화면 표시 규칙만 바꾸며 노드·관계·답변은 그대로다. PR #43으로 main에 병합했다.
+
+## T-Box ontology-v1.4 · DEC-H71
+
+OWL RL 검사의 유형 불일치 6건을 T-Box 새 판으로 고쳤다. 실제 T-Box는 `full-delivery-v1.3` 슬롯이며, 새 판 `ontology-v1.4`를 그 옆 비공개 입력에 따로 두었다(v1.3 파일은 변경 없음).
+
+- 변경: 업무 문서(`BusinessDocument`)·`VersionedEntity` 추가, 업무 문서와 업무 기록을 배타로 둠, `recordedByDocumentVersion`의 범위를 업무 문서까지 넓힘.
+- 판 선택: 앱은 `--schema-slot`(기본 v1.3)으로 판을 고른다. 8874만 v1.4를 쓴다.
+- 판이 바뀔 때: 최신 원장 버전만 다시 검사한다. READY 결과는 새 판에서도 통과할 때만 교체하고, 이전 결과는 `service_projection_history`에 보존한다.
+
+[기록](docs/handoff/SERVICE-ONTOLOGY-V14-20261123.md)

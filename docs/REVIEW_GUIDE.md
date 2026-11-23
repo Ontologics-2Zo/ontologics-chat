@@ -20,7 +20,7 @@
 |---|---|
 | 확정 원장은 PostgreSQL 하나 | 문서·사건·버전은 `service/ledger.py`, `service/procurement.py`. RDF와 Neo4j는 원장 버전별 투영(`service/projections.py`)입니다. |
 | 승인과 반영 분리 | 작성자 ≠ 승인자를 서버가 검사하고, 반영 때 정확한 버전과 해시를 다시 확인합니다. 모든 쓰기는 트랜잭션·멱등키·감사 기록을 씁니다. |
-| 온톨로지 검사 | 전체 T-Box(클래스 52, 관계 74, SHACL shape 79)로 버전마다 SHACL 검사를 하고, OWL 2 RL 추론으로 모순과 유형 불일치를 따로 보고합니다(`service/reasoning.py`). |
+| 온톨로지 검사 | 전체 T-Box(클래스 52, 관계 74, SHACL shape 79)로 버전마다 SHACL 검사를 하고, OWL 2 RL 추론으로 모순과 유형 불일치를 따로 보고합니다(`service/reasoning.py`). 검사가 찾은 불일치를 T-Box 새 판(`ontology-v1.4`, 클래스 54)으로 고친 기록은 [SERVICE-ONTOLOGY-V14-20261123.md](handoff/SERVICE-ONTOLOGY-V14-20261123.md)에 있습니다. |
 | 모르는 값은 모른다고 표시 | 미확인 매핑·단위·재고는 0이 아니라 UNKNOWN으로 남깁니다. 가정(예: 계획 수율 94%, 일정 가정)은 원장 사실과 구분해 표시합니다. |
 | 모델 사용 범위 제한 | Agent는 허용된 기능 목록 안에서만 움직이고, 모델에는 기능 플래그와 근거 ID만 보냅니다. 수량은 서버가 채우고 검증에 실패하면 원장 답변만 보여 줍니다. |
 

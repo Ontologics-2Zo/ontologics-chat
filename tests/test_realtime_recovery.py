@@ -88,3 +88,19 @@ class ProjectionRetryTests(unittest.TestCase):
             conn.execute("UPDATE service_snapshots SET projection=%s WHERE ledger_version=%s",
                          (Jsonb({"state": "NOT_READY", "neo4j": {"state": "SKIPPED"}, "validation": {"state": "VIOLATIONS"}}), versions[1]))
         self.assertEqual(f.ledger.pending(), [])
+
+    def test_schema_change_projects_only_the_latest_version_again(self):
+        from psycopg.types.json import Jsonb
+        f = reservation_fixtures.ReservationDomainTests("runTest"); self.addCleanup(f.doCleanups); f.setUp()
+        done = {"state": "READY", "neo4j": {"state": "READY"}, "validation": {"state": "CONFORMS"}, "ontology_version": "old"}
+        with f.db.connect() as conn:
+            versions = [row["ledger_version"] for row in conn.execute("SELECT ledger_version FROM service_snapshots ORDER BY 1").fetchall()]
+            conn.execute("UPDATE service_snapshots SET projection=%s", (Jsonb(done),))
+        self.assertGreater(len(versions), 1)
+        self.assertEqual(f.ledger.pending(), [])
+        self.assertEqual(f.ledger.pending("old"), [])
+        # Older versions keep the projection they were checked with.
+        self.assertEqual([row["ledger_version"] for row in f.ledger.pending("new")], versions[-1:])
+        with f.db.connect() as conn:
+            conn.execute("UPDATE service_snapshots SET projection=%s WHERE ledger_version=%s", (Jsonb({**done, "ontology_version": "new"}), versions[-1]))
+        self.assertEqual(f.ledger.pending("new"), [])
