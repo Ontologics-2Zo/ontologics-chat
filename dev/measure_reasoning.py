@@ -20,7 +20,7 @@ Faults (each in its own copy of the latest snapshot)
   F3 one relationship pointed at an entity of another class (seeded sample)
 
 Usage:
-  PRIVATE_INPUT_ROOT=... .venv/bin/python dev/measure_reasoning.py --runtime-file <runtime.json> [--samples 40]
+  PRIVATE_INPUT_ROOT=... .venv/bin/python dev/measure_reasoning.py --runtime-file <runtime.json> [--samples 40] [--schema-slot ontology-v1.4]
 """
 
 from __future__ import annotations
@@ -50,6 +50,7 @@ def main() -> int:
     parser.add_argument("--runtime-file", required=True)
     parser.add_argument("--samples", type=int, default=40)
     parser.add_argument("--seed", type=int, default=7)
+    parser.add_argument("--schema-slot", default="full-delivery-v1.3")
     args = parser.parse_args()
     root = os.environ.get("PRIVATE_INPUT_ROOT")
     if not root:
@@ -58,7 +59,7 @@ def main() -> int:
     with psycopg.connect(url) as conn:
         conn.read_only = True
         rows = conn.execute("SELECT ledger_version, payload FROM service_snapshots ORDER BY ledger_version").fetchall()
-    projector = OntologyProjector(OntologyCatalog.from_private_root(root))
+    projector = OntologyProjector(OntologyCatalog.from_private_root(root, source_version=args.schema_slot))
 
     def build(payload, version):
         meta = payload.get("metadata", {})
@@ -144,7 +145,7 @@ def main() -> int:
         "faults": faults,
         "timing": {"graph_build": ms([c["t_build"] for c in clean]), "shacl_rdfs": ms([c["t_shacl"] for c in clean]),
                    "owl_rl_check": ms([c["t_owl"] for c in clean])},
-        "settings": {"samples": args.samples, "seed": args.seed},
+        "settings": {"samples": args.samples, "seed": args.seed, "schema_slot": args.schema_slot},
     }, ensure_ascii=False, indent=1))
     return 0
 

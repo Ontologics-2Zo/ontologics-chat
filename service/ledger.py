@@ -345,13 +345,19 @@ class LedgerReader:
             result["metadata"]["snapshot_id"] = sha256(canonical_bytes([principal.company_id,run_id,row["ledger_version"],row["content_hash"]])).hexdigest()
             return result
 
-    def pending(self):
+    def pending(self, ontology_version: str | None = None):
         with self.db.connect() as conn:
             # Retry versions never projected and those that failed on the graph
             # store (infrastructure). A SHACL violation is content: not retried.
-            return conn.execute("SELECT company_id,run_id,ledger_version,payload FROM service_snapshots WHERE projection IS NULL "
+            # When the schema version changed, the latest version of each run is
+            # projected again under the current schema; older versions keep the
+            # projection (and schema version) they were checked with.
+            return conn.execute("SELECT company_id,run_id,ledger_version,payload FROM service_snapshots s WHERE projection IS NULL "
                                 "OR (projection->>'state' = 'NOT_READY' AND COALESCE(projection->'neo4j'->>'state','') <> 'READY' "
-                                "AND COALESCE(projection->'validation'->>'state','') <> 'VIOLATIONS') ORDER BY company_id,ledger_version").fetchall()
+                                "AND COALESCE(projection->'validation'->>'state','') <> 'VIOLATIONS') "
+                                "OR (%(ontology)s::text IS NOT NULL AND projection->>'ontology_version' IS DISTINCT FROM %(ontology)s::text "
+                                "AND ledger_version = (SELECT max(ledger_version) FROM service_snapshots l WHERE l.company_id=s.company_id AND l.run_id=s.run_id)) "
+                                "ORDER BY company_id,ledger_version", {"ontology": ontology_version}).fetchall()
 
     def advance_documents(self):
         """Apply supported committed documents to immutable read snapshots.
@@ -420,7 +426,7 @@ class LedgerReader:
         if isinstance(version, bool) or not isinstance(version, int) or version < 1:
             raise ServiceError("PROJECTION_VERSION_MISMATCH")
         with self.db.connect() as conn:
-            row = conn.execute("SELECT payload,projection FROM service_snapshots WHERE company_id=%s AND run_id=%s AND ledger_version=%s FOR UPDATE", (company,run,version)).fetchone()
+            row = conn.execute("SELECT payload,projection,rdf_turtle FROM service_snapshots WHERE company_id=%s AND run_id=%s AND ledger_version=%s FOR UPDATE", (company,run,version)).fetchone()
             if not row:
                 raise ServiceError("SNAPSHOT_NOT_FOUND", 404)
             if not isinstance(projection, dict) or projection.get("ledger_version") != version or projection.get("projection_version") != version:
@@ -453,9 +459,19 @@ class LedgerReader:
             if not isinstance(rdf_turtle, str) or not rdf_turtle:
                 raise ServiceError("PROJECTION_RDF_REQUIRED")
             if row["projection"] and row["projection"].get("state") == "READY":
-                if _projection_hash(row["projection"]) != _projection_hash(projection):
+                previous = row["projection"]
+                schema_changed = previous.get("ontology_version") != projection["ontology_version"]
+                if not schema_changed or projection.get("state") != "READY":
+                    # Same schema: a READY check never changes. A new schema may
+                    # replace it only with a check that also passed.
+                    if _projection_hash(previous) != _projection_hash(projection):
+                        raise ServiceError("READY_PROJECTION_IMMUTABLE")
+                    return
+                if not isinstance(previous.get("ontology_version"), str) or not previous["ontology_version"]:
                     raise ServiceError("READY_PROJECTION_IMMUTABLE")
-                return
+                conn.execute("INSERT INTO service_projection_history (company_id,run_id,ledger_version,ontology_version,projection,rdf_turtle) "
+                             "VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",
+                             (company,run,version,previous["ontology_version"],Jsonb(previous),row["rdf_turtle"]))
             conn.execute("UPDATE service_snapshots SET projection=%s,rdf_turtle=%s WHERE company_id=%s AND run_id=%s AND ledger_version=%s", (Jsonb(projection),rdf_turtle,company,run,version))
             if projection.get("state") == "READY":
                 conn.execute("UPDATE outbox SET status='PROJECTED' WHERE company_id=%s AND ledger_version=%s", (company,version))

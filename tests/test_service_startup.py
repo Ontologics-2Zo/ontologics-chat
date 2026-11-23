@@ -21,6 +21,10 @@ class ServiceStartupTests(unittest.TestCase):
         self.assertEqual((args.postgres_port,args.neo4j_http_port,args.neo4j_bolt_port),(55432,57474,57687))
         self.assertFalse(args.import_initial)
         self.assertIsNone(args.agent_env_file)
+        self.assertEqual(args.schema_slot,"full-delivery-v1.3")
+
+    def test_schema_slot_selects_another_manifest_slot(self):
+        self.assertEqual(self.args("--schema-slot","ontology-v1.4").schema_slot,"ontology-v1.4")
 
     def test_independent_ports_still_require_exact_loopback_runtime(self):
         args=self.args("--origin-host","localhost","--port","8872",
