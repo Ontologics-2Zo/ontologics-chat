@@ -289,20 +289,27 @@ export function mountGraph(container, { bundle, onSelect = () => {}, onAsk = () 
     detail.hidden = false;
   }
 
-  function render() {
-    for (const filter of legend.querySelectorAll('button')) filter.setAttribute('aria-pressed', String(selectedTypes.has(filter.dataset.nodeType)));
-    const fragment = document.createDocumentFragment();
+  // Elements are built once per mount; the graph's nodes, edges and routes are
+  // fixed. A state change (replay step, selection, type filter) only toggles
+  // classes and moves groups between layers. Rebuilding ~6,000 SVG elements on
+  // every replay step stalled the animation.
+  let built = null;
+  function build() {
     const defs = svgNode('defs');
     const arrow = svgNode('marker', { id: 'mks-relation-arrow', viewBox: '0 0 10 10', refX: 8, refY: 5, markerWidth: 5, markerHeight: 5, orient: 'auto-start-reverse' });
     arrow.append(svgNode('path', { d: 'M 0 1 L 9 5 L 0 9 z', fill: 'context-stroke' })); defs.append(arrow);
-    const edgeLayer = svgNode('g', { class: 'mks-edges' });
-    const nodeLayer = svgNode('g', { class: 'mks-nodes' });
+    // Dimmed objects share one layer opacity. Per-object opacity made every
+    // dimmed node and relation its own compositing group, so each frame of a
+    // camera move or line reveal repainted about a thousand groups.
+    const layers = {
+      edgeDim: svgNode('g', { class: 'mks-edges mks-dim-layer' }), edge: svgNode('g', { class: 'mks-edges' }),
+      nodeDim: svgNode('g', { class: 'mks-nodes mks-dim-layer' }), node: svgNode('g', { class: 'mks-nodes' }),
+    };
+    const edgeGroups = [], nodeGroups = [];
     for (const edge of edges) {
       const source = nodeById.get(edge.source_node_id);
       const target = nodeById.get(edge.target_node_id);
-      const group = svgNode('g', { class: `mks-edge${['candidate', 'draft'].includes(edge.state) ? ` mks-${edge.state}` : ''}${highlightedEdges.has(edge.edge_id) ? ' mks-hit' : ''}`, 'data-edge-id': edge.edge_id });
-      if (!selectedTypes.has(source.node_type) || !selectedTypes.has(target.node_type)) group.classList.add('mks-type-muted');
-      if (activeEdges.has(edge.edge_id)) group.classList.add('mks-active-step');
+      const group = svgNode('g', { class: `mks-edge${['candidate', 'draft'].includes(edge.state) ? ` mks-${edge.state}` : ''}`, 'data-edge-id': edge.edge_id });
       if (isSourceRow(source) || isSourceRow(target)) group.classList.add('mks-row-evidence');
       const title = svgNode('title', {}, `${source.node_id} → ${target.node_id}: ${edge.relation_type} (${edge.label || ''})`);
       const route = routes.get(edge.edge_id);
@@ -312,17 +319,12 @@ export function mountGraph(container, { bundle, onSelect = () => {}, onAsk = () 
       hitArea.addEventListener('click', event => { event.stopPropagation(); showEdge(edge); });
       hitArea.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); showEdge(edge); } });
       group.append(title, line, hitArea, label);
-      if (activeEdges.has(edge.edge_id)) group.append(svgNode('path', {
-        class: 'mks-edge-progress', d: route.d, pathLength: 1, 'aria-hidden': 'true',
-      }));
-      edgeLayer.append(group);
+      edgeGroups.push({ edge, source, target, group, route, progress: null, layer: null });
     }
     for (const node of positions) {
       const attributes = node.attributes || {};
       const tone = ['bad', 'warn', 'ok', 'info'].includes(node.state_tone) ? node.state_tone : null;
-      const group = svgNode('g', { class: `mks-node${tone ? ` mks-tone-${tone}` : ''}${node.state === 'candidate' || node.state === 'draft' ? ' mks-draft' : ''}${highlightedNodes.has(node.node_id) ? ' mks-hit' : ''}${selected === node.node_id ? ' mks-selected' : ''}`, transform: `translate(${node.x},${node.y})`, tabindex: 0, role: 'button', 'aria-label': `${attributes.kind_label || node.node_type} ${node.node_id}`, 'data-node-id': node.node_id });
-      if (!selectedTypes.has(node.node_type)) group.classList.add('mks-type-muted');
-      if (activeNodes.has(node.node_id)) group.classList.add('mks-active-step');
+      const group = svgNode('g', { class: `mks-node${tone ? ` mks-tone-${tone}` : ''}${node.state === 'candidate' || node.state === 'draft' ? ' mks-draft' : ''}`, transform: `translate(${node.x},${node.y})`, tabindex: 0, role: 'button', 'aria-label': `${attributes.kind_label || node.node_type} ${node.node_id}`, 'data-node-id': node.node_id });
       if (isSourceRow(node)) group.classList.add('mks-source-row');
       const kind = entityType(node);
       group.classList.add(`mks-area-${AREA_OF[kind] || 'ev'}`);
@@ -336,11 +338,45 @@ export function mountGraph(container, { bundle, onSelect = () => {}, onAsk = () 
       if (attributes.badge) group.append(svgNode('text', { class: 'mks-node-badge', y: labelY + 27, 'text-anchor': 'middle' }, attributes.badge));
       group.addEventListener('click', event => { event.stopPropagation(); if (!dragMoved) select(node.node_id); });
       group.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); select(node.node_id); } });
-      nodeLayer.append(group);
+      nodeGroups.push({ node, group, layer: null });
     }
-    fragment.append(defs, edgeLayer, nodeLayer);
-    svg.replaceChildren(fragment);
-    svg.classList.toggle('mks-dimming', highlightedNodes.size > 0);
+    svg.replaceChildren(defs, layers.edgeDim, layers.edge, layers.nodeDim, layers.node);
+    built = { layers, edgeGroups, nodeGroups };
+  }
+
+  // Keeps the original drawing order inside each layer whenever any group changes layer.
+  function place(items, layerFor) {
+    if (!items.some(item => item.layer !== layerFor(item))) return;
+    for (const item of items) { item.layer = layerFor(item); item.layer.append(item.group); }
+  }
+
+  function render() {
+    if (destroyed) return;
+    if (!built) build();
+    for (const filter of legend.querySelectorAll('button')) filter.setAttribute('aria-pressed', String(selectedTypes.has(filter.dataset.nodeType)));
+    const dimming = highlightedNodes.size > 0, { layers } = built;
+    for (const item of built.edgeGroups) {
+      const { edge, group } = item, id = edge.edge_id, active = activeEdges.has(id);
+      item.hit = highlightedEdges.has(id);
+      group.classList.toggle('mks-hit', item.hit);
+      group.classList.toggle('mks-type-muted', !selectedTypes.has(item.source.node_type) || !selectedTypes.has(item.target.node_type));
+      group.classList.toggle('mks-active-step', active);
+      if (active && !item.progress) {
+        item.progress = svgNode('path', { class: 'mks-edge-progress', d: item.route.d, pathLength: 1, 'aria-hidden': 'true' });
+        group.append(item.progress);
+      } else if (!active && item.progress) { item.progress.remove(); item.progress = null; }
+    }
+    for (const item of built.nodeGroups) {
+      const { node, group } = item;
+      item.hit = highlightedNodes.has(node.node_id);
+      group.classList.toggle('mks-hit', item.hit);
+      group.classList.toggle('mks-selected', selected === node.node_id);
+      group.classList.toggle('mks-type-muted', !selectedTypes.has(node.node_type));
+      group.classList.toggle('mks-active-step', activeNodes.has(node.node_id));
+    }
+    place(built.edgeGroups, item => dimming && !item.hit ? layers.edgeDim : layers.edge);
+    place(built.nodeGroups, item => dimming && !item.hit ? layers.nodeDim : layers.node);
+    svg.classList.toggle('mks-dimming', dimming);
     svg.classList.toggle('mks-replaying', replaying);
     if (selected) showDetail(selected);
   }
