@@ -130,7 +130,7 @@ class Element {
   constructor(tag) { this.tagName = tag.toUpperCase(); this.children = []; this.attributes = {}; this.dataset = {}; this.events = {}; this.className = ''; this._text = ''; this.viewHistory = []; this.style = { setProperty(name, value) { this[name] = value; }, getPropertyValue(name) { return this[name]; } }; }
   set textContent(value) { this._text = String(value); this.children = []; }
   get textContent() { return this._text + this.children.map(child => child.textContent).join(''); }
-  append(...children) { for (const child of children) { child.parent = this; this.children.push(child); } }
+  append(...children) { for (const child of children) { if (child.parent) child.parent.children = child.parent.children.filter(item => item !== child); child.parent = this; this.children.push(child); } }
   replaceChildren(...children) { this.children = []; this._text = ''; this.append(...children); }
   setAttribute(name, value) { this.attributes[name] = String(value); if (name === 'class') this.className = String(value); if (name === 'viewBox') this.viewHistory.push(String(value)); }
   addEventListener(name, callback) { this.events[name] = callback; }
@@ -284,4 +284,29 @@ test('a new replay supersedes the old one and reduced motion reveals the same fu
     assert.deepEqual(await reduced.view.replay(reduced.evidence), { completed: true }); reduced.frame();
     assert.equal(reduced.timers.size, 0); assert.equal(classed(reduced.container, 'mks-hit').length, 9);
   } finally { reduced.restore(); }
+});
+
+test('replay steps restyle the same elements and dimmed objects share one layer', async () => {
+  const h = graphHarness();
+  try {
+    h.frame();
+    const nodesBefore = classed(h.container, 'mks-node'), edgesBefore = classed(h.container, 'mks-edge');
+    const playback = h.view.replay({ nodeIds: ['a', 'b'], edgeIds: ['ab'] });
+    await h.step(); assert.deepEqual(await playback, { completed: true });
+    // Same element objects: a state change never rebuilds the SVG.
+    const same = (now, before) => now.length === before.length && now.every(item => before.includes(item));
+    assert.ok(same(classed(h.container, 'mks-node'), nodesBefore));
+    assert.ok(same(classed(h.container, 'mks-edge'), edgesBefore));
+    const dimLayers = classed(h.container, 'mks-dim-layer');
+    assert.equal(dimLayers.length, 2, 'one dim layer for relations and one for objects');
+    const [dimEdges, dimNodes] = dimLayers;
+    assert.deepEqual(dimNodes.children.map(n => n.attributes['data-node-id']).sort(), ['bom', 'line', 'source']);
+    assert.deepEqual(dimEdges.children.map(n => n.attributes['data-edge-id']).sort(), ['bbom', 'line-parent', 'row-pair']);
+    assert.ok(classed(h.container, 'mks-hit').every(n => !n.parent.className.includes('mks-dim-layer')));
+    // Clearing the highlight returns everything to the normal layers in the original order.
+    h.svg.events.click({ target: h.svg });
+    assert.equal(classed(h.container, 'mks-dim-layer').reduce((sum, layer) => sum + layer.children.length, 0), 0);
+    assert.deepEqual(classed(h.container, 'mks-node').map(n => n.attributes['data-node-id']), nodesBefore.map(n => n.attributes['data-node-id']));
+    assert.equal(classed(h.container, 'mks-node').length, 5); assert.equal(classed(h.container, 'mks-edge').length, 4);
+  } finally { h.restore(); }
 });

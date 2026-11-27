@@ -166,3 +166,7 @@ OWL RL 검사의 유형 불일치 6건을 T-Box 새 판으로 고쳤다. 실제 
 - 판이 바뀔 때: 최신 원장 버전만 다시 검사한다. READY 결과는 새 판에서도 통과할 때만 교체하고, 이전 결과는 `service_projection_history`에 보존한다.
 
 [기록](docs/handoff/SERVICE-ONTOLOGY-V14-20261123.md)
+
+## 그래프 그리기 비용 · DEC-H72
+
+프로젝트 그래프(`web/mks2/graph.js`)는 요소를 한 번만 만들고 상태 변화는 클래스와 층 이동으로 처리한다. 흐림은 `mks-dim-layer` 층 하나의 opacity로, 숨긴 이름표는 `visibility`로, BOM 행 관계는 `stroke-opacity`로 표현한다. 객체마다 opacity를 거는 방식은 큰 화면에서 재생을 끊기게 하므로 다시 쓰지 않는다. 노드·관계·좌표·재생 순서는 그대로다. [기록](docs/handoff/SERVICE-GRAPH-PAINT-20261127.md)

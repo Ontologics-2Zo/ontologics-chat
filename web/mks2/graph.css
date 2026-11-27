@@ -46,13 +46,14 @@
 .mks-edge.mks-candidate path { stroke-dasharray: 3 4; }
 .mks-edge.mks-draft path { stroke-dasharray: 5 4; }
 .mks-edge path.mks-edge-hit-area { stroke: transparent; stroke-width: 12px; cursor: pointer; }
-.mks-edge text { font: 10.5px var(--sans, sans-serif); fill: var(--fg3, #64748b); opacity: 0; paint-order: stroke; stroke: var(--bg, #f4f6fa); stroke-width: 4px; stroke-linejoin: round; pointer-events: none; }
-.mks-edge:hover text, .mks-edge:focus-within text { opacity: 1; }
+.mks-edge text { font: 10.5px var(--sans, sans-serif); fill: var(--fg3, #64748b); visibility: hidden; paint-order: stroke; stroke: var(--bg, #f4f6fa); stroke-width: 4px; stroke-linejoin: round; pointer-events: none; }
+/* Hidden labels use visibility, not opacity 0: about 700 transparent labels were still painted on every frame. */
+.mks-edge:hover text, .mks-edge:focus-within text { visibility: visible; }
 .mks-edge.mks-hit > path:not(.mks-edge-hit-area) { stroke: var(--accent, #4f46e5); stroke-width: 2.6px; }
 .mks-replaying .mks-edge.mks-active-step > path.mks-edge-line { stroke:var(--edge, #b8c2d1); }
 .mks-edge > path.mks-edge-progress { display:none; pointer-events:none; }
 .mks-replaying .mks-edge.mks-active-step > path.mks-edge-progress { display:block; stroke:var(--accent, #4f46e5); stroke-width:2.6px; stroke-linecap:round; stroke-dasharray:1; stroke-dashoffset:var(--mks-reveal-offset, 1); }
-.mks-edge.mks-hit text { opacity: 1; fill: var(--accent, #4f46e5); font-weight: 600; }
+.mks-edge.mks-hit text { visibility: visible; fill: var(--accent, #4f46e5); font-weight: 600; }
 .mks-node { cursor: pointer; }
 .mks-node-shape { fill: var(--node, #fff); stroke: var(--node-line, #94a3b8); stroke-width: 1.6px; }
 .mks-node text { paint-order: stroke; stroke: var(--bg, #f4f6fa); stroke-width: 3px; stroke-linejoin: round; }
@@ -71,7 +72,8 @@
 .mks-node.mks-selected .mks-node-shape, .mks-node.mks-hit .mks-node-shape { stroke: var(--accent, #4f46e5); stroke-width: 3px; }
 .mks-node-ring { fill: none; stroke: var(--accent, #4f46e5); stroke-width: 2px; opacity: 0; transform-box: fill-box; transform-origin: center; }
 .mks-replaying .mks-node.mks-active-step .mks-node-ring { animation: mks-node-pulse 1.2s ease-out infinite; }
-.mks-dimming .mks-node:not(.mks-hit), .mks-dimming .mks-edge:not(.mks-hit) { opacity: .15; transition: opacity .2s; }
+/* graph.js places dimmed objects in this layer: one group opacity instead of one per object. */
+.mks-dim-layer { opacity: .15; }
 .mks-node.mks-type-muted, .mks-edge.mks-type-muted { opacity:.24; }
 .mks-graph-detail { position: absolute; left: 14px; bottom: 14px; width: min(340px, calc(100% - 28px)); box-sizing: border-box; padding: 12px 14px; border: 1px solid var(--line, #d7dee8); border-radius: 10px; background: var(--surface, #fff); box-shadow: 0 6px 20px rgb(15 23 42 / 10%); color: var(--fg, #0f172a); font-size: 12.5px; line-height: 1.55; }
 .mks-detail-kind { color: var(--fg3, #64748b); font-size: 11px; font-weight: 600; letter-spacing: .04em; }
@@ -94,14 +96,15 @@
 .mks-node-shadow { fill:var(--node-line, #94a3b8); opacity:.16; pointer-events:none; }
 .mks-source-row .mks-node-id { font-size:10px; }
 .mks-source-row .mks-node-label { font-size:9.5px; }
-.mks-edge.mks-row-evidence { opacity:.22; }
-.mks-edge.mks-row-evidence.mks-hit { opacity:.5; }
-.mks-replaying .mks-edge.mks-row-evidence.mks-active-step { opacity:.72; }
+/* Faint BOM row relations use stroke-opacity on their paths, not a group opacity per relation (one compositing group each). */
+.mks-edge.mks-row-evidence > path:not(.mks-edge-hit-area) { stroke-opacity:.22; }
+.mks-edge.mks-row-evidence.mks-hit > path:not(.mks-edge-hit-area) { stroke-opacity:.5; }
+.mks-replaying .mks-edge.mks-row-evidence.mks-active-step > path:not(.mks-edge-hit-area) { stroke-opacity:.72; }
 .mks-replaying .mks-edge.mks-row-evidence.mks-active-step > path.mks-edge-progress { stroke-width:1.5px; }
 .mks-graph-svg .mks-edge.mks-row-evidence > path.mks-edge-line { stroke-width:1px; stroke-dasharray:none; animation:none; }
-.mks-edge.mks-row-evidence text { opacity:0; }
-.mks-edge.mks-row-evidence:hover, .mks-edge.mks-row-evidence:focus-within { opacity:1; }
-.mks-edge.mks-row-evidence:hover text, .mks-edge.mks-row-evidence:focus-within text { opacity:1; }
+.mks-edge.mks-row-evidence text { visibility:hidden; }
+.mks-edge.mks-row-evidence:hover > path:not(.mks-edge-hit-area), .mks-edge.mks-row-evidence:focus-within > path:not(.mks-edge-hit-area) { stroke-opacity:1; }
+.mks-edge.mks-row-evidence:hover text, .mks-edge.mks-row-evidence:focus-within text { visibility:visible; }
 .mks-graph-detail { max-height:45%; overflow:auto; z-index:2; }
 @media (max-width:700px) { .mks-graph-legend { top:88px; } .mks-graph-tools { justify-content:flex-start; } .mks-graph-status { top:126px; } }
 
