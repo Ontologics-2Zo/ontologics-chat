@@ -33,6 +33,10 @@
 
 ![같은 질의의 근거 경로를 실제 그래프에서 확대](docs/images/overview/graph_capture.png)
 
+![LOT 추적 질문의 근거 경로 재생](docs/images/overview/lot-trace-replay.gif)
+
+*원장 v23, 프로젝트 그래프. "LOT-0016-351287는 어느 보드·출하·도착까지 연결됐어?"에 답하면서 근거 관계를 하나씩 확대해 그린다. 소비 30개 → 보드 30대 → 입고·출하·고객 도착 30대. 모델 호출 0회, 2배속.*
+
 **사건이 생기면 관련 대화만 다시 알린다**
 
 ![운영 대시보드 · 업무 에이전트 답변](docs/images/overview/dashboard_agent_qa.png)

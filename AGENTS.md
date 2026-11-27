@@ -151,7 +151,7 @@ SHACL+RDFS 옆에 OWL 2 RL 검사(`service/reasoning.py`)를 둔다. 모순(disj
 
 ## README 개요 캡처 공개 예외 · DEC-H69
 
-메인 README 맨 위 프로젝트 개요의 `docs/images/overview/` 화면 캡처(공개 하드웨어 BOM의 행·부품 이름이 보임)는 사용자의 명시적 승인으로 공개한다. 이 예외는 그 캡처에만 적용하며, 원본 BOM 파일·공식 원문·MK-S2 원본 HTML/fixture·평가 원문은 계속 Git 밖에 둔다. 새 캡처를 공개하려면 다시 승인을 받는다.
+메인 README 맨 위 프로젝트 개요의 `docs/images/overview/` 화면 캡처(공개 하드웨어 BOM의 행·부품 이름이 보임)는 사용자의 명시적 승인으로 공개한다. 이 예외는 그 캡처에만 적용하며, 원본 BOM 파일·공식 원문·MK-S2 원본 HTML/fixture·평가 원문은 계속 Git 밖에 둔다. 새 캡처를 공개하려면 다시 승인을 받는다. README의 LOT 추적 재생 GIF(`lot-trace-replay.gif`)는 DEC-H73으로 승인됐다.
 
 ## 답변 근거 행 묶음 · DEC-H70
 
