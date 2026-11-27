@@ -430,6 +430,7 @@ class ServiceApiIntegrationTests(unittest.TestCase):
                   "/mks2/twin2.js": "mks2/twin2.js", "/mks2/twin2.css": "mks2/twin2.css",
                   "/mks2/material_watch.js": "mks2/material_watch.js",
                   "/mks2/reasoning_panel.js": "mks2/reasoning_panel.js",
+                  "/mks2/radial.js": "mks2/radial.js", "/mks2/radial.css": "mks2/radial.css",
                   "/mks2/vendor/three/three.module.min.js": "mks2/vendor/three/three.module.min.js",
                   "/mks2/vendor/three/OrbitControls.js": "mks2/vendor/three/OrbitControls.js",
                   "/mks2/vendor/three/CSS2DRenderer.js": "mks2/vendor/three/CSS2DRenderer.js"}

@@ -61,6 +61,8 @@ async function setup({ animated = false, reduced = false, agent = 'fake' } = {})
     mountGraph: () => ({ destroy() {}, cancelReplay() {}, resize() {}, reset() {}, focus() {}, replay() {} }),
     // DEC-H47 relationship graph (#graph); the existing project graph is mountGraph (#network).
     mountLaneGraph: () => ({ destroy() {}, cancelReplay() {}, resize() {}, reset() {}, focus() {}, replay() {}, setLag() {} }),
+    // Radial hop-distance view (#radial).
+    mountRadial: () => ({ destroy() {}, cancelReplay() {}, resize() {}, focus() {}, replay() {} }),
     // The digital twin (#twin2, DEC-H65).
     mountTwin2: (stage, options) => {
       const instance = { options, highlights: [], active: [], destroyed: false, resets: 0,
