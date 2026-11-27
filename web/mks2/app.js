@@ -4,6 +4,7 @@ import { mountLaneGraph } from './lanegraph.js';
 import { renderQueryAnswer, updateAiSummary } from './query.js';
 import { mountTwin as mountTwin2 } from './twin2.js';
 import { mountReasoningPanel } from './reasoning_panel.js';
+import { mountRadial } from './radial.js';
 
 // UI state is ephemeral. Identity, quantities, versions and answers come from the server.
 const $ = id => document.getElementById(id);
@@ -18,7 +19,7 @@ function button(text, action, className = 'btn sm') {
   node.type = 'button'; node.addEventListener('click', action); return node;
 }
 // graph = project ontology graph tab (#network); lane = MK-S2 relationship graph (#graph).
-let snapshot, ontology, graph, lane, dashboard, twin2, identity, csrfToken;
+let snapshot, ontology, graph, lane, dashboard, twin2, radial, identity, csrfToken;
 let liveEnabled = true;
 const handledEvents = new Set();
 let contextId, twinContextId, noticeTimer, generation = 0, replayGeneration = 0, schemaMode = false;
@@ -31,7 +32,7 @@ refreshButton.id = 'refresh-ledger'; refreshButton.hidden = true;
 $('reset').before(refreshButton);
 const panels = {};
 // DEC-H65: the original digital twin tab is removed; #twin2 is the digital twin.
-const SCREENS = ['graph', 'dashboard', 'network', 'twin2'];
+const SCREENS = ['graph', 'dashboard', 'network', 'radial', 'twin2'];
 const TWIN_SCREENS = new Set(['twin2']);
 // One toolbar button next to 초기화 opens or closes the current screen's assistant panel.
 const panelControls = {};
@@ -64,7 +65,7 @@ function notify(text, action = null) {
   }
   clearTimeout(noticeTimer); noticeTimer = setTimeout(() => { notice.hidden = true; }, action ? 9000 : 4500);
 }
-function cancelPendingReplay() { replayGeneration++; graph?.cancelReplay(); lane?.cancelReplay(); }
+function cancelPendingReplay() { replayGeneration++; graph?.cancelReplay(); lane?.cancelReplay(); radial?.cancelReplay(); }
 // A completed server answer has its own presentation lifetime. Graph playback
 // must never cancel its text, and old answers keep their original full content.
 function settleAnswer(panel, discard = false) {
@@ -140,7 +141,7 @@ function updateTwinActivity() {
 function setContext(value) {
   contextId = typeof value === 'string' ? value : value?.node_id ?? value?.id;
   if (!contextId) return;
-  for (const name of ['graph', 'dashboard', 'network']) {
+  for (const name of ['graph', 'dashboard', 'network', 'radial']) {
     const panel = panels[name];
     panel.context.replaceChildren(document.createTextNode('맥락 '), button(labelFor(contextId), () => focusEvidence(contextId), 'chip'),
       document.createTextNode(` 원장 v${snapshot.meta.ledger_version}`));
@@ -328,7 +329,7 @@ function createPanel(name) {
   clearAgentWaiting(panels[name]);
   const root = $(`${name}-panel`); root.replaceChildren();
   const heading = element('div', 'panel-heading');
-  const title = name === 'dashboard' ? '업무 에이전트' : name === 'network' ? '프로젝트 그래프 질의' : name === 'twin2' ? '디지털 트윈 질의' : '업무 AI 질의';
+  const title = name === 'dashboard' ? '업무 에이전트' : name === 'network' ? '프로젝트 그래프 질의' : name === 'radial' ? '홉 거리 그래프 질의' : name === 'twin2' ? '디지털 트윈 질의' : '업무 AI 질의';
   heading.append(element('h2', '', title), element('span', 'tag', '원장 근거 조회'));
   // Collapse the assistant into a round icon button so the dashboard or graph gets
   // the full width. A per-screen browser preference only; nothing is sent or stored on the server.
@@ -571,12 +572,12 @@ async function runQuery(name, question) {
     let activeReplay = null;
     const replayEvidence = (navigate = false) => evidenceAtVersion(() => {
       cancelPendingReplay();
-      const network = name === 'network';
+      const network = name === 'network', hopView = name === 'radial';
       if (network && schemaMode) { schemaMode = false; mountCurrentGraph(); }
-      if (navigate) location.hash = network ? '#network' : '#graph';
+      if (navigate) location.hash = network ? '#network' : hopView ? '#radial' : '#graph';
       const replay = ++replayGeneration, playGeneration = generation;
       activeReplay = replay;
-      const target = network ? graph : lane;
+      const target = network ? graph : hopView ? radial : lane;
       // An answer without its own path still shows a connected flow: the round
       // to the focus item (for example the short material) over recorded relations.
       let flow = hops;
@@ -590,7 +591,7 @@ async function runQuery(name, question) {
         () => generation === playGeneration && replay === replayGeneration);
     });
     const animateAnswer = answerVisible(name);
-    const waitForGraph = (name === 'graph' || name === 'network') && ids.length > 0 && animateAnswer
+    const waitForGraph = (name === 'graph' || name === 'network' || name === 'radial') && ids.length > 0 && animateAnswer
       && !globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches
       && typeof Intl.Segmenter === 'function' && typeof requestAnimationFrame === 'function'
       && typeof cancelAnimationFrame === 'function';
@@ -693,7 +694,7 @@ async function showReasoning(target) {
 function invalidateView() {
   for (const panel of Object.values(panels)) { settleAnswer(panel, true); clearAgentWaiting(panel); }
   generation++; requests.abort(); requests = new AbortController(); cancelPendingReplay();
-  graph?.destroy(); lane?.destroy(); dashboard?.destroy(); twin2?.destroy(); graph = null; lane = null; dashboard = null; twin2 = null; snapshot = null; ontology = null; twinContextId = null;
+  graph?.destroy(); lane?.destroy(); dashboard?.destroy(); twin2?.destroy(); radial?.destroy(); graph = null; lane = null; dashboard = null; twin2 = null; radial = null; snapshot = null; ontology = null; twinContextId = null;
   handledEvents.clear();
   for (const name of SCREENS) { $(`${name}-view`).hidden = true; $(`${name}-panel`).replaceChildren(); }
   $('load-state').hidden = false; $('load-state').textContent = '서버의 개발 계정을 선택해 원장을 조회하세요.';
@@ -742,6 +743,8 @@ async function loadSnapshot({ preserveMessages = false } = {}) {
     activeBom: data.bom ? { bom_id: data.bom.bom_id, bom_version: data.bom.bom_version } : null,
     onSelect: setContext, onBom: () => dashboard.openBom() });
   mountCurrentGraph();
+  radial?.destroy();
+  radial = mountRadial($('radial-stage'), { snapshot, onSelect: setContext });
   twin2?.destroy();
   twin2 = mountTwin2($('twin2-stage'), { snapshot, ontology, labelFor, onSelect: setTwinContext,
     onAsk: text => fillQuestion(text, 'twin2'), onGraph: focusEvidence });

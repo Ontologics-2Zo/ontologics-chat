@@ -1,0 +1,41 @@
+/* Radial hop-distance view (radial.js). Presentation only. */
+.mks-radial { position:relative; height:100%; display:grid; grid-template-rows:auto minmax(0,1fr) auto; background:var(--bg, #f4f6fa); color:var(--fg, #0f172a);
+  --area-plan:#0d9488; --area-dem:#2563eb; --area-bom:#7c3aed; --area-inv:#059669; --area-pro:#d97706; --area-ev:#94a3b8; }
+#radial-stage { height:100%; position:relative; min-height:0; min-width:0; }
+.mks-radial-head { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:8px; padding:12px 14px 4px; }
+.mks-radial-stats { display:flex; gap:16px; font-size:12.5px; color:var(--fg2, #475569); }
+.mks-radial-stat b { font-size:18px; color:var(--accent, #4f46e5); margin-right:2px; }
+.mks-radial-tools { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+.mks-radial-center { font:600 12px var(--mono, ui-monospace, monospace); padding:3px 8px; border:1px solid var(--line, #d7dee8); border-radius:6px; background:var(--surface, #fff); }
+.mks-radial-tools .mks-graph-button:disabled { opacity:.45; cursor:default; }
+.mks-radial-svg { width:100%; height:100%; min-height:0; cursor:grab; touch-action:none; }
+.mks-radial-ring { fill:none; stroke:var(--line, #d7dee8); stroke-width:1.2; vector-effect:non-scaling-stroke; }
+.mks-radial-ring-lost { stroke-dasharray:6 6; }
+.mks-radial-ring-labels text { font:600 calc(12px * var(--u, 1)) var(--sans, sans-serif); fill:var(--fg3, #64748b); paint-order:stroke; stroke:var(--bg, #f4f6fa); stroke-width:calc(4px * var(--u, 1)); }
+.mks-radial-edge { stroke:#b4a9e6; stroke-opacity:.45; stroke-width:1; vector-effect:non-scaling-stroke; }
+.mks-radial-edge.mks-radial-hit { stroke:var(--accent, #4f46e5); stroke-opacity:1; stroke-width:3.2; }
+.mks-radial-edge.mks-radial-row.mks-radial-hit { stroke-opacity:.5; stroke-width:1.3; }
+/* One layer opacity for everything outside the evidence (see DEC-H72). */
+.mks-radial-dim { opacity:.35; }
+.mks-radial-node { cursor:pointer; color:var(--area-ev); }
+.mks-radial-node.mks-area-dem { color:var(--area-dem); } .mks-radial-node.mks-area-bom { color:var(--area-bom); }
+.mks-radial-node.mks-area-inv { color:var(--area-inv); } .mks-radial-node.mks-area-pro { color:var(--area-pro); }
+.mks-radial-node.mks-area-plan { color:var(--area-plan); }
+.mks-radial-dot { r:calc(3.6px * var(--u, 1)); fill:currentColor; stroke:var(--bg, #f4f6fa); stroke-width:1; vector-effect:non-scaling-stroke; }
+.mks-radial-key-node .mks-radial-dot { r:calc(6px * var(--u, 1)); }
+.mks-radial-dot-center { r:calc(12px * var(--u, 1)) !important; }
+.mks-radial-key-node .mks-radial-dot, .mks-radial-hit .mks-radial-dot, .mks-radial-selected .mks-radial-dot, .mks-radial-dot-center { fill:var(--surface, #fff); stroke:currentColor; stroke-width:2.5; }
+.mks-radial-hit .mks-radial-dot { r:calc(7px * var(--u, 1)); }
+.mks-radial-selected .mks-radial-dot { stroke:var(--accent, #4f46e5); }
+.mks-radial-node:focus-visible { outline:none; }
+.mks-radial-node:focus-visible .mks-radial-dot { stroke:var(--accent, #4f46e5); stroke-width:4; }
+.mks-radial-label { font:700 calc(12px * var(--u, 1)) var(--sans, sans-serif); fill:#312e81; paint-order:stroke; stroke:var(--bg, #f4f6fa); stroke-width:calc(4px * var(--u, 1)); stroke-linejoin:round; pointer-events:none; }
+.mks-radial-label-center { font-size:calc(16px * var(--u, 1)); fill:var(--area-dem); }
+.mks-radial-legend { display:flex; flex-wrap:wrap; gap:14px; padding:6px 14px 2px; font-size:12px; color:var(--fg2, #475569); }
+.mks-radial-key::before { content:''; display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:5px; background:var(--area-ev); vertical-align:-1px; }
+.mks-radial-key.mks-area-dem::before { background:var(--area-dem); } .mks-radial-key.mks-area-bom::before { background:var(--area-bom); }
+.mks-radial-key.mks-area-inv::before { background:var(--area-inv); } .mks-radial-key.mks-area-pro::before { background:var(--area-pro); }
+.mks-radial-key.mks-area-plan::before { background:var(--area-plan); }
+.mks-radial-key.mks-radial-path::before { width:18px; height:3px; border-radius:2px; background:var(--accent, #4f46e5); vertical-align:3px; }
+.mks-radial-note { padding:0 14px 10px; font-size:11px; color:var(--fg3, #64748b); }
+@media (max-width: 900px) { #radial-stage { height:60vh; min-height:420px; } }
